@@ -3,7 +3,7 @@
   "displayName": "Windsurf 号池管理",
   "description": "Windsurf 无感换号：一键切换多账号，多实例分身，自动注入会话，实时显示每日/每周配额，免退出、免重启。",
   "version": "3.10.0",
-  "publisher": "local",
+  "publisher": "苏文",
   "repository": {
     "type": "git",
     "url": "https://github.com/user/windsurf-pool"
