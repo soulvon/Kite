@@ -75,6 +75,14 @@ npm run package      # 生成 vsix
 
 ## 更新日志
 
+### v3.7.0
+- 新增 GitHub 自动更新功能：支持从 GitHub Releases 自动检测并安装新版本。
+- 新增更新配置项（windsurfPool.update）：支持配置仓库信息、GitHub Token、自动检查/安装开关。
+- 新增手动检查更新命令（命令面板 → "Windsurf Pool: 检查更新"）。
+- 启动后延迟 30 秒自动检查更新，避免影响启动性能。
+- 支持公开仓库和私有仓库（私有仓库需配置 GitHub PAT）。
+- 新增打包脚本：`npm run package`（仅打包）和 `npm run package:release`（打包+上传到公开仓库）。
+
 ### v3.6.0
 - 新增 Auth1 Token 直接导入：批量导入支持粘贴 `auth1_` 开头的 token，自动识别并登录。
 - 批量导入新增「登录方式」选项（自动 / Auth1 / Firebase），提示文字和输入框 placeholder 随选项动态切换。
