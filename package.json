@@ -2,7 +2,7 @@
   "name": "windsurf-pool",
   "displayName": "Windsurf 号池管理",
   "description": "Windsurf 无感换号：一键切换多账号，多实例分身，自动注入会话，实时显示每日/每周配额，免退出、免重启。",
-  "version": "3.8.0",
+  "version": "3.9.0",
   "publisher": "local",
   "repository": {
     "type": "git",
@@ -121,13 +121,13 @@
         },
         "windsurfPool.update.repoOwner": {
           "type": "string",
-          "default": "",
-          "description": "GitHub 仓库所有者（用于自动更新），如 'your-org'"
+          "default": "soulvon",
+          "description": "GitHub 仓库所有者（用于自动更新）"
         },
         "windsurfPool.update.repoName": {
           "type": "string",
-          "default": "",
-          "description": "GitHub 仓库名（用于自动更新），如 'windsurf-pool'"
+          "default": "windsurf-pool-releases",
+          "description": "GitHub 仓库名（用于自动更新）"
         },
         "windsurfPool.update.token": {
           "type": "string",
