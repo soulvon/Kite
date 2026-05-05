@@ -75,6 +75,9 @@ npm run package      # 生成 vsix
 
 ## 更新日志
 
+### v3.8.0
+- 修复扩展版本显示问题，确保版本号正确更新。
+
 ### v3.7.0
 - 新增 GitHub 自动更新功能：支持从 GitHub Releases 自动检测并安装新版本。
 - 新增更新配置项（windsurfPool.update）：支持配置仓库信息、GitHub Token、自动检查/安装开关。
