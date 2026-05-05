@@ -89,10 +89,15 @@ function fetchGitHubApi(url: string, token: string): Promise<any> {
 }
 
 /**
- * 下载文件到临时目录
+ * 下载文件到临时目录（支持重定向）
  */
-function downloadFile(url: string, token: string, destPath: string): Promise<void> {
+function downloadFile(url: string, token: string, destPath: string, maxRedirects: number = 5): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) {
+      reject(new Error('Too many redirects'));
+      return;
+    }
+
     const protocol = url.startsWith('https') ? https : http;
     const headers: Record<string, string> = {
       'User-Agent': 'windsurf-pool-updater',
@@ -102,6 +107,13 @@ function downloadFile(url: string, token: string, destPath: string): Promise<voi
     }
 
     const req = protocol.get(url, { headers }, (res) => {
+      // 处理重定向
+      if (res.statusCode && [301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume(); // 消费响应体
+        downloadFile(res.headers.location, token, destPath, maxRedirects - 1).then(resolve, reject);
+        return;
+      }
+
       if (res.statusCode !== 200) {
         reject(new Error(`Download failed: ${res.statusCode}`));
         return;
