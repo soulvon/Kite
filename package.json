@@ -1,0 +1,162 @@
+{
+  "name": "windsurf-pool",
+  "displayName": "Windsurf 号池管理",
+  "description": "Windsurf 无感换号：一键切换多账号，多实例分身，自动注入会话，实时显示每日/每周配额，免退出、免重启。",
+  "version": "3.6.0",
+  "publisher": "local",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/windsurf-pool"
+  },
+  "license": "MIT",
+  "icon": "resources/icon.png",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "windsurfPool",
+          "title": "Windsurf 号池管理",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "windsurfPool": [
+        {
+          "type": "webview",
+          "id": "windsurfPool.sidebar",
+          "name": " ",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "windsurfPool.openSidebar",
+        "title": "打开换号侧栏",
+        "category": "Windsurf Pool",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "windsurfPool.applyPatch",
+        "title": "应用 Windsurf 注入补丁",
+        "category": "Windsurf Pool"
+      },
+      {
+        "command": "windsurfPool.showLog",
+        "title": "显示日志面板",
+        "category": "Windsurf Pool"
+      },
+      {
+        "command": "windsurfPool.openLogFile",
+        "title": "打开日志文件",
+        "category": "Windsurf Pool"
+      },
+      {
+        "command": "windsurfPool.addAccount",
+        "title": "添加账号",
+        "category": "Windsurf Pool"
+      },
+      {
+        "command": "windsurfPool.switchAccount",
+        "title": "切换账号（弹窗列表）",
+        "category": "Windsurf Pool"
+      },
+      {
+        "command": "windsurfPool.switchNextAccount",
+        "title": "切换下一个账号",
+        "category": "Windsurf Pool"
+      },
+      {
+        "command": "windsurfPool.removeAccount",
+        "title": "删除账号",
+        "category": "Windsurf Pool"
+      },
+      {
+        "command": "windsurfPool.showStatus",
+        "title": "账号状态",
+        "category": "Windsurf Pool"
+      },
+      {
+        "command": "windsurfPool.checkForUpdates",
+        "title": "检查更新",
+        "category": "Windsurf Pool"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "windsurfPool.switchNextAccount",
+        "key": "ctrl+alt+shift+k",
+        "mac": "cmd+alt+shift+k",
+        "when": "true"
+      }
+    ],
+    "configuration": {
+      "title": "Windsurf 号池管理",
+      "properties": {
+        "windsurfPool.refreshOnSwitch": {
+          "type": "boolean",
+          "default": false,
+          "description": "切换账号后是否自动重载整个窗口。关闭则只注入会话（多数情况可不重载）；若界面未刷新再手动重载或改回开启。"
+        },
+        "windsurfPool.showSwitchNotification": {
+          "type": "boolean",
+          "default": false,
+          "description": "切换时是否弹出「已切换」提示（侧栏下拉切换默认不弹）"
+        },
+        "windsurfPool.logoutBeforeSwitch": {
+          "type": "boolean",
+          "default": false,
+          "description": "切换前是否先执行 windsurf.logout。开启有时会让 Windsurf 重载窗口；默认关闭，直接覆盖会话。"
+        },
+        "windsurfPool.update.repoOwner": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub 仓库所有者（用于自动更新），如 'your-org'"
+        },
+        "windsurfPool.update.repoName": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub 仓库名（用于自动更新），如 'windsurf-pool'"
+        },
+        "windsurfPool.update.token": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub Personal Access Token（用于访问私有仓库，需要 repo 权限）"
+        },
+        "windsurfPool.update.autoCheck": {
+          "type": "boolean",
+          "default": true,
+          "description": "启动时自动检查更新"
+        },
+        "windsurfPool.update.autoInstall": {
+          "type": "boolean",
+          "default": true,
+          "description": "发现新版本时自动静默安装（无需用户确认）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "build": "npm run compile",
+    "package": "npm run build && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
