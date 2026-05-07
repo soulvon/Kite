@@ -153,11 +153,11 @@ function getPatchVersion(): string {
 
 /**
  * 计算设置对象的稳定哈希（用于检测设置变化）
- * 使用排序后的 JSON 字符串避免键顺序差异
+ * 递归对所有层级的 object key 排序，保证嵌套结构（如 recoveryRules）也稳定
  */
 function hashSettings(settings: Record<string, any>): string {
   try {
-    const json = JSON.stringify(settings, Object.keys(settings).sort());
+    const json = stableStringify(settings);
     let h = 0;
     for (let i = 0; i < json.length; i++) {
       h = ((h << 5) - h + json.charCodeAt(i)) | 0;
@@ -166,6 +166,13 @@ function hashSettings(settings: Record<string, any>): string {
   } catch {
     return '0';
   }
+}
+
+function stableStringify(obj: any): string {
+  if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+  if (Array.isArray(obj)) return '[' + obj.map(stableStringify).join(',') + ']';
+  const keys = Object.keys(obj).sort();
+  return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
 }
 
 function ensureCSP(html: string): string {

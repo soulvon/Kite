@@ -2012,8 +2012,10 @@
       banner.id = 'enhReloadBanner';
       banner.style.cssText = 'position:sticky;top:0;z-index:50;padding:6px 10px;margin:6px 0;background:linear-gradient(90deg,#3b82f6,#8b5cf6);color:#fff;border-radius:6px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;box-shadow:0 2px 6px rgba(0,0,0,.15);';
       banner.innerHTML = '<span>✓ 设置已保存，重启 Windsurf 后生效</span><button id="enhReloadBtn" style="background:rgba(255,255,255,.2);border:none;color:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:12px;">立即重启</button>';
-      // 插到增强模块顶部
-      const host = document.querySelector('.enhance-module') || document.body;
+      // 插到增强卡片顶部（正好是用户改设置的位置，视觉上即时反馈）
+      const host = document.getElementById('enhanceArea')
+        || document.querySelector('.enhance-card')
+        || document.body;
       host.insertBefore(banner, host.firstChild);
       const btn = banner.querySelector('#enhReloadBtn');
       if (btn) btn.addEventListener('click', () => { try { vscode.postMessage({ type: 'runCommand', command: 'workbench.action.reloadWindow' }); } catch {} });
