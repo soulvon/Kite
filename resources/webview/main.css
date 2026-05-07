@@ -55,21 +55,28 @@ body.vscode-high-contrast-light {
 .as-select,
 .page-size-select,
 .enhance-select {
-    all: unset;
+    -webkit-appearance: none;
+    appearance: none;
     box-sizing: border-box;
     display: inline-flex;
     align-items: center;
     height: 26px;
-    padding: 0 8px;
+    padding: 0 24px 0 8px;
     font-size: 12px;
-    line-height: 26px;
+    line-height: 24px;
     font-family: inherit;
     color: var(--vscode-input-foreground);
-    background: var(--vscode-input-background);
+    background-color: var(--vscode-input-background);
+    /* 自定义下拉箭头，颜色适中，位置固定 */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 4px center;
+    background-size: 14px;
     border: 1px solid var(--vscode-input-border, var(--card-border));
     border-radius: 4px;
     cursor: pointer;
-    transition: border-color 0.15s ease;
+    /* 移除背景色的 transition 避免点击时闪烁 */
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .group-select:hover,
 .as-select:hover,
@@ -83,6 +90,7 @@ body.vscode-high-contrast-light {
 .enhance-select:focus {
     outline: none;
     border-color: var(--vscode-focusBorder, var(--accent));
+    box-shadow: 0 0 0 1px var(--vscode-focusBorder, var(--accent));
 }
 
 /*
@@ -3202,6 +3210,231 @@ button.ghost:active {
     border-color: color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
+/* AutoRecovery 规则详情折叠面板 */
+.enhance-rule-details {
+    margin-top: 6px;
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.enhance-rule-details + .enhance-rule-details {
+    margin-top: 4px;
+}
+
+.enhance-rule-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--fg-1);
+    padding: 6px 10px;
+    background: color-mix(in srgb, var(--card-border) 20%, transparent);
+    list-style: none;
+    user-select: none;
+    transition: background 0.15s;
+}
+
+.enhance-rule-summary:hover {
+    background: color-mix(in srgb, var(--card-border) 40%, transparent);
+}
+
+.enhance-rule-summary::-webkit-details-marker {
+    display: none;
+}
+
+.enhance-rule-summary::before {
+    content: '▸';
+    transition: transform 0.15s;
+    font-size: 10px;
+    color: var(--fg-3);
+}
+
+details[open] > .enhance-rule-summary::before {
+    transform: rotate(90deg);
+}
+
+.enhance-rule-body {
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* 模型优先级列表 */
+.model-priority-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 100%;
+}
+
+.model-priority-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    background: color-mix(in srgb, var(--card-border) 25%, transparent);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    cursor: grab;
+    user-select: none;
+    transition: background 0.15s;
+}
+
+.model-priority-item:hover {
+    background: color-mix(in srgb, var(--card-border) 45%, transparent);
+}
+
+.model-priority-item.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+}
+
+.model-priority-rank {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.model-priority-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.model-priority-remove {
+    all: unset;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--fg-3);
+    padding: 0 2px;
+    line-height: 1;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+}
+
+.model-priority-remove:hover {
+    opacity: 1;
+    color: #ef4444;
+}
+
+/* 测试结果 */
+.test-result {
+    font-size: 11px;
+    padding: 0;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.2s, padding 0.2s;
+    border-radius: var(--radius-sm);
+}
+
+.test-result.show {
+    padding: 6px 8px;
+    max-height: 80px;
+    margin-top: 4px;
+}
+
+.test-result.success {
+    background: color-mix(in srgb, #22c55e 12%, transparent);
+    color: #22c55e;
+}
+
+.test-result.error {
+    background: color-mix(in srgb, #ef4444 12%, transparent);
+    color: #ef4444;
+}
+
+.test-result.running {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+}
+
+/* 可用模型候选列表 */
+.available-models-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    width: 100%;
+    margin-top: 4px;
+}
+
+.available-model-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s;
+    background: transparent;
+    color: var(--fg-2);
+}
+
+.available-model-chip:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.available-model-chip.selected {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.available-model-chip .chip-check {
+    font-size: 10px;
+}
+
+/* 自定义规则列表 */
+.custom-rule-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    background: color-mix(in srgb, var(--card-border) 20%, transparent);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--card-border);
+}
+
+.custom-rule-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+}
+
+.custom-rule-header input[type="text"] {
+    flex: 1;
+}
+
+.custom-rule-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+}
+
+.custom-rule-row input[type="text"] {
+    flex: 1;
+}
+
 /* AutoRecovery 历史日志面板 */
 .enhance-recovery-log-details {
     margin-top: 10px;
@@ -3513,7 +3746,7 @@ details[open] > .enhance-recovery-log-summary::before {
 .batch-section {
     display: flex;
     flex-direction: column;
-    gap: 0;
+    gap: 6px;
     margin-bottom: 10px;
 }
 

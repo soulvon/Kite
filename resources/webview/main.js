@@ -119,9 +119,39 @@
   const enhAutoSwitchOnRateLimit = $('#enhAutoSwitchOnRateLimit');
   const enhAutoRecoveryEnabled = $('#enhAutoRecoveryEnabled');
   const enhAutoSendContinue = $('#enhAutoSendContinue');
-  const enhContinueAfterSwitch = $('#enhContinueAfterSwitch');
-  const enhAutoApproveWebRequests = $('#enhAutoApproveWebRequests');
-  const enhRecoveryMaxRetries = $('#enhRecoveryMaxRetries');
+  // 恢复规则控件
+  const ruleNetworkAction = $('#ruleNetworkAction');
+  const ruleNetworkMaxRetries = $('#ruleNetworkMaxRetries');
+  const ruleNetworkDelay = $('#ruleNetworkDelay');
+  const ruleQuotaAction = $('#ruleQuotaAction');
+  const ruleQuotaAfterAction = $('#ruleQuotaAfterAction');
+  const ruleModelAction = $('#ruleModelAction');
+  const ruleModelAfterAction = $('#ruleModelAfterAction');
+  const modelPriorityList = $('#modelPriorityList');
+  const modelPriorityInput = $('#modelPriorityInput');
+  const modelPriorityAdd = $('#modelPriorityAdd');
+  const ruleContinuationAction = $('#ruleContinuationAction');
+  const rulePermissionAction = $('#rulePermissionAction');
+  const permScopeWeb = $('#permScopeWeb');
+  const permScopeTerminal = $('#permScopeTerminal');
+  const permScopeFile = $('#permScopeFile');
+  const ruleUserAction = $('#ruleUserAction');
+  const customRulesList = $('#customRulesList');
+  const customRuleAdd = $('#customRuleAdd');
+  // 测试按钮 & 模型获取
+  const fetchModelsBtn = $('#fetchModelsBtn');
+  const availableModelsList = $('#availableModelsList');
+  const currentModelName = $('#currentModelName');
+  const testRetryBtn = $('#testRetryBtn');
+  const testRetryResult = $('#testRetryResult');
+  const testSwitchAccountBtn = $('#testSwitchAccountBtn');
+  const testSwitchAccountResult = $('#testSwitchAccountResult');
+  const testSwitchModelBtn = $('#testSwitchModelBtn');
+  const testSwitchModelResult = $('#testSwitchModelResult');
+  const testSendContinueBtn = $('#testSendContinueBtn');
+  const testSendContinueResult = $('#testSendContinueResult');
+  const testPermissionBtn = $('#testPermissionBtn');
+  const testPermissionResult = $('#testPermissionResult');
   const enhNotifyEnabled = $('#enhNotifyEnabled');
   const enhNotifyTrigger = $('#enhNotifyTrigger');
   const enhNotifySound = $('#enhNotifySound');
@@ -1554,6 +1584,21 @@
         }
         break;
       }
+
+      case 'enhLoaded': {
+        // 后端返回真相源设置 → 应用到 UI + 缓存
+        if (msg.settings) {
+          try { localStorage.setItem('ws-better-settings', JSON.stringify(msg.settings)); } catch {}
+          applyEnhSettingsToUI(msg.settings);
+          if (typeof updateBubblePreview === 'function') updateBubblePreview();
+        }
+        break;
+      }
+
+      case 'enhSaved': {
+        // 后端确认设置已写盘且 workbench 已重新注入；banner 已在保存时弹出
+        break;
+      }
     }
   });
 
@@ -1617,13 +1662,251 @@
     }
   }
 
-  // ==================== 增强设置同步 ====================
-  // 从 windsurf-better.js 的 localStorage 读取并同步到侧栏控件
-  function loadEnhanceSettings() {
+  // ==================== 命令通信 & 测试 ====================
+
+  let _cmdIdCounter = 0;
+  function sendCommand(action, extra) {
+    const cmd = { id: ++_cmdIdCounter, action, ts: Date.now(), ...(extra || {}) };
+    localStorage.setItem('ws-better-command', JSON.stringify(cmd));
+    return cmd.id;
+  }
+
+  function showTestResult(el, status, message) {
+    if (!el) return;
+    el.className = 'test-result show ' + status;
+    el.textContent = message;
+    if (status !== 'running') {
+      setTimeout(() => { el.className = 'test-result'; }, 5000);
+    }
+  }
+
+  // 监听命令结果
+  window.addEventListener('storage', (e) => {
+    if (e.key !== 'ws-better-command-result') return;
     try {
-      const raw = localStorage.getItem('ws-better-settings');
-      if (!raw) return;
-      const s = JSON.parse(raw);
+      const result = JSON.parse(e.newValue);
+      if (!result) return;
+
+      // 获取模型列表结果
+      if (result.action === 'fetch-models' && result.status === 'done') {
+        if (currentModelName) currentModelName.textContent = result.currentModel || '-';
+        if (result.models && result.models.length > 0) {
+          renderAvailableModels(result.models);
+        } else {
+          showTestResult(testSwitchModelResult, 'error', '未检测到可用模型（可能需要先打开聊天面板）');
+        }
+      }
+
+      // 获取当前模型结果
+      if (result.action === 'get-current-model' && result.status === 'done') {
+        if (currentModelName) currentModelName.textContent = result.currentModel || '-';
+      }
+
+      // 测试切换模型结果
+      if (result.action === 'test-switch-model') {
+        showTestResult(testSwitchModelResult, result.status === 'done' ? 'success' : (result.status === 'running' ? 'running' : 'error'), result.message || '');
+        if (result.newModel && currentModelName) currentModelName.textContent = result.newModel;
+      }
+
+      // 测试重试结果
+      if (result.action === 'test-retry') {
+        showTestResult(testRetryResult, result.status === 'done' ? 'success' : 'error', result.message || '');
+      }
+
+      // 测试发送 continue 结果
+      if (result.action === 'test-send-continue') {
+        showTestResult(testSendContinueResult, result.status === 'done' ? 'success' : 'error', result.message || '');
+      }
+
+      // 测试切号结果
+      if (result.action === 'test-switch-account') {
+        showTestResult(testSwitchAccountResult, result.status === 'done' ? 'success' : (result.status === 'running' ? 'running' : 'error'), result.message || '');
+      }
+
+      // 测试权限检测结果
+      if (result.action === 'test-permission') {
+        showTestResult(testPermissionResult, result.status === 'done' ? 'success' : 'error', result.message || '');
+      }
+    } catch {}
+  });
+
+  function renderAvailableModels(models) {
+    if (!availableModelsList) return;
+    const currentPriority = getModelPriorityFromDOM();
+    availableModelsList.style.display = 'flex';
+    availableModelsList.innerHTML = '';
+    models.forEach(name => {
+      const chip = document.createElement('span');
+      const isSelected = currentPriority.some(p => name.toLowerCase().includes(p.toLowerCase()) || p.toLowerCase().includes(name.toLowerCase()));
+      chip.className = 'available-model-chip' + (isSelected ? ' selected' : '');
+      chip.innerHTML = '<span class="chip-check">' + (isSelected ? '✓' : '+') + '</span>' + name;
+      chip.addEventListener('click', () => {
+        if (chip.classList.contains('selected')) {
+          // 从优先级列表移除
+          chip.classList.remove('selected');
+          chip.querySelector('.chip-check').textContent = '+';
+          const items = getModelPriorityFromDOM().filter(m => !name.toLowerCase().includes(m.toLowerCase()) && !m.toLowerCase().includes(name.toLowerCase()));
+          renderModelPriority(items);
+        } else {
+          // 添加到优先级列表
+          chip.classList.add('selected');
+          chip.querySelector('.chip-check').textContent = '✓';
+          const items = getModelPriorityFromDOM();
+          items.push(name);
+          renderModelPriority(items);
+        }
+        saveEnhanceSettings();
+      });
+      availableModelsList.appendChild(chip);
+    });
+  }
+
+  // ==================== 恢复规则辅助函数 ====================
+
+  function collectRecoveryRules() {
+    const scope = [];
+    if (permScopeWeb && permScopeWeb.checked) scope.push('web-request');
+    if (permScopeTerminal && permScopeTerminal.checked) scope.push('terminal');
+    if (permScopeFile && permScopeFile.checked) scope.push('file-write');
+    return {
+      networkErrors: {
+        action: ruleNetworkAction ? ruleNetworkAction.value : 'retry',
+        maxRetries: ruleNetworkMaxRetries ? parseInt(ruleNetworkMaxRetries.value) || 3 : 3,
+        delay: ruleNetworkDelay ? (parseInt(ruleNetworkDelay.value) || 3) * 1000 : 3000,
+      },
+      quotaErrors: {
+        action: ruleQuotaAction ? ruleQuotaAction.value : 'switch-account',
+        afterAction: ruleQuotaAfterAction ? ruleQuotaAfterAction.value : 'auto',
+      },
+      modelErrors: {
+        action: ruleModelAction ? ruleModelAction.value : 'switch-model',
+        afterAction: ruleModelAfterAction ? ruleModelAfterAction.value : 'send-continue',
+        modelPriority: getModelPriorityFromDOM(),
+      },
+      continuationErrors: {
+        action: ruleContinuationAction ? ruleContinuationAction.value : 'send-continue',
+      },
+      permissionRequests: {
+        action: rulePermissionAction ? rulePermissionAction.value : 'auto-allow',
+        scope,
+      },
+      userIntervention: {
+        action: ruleUserAction ? ruleUserAction.value : 'notify',
+      },
+    };
+  }
+
+  function getModelPriorityFromDOM() {
+    if (!modelPriorityList) return [];
+    const items = modelPriorityList.querySelectorAll('.model-priority-item');
+    return Array.from(items).map(el => el.dataset.model).filter(Boolean);
+  }
+
+  function renderModelPriority(models) {
+    if (!modelPriorityList) return;
+    modelPriorityList.innerHTML = '';
+    models.forEach((model, i) => {
+      const item = document.createElement('div');
+      item.className = 'model-priority-item';
+      item.draggable = true;
+      item.dataset.model = model;
+      item.innerHTML = '<span class="model-priority-rank">' + (i + 1) + '</span>'
+        + '<span class="model-priority-name">' + model + '</span>'
+        + '<button class="model-priority-remove" title="移除">&times;</button>';
+      // 拖拽排序
+      item.addEventListener('dragstart', e => {
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      item.addEventListener('dragend', () => {
+        item.classList.remove('dragging');
+        // 更新序号
+        modelPriorityList.querySelectorAll('.model-priority-item').forEach((el, idx) => {
+          const rank = el.querySelector('.model-priority-rank');
+          if (rank) rank.textContent = idx + 1;
+        });
+        saveEnhanceSettings();
+      });
+      item.addEventListener('dragover', e => {
+        e.preventDefault();
+        const dragging = modelPriorityList.querySelector('.dragging');
+        if (dragging && dragging !== item) {
+          const rect = item.getBoundingClientRect();
+          const after = e.clientY > rect.top + rect.height / 2;
+          modelPriorityList.insertBefore(dragging, after ? item.nextSibling : item);
+        }
+      });
+      // 移除
+      item.querySelector('.model-priority-remove').addEventListener('click', () => {
+        item.remove();
+        modelPriorityList.querySelectorAll('.model-priority-item').forEach((el, idx) => {
+          const rank = el.querySelector('.model-priority-rank');
+          if (rank) rank.textContent = idx + 1;
+        });
+        saveEnhanceSettings();
+      });
+      modelPriorityList.appendChild(item);
+    });
+  }
+
+  function collectCustomRules() {
+    if (!customRulesList) return [];
+    const items = customRulesList.querySelectorAll('.custom-rule-item');
+    return Array.from(items).map(el => ({
+      name: (el.querySelector('.custom-rule-name') || {}).value || '',
+      pattern: (el.querySelector('.custom-rule-pattern') || {}).value || '',
+      action: (el.querySelector('.custom-rule-action') || {}).value || 'retry',
+      enabled: (el.querySelector('.custom-rule-enabled') || {}).checked !== false,
+    }));
+  }
+
+  function renderCustomRules(rules) {
+    if (!customRulesList) return;
+    customRulesList.innerHTML = '';
+    (rules || []).forEach((rule, i) => {
+      const item = document.createElement('div');
+      item.className = 'custom-rule-item';
+      item.innerHTML = '<div class="custom-rule-header">'
+        + '<input type="checkbox" class="custom-rule-enabled"' + (rule.enabled !== false ? ' checked' : '') + '>'
+        + '<input type="text" class="enhance-select custom-rule-name" value="' + (rule.name || '') + '" placeholder="规则名称">'
+        + '<button class="model-priority-remove custom-rule-remove" title="删除">&times;</button>'
+        + '</div>'
+        + '<div class="custom-rule-row">'
+        + '<span class="enhance-option-label">匹配</span>'
+        + '<input type="text" class="enhance-select custom-rule-pattern" value="' + (rule.pattern || '') + '" placeholder="错误文本正则...">'
+        + '</div>'
+        + '<div class="custom-rule-row">'
+        + '<span class="enhance-option-label">动作</span>'
+        + '<select class="enhance-select custom-rule-action">'
+        + '<option value="retry"' + (rule.action === 'retry' ? ' selected' : '') + '>自动重试</option>'
+        + '<option value="switch-account"' + (rule.action === 'switch-account' ? ' selected' : '') + '>切换账号</option>'
+        + '<option value="switch-model"' + (rule.action === 'switch-model' ? ' selected' : '') + '>切换模型</option>'
+        + '<option value="send-continue"' + (rule.action === 'send-continue' ? ' selected' : '') + '>发送继续</option>'
+        + '<option value="notify"' + (rule.action === 'notify' ? ' selected' : '') + '>仅通知</option>'
+        + '<option value="ignore"' + (rule.action === 'ignore' ? ' selected' : '') + '>忽略</option>'
+        + '</select>'
+        + '</div>';
+      // 删除
+      item.querySelector('.custom-rule-remove').addEventListener('click', () => {
+        item.remove();
+        saveEnhanceSettings();
+      });
+      // 变更自动保存
+      item.querySelectorAll('input, select').forEach(el => {
+        el.addEventListener('change', saveEnhanceSettings);
+      });
+      customRulesList.appendChild(item);
+    });
+  }
+
+  // ==================== 增强设置同步 ====================
+  // 真相源：扩展宿主管理的 enh-settings.json（通过 postMessage 通信）
+  // localStorage 仅作启动期回退；正常流程是：
+  //   webview 启动 → postMessage('enhLoad') → 后端回 'enhLoaded' → applySettingsToUI
+  //   控件改变 → saveEnhanceSettings → postMessage('enhSave') → 后端写盘+重新注入 → 回 'enhSaved'
+  function applyEnhSettingsToUI(s) {
+    if (!s || typeof s !== 'object') return;
+    try {
       if (enhBubblesEnabled) enhBubblesEnabled.checked = s.bubblesEnabled !== false;
       if (enhBubblesAutoSend) enhBubblesAutoSend.checked = s.bubblesAutoSend !== false;
       if (enhBubblesTheme) enhBubblesTheme.value = s.bubblesTheme || 'emerald';
@@ -1635,9 +1918,26 @@
       if (enhAutoSwitchOnRateLimit) enhAutoSwitchOnRateLimit.checked = s.autoSwitchOnRateLimit !== false;
       if (enhAutoRecoveryEnabled) enhAutoRecoveryEnabled.checked = s.autoRecoveryEnabled !== false;
       if (enhAutoSendContinue) enhAutoSendContinue.checked = s.autoSendContinue !== false;
-      if (enhContinueAfterSwitch) enhContinueAfterSwitch.checked = s.continueAfterSwitch !== false;
-      if (enhAutoApproveWebRequests) enhAutoApproveWebRequests.checked = s.autoApproveWebRequests === true;
-      if (enhRecoveryMaxRetries) enhRecoveryMaxRetries.value = s.recoveryMaxRetries || 3;
+      // 恢复规则
+      const rules = s.recoveryRules || {};
+      if (ruleNetworkAction && rules.networkErrors) ruleNetworkAction.value = rules.networkErrors.action || 'retry';
+      if (ruleNetworkMaxRetries && rules.networkErrors) ruleNetworkMaxRetries.value = rules.networkErrors.maxRetries || 3;
+      if (ruleNetworkDelay && rules.networkErrors) ruleNetworkDelay.value = Math.round((rules.networkErrors.delay || 3000) / 1000);
+      if (ruleQuotaAction && rules.quotaErrors) ruleQuotaAction.value = rules.quotaErrors.action || 'switch-account';
+      if (ruleQuotaAfterAction && rules.quotaErrors) ruleQuotaAfterAction.value = rules.quotaErrors.afterAction || 'auto';
+      if (ruleModelAction && rules.modelErrors) ruleModelAction.value = rules.modelErrors.action || 'switch-model';
+      if (ruleModelAfterAction && rules.modelErrors) ruleModelAfterAction.value = rules.modelErrors.afterAction || 'send-continue';
+      if (ruleContinuationAction && rules.continuationErrors) ruleContinuationAction.value = rules.continuationErrors.action || 'send-continue';
+      if (rulePermissionAction && rules.permissionRequests) rulePermissionAction.value = rules.permissionRequests.action || 'auto-allow';
+      const permScope = (rules.permissionRequests && rules.permissionRequests.scope) || ['web-request'];
+      if (permScopeWeb) permScopeWeb.checked = permScope.includes('web-request');
+      if (permScopeTerminal) permScopeTerminal.checked = permScope.includes('terminal');
+      if (permScopeFile) permScopeFile.checked = permScope.includes('file-write');
+      if (ruleUserAction && rules.userIntervention) ruleUserAction.value = rules.userIntervention.action || 'notify';
+      // 模型优先级
+      renderModelPriority((rules.modelErrors && rules.modelErrors.modelPriority) || ['claude-3.5-sonnet', 'gpt-4o', 'claude-3-haiku']);
+      // 自定义规则
+      renderCustomRules(s.customRecoveryRules || []);
       if (enhNotifyEnabled) enhNotifyEnabled.checked = s.notifyEnabled !== false;
       if (enhNotifyTrigger) enhNotifyTrigger.value = s.notifyTrigger || 'always';
       if (enhNotifySound) enhNotifySound.checked = s.notifySound !== false;
@@ -1651,41 +1951,76 @@
     } catch {}
   }
 
-  // 将侧栏设置写回 localStorage，windsurf-better.js 会自动读取
+  // 启动时向后端拉取真相源；失败则回退到本地缓存
+  function loadEnhanceSettings() {
+    try { vscode.postMessage({ type: 'enhLoad' }); } catch {}
+    // 回退：先用 localStorage 缓存填充 UI，避免拉取期间 UI 全空
+    try {
+      const raw = localStorage.getItem('ws-better-settings');
+      if (raw) applyEnhSettingsToUI(JSON.parse(raw));
+    } catch {}
+  }
+
+  // 把当前 UI 状态收集为 settings 对象（保存/比较用）
+  function collectEnhSettings() {
+    return {
+      bubblesEnabled: enhBubblesEnabled ? enhBubblesEnabled.checked : true,
+      bubblesAutoSend: enhBubblesAutoSend ? enhBubblesAutoSend.checked : true,
+      bubblesTheme: enhBubblesTheme ? enhBubblesTheme.value : 'emerald',
+      bubblesShape: enhBubblesShape ? enhBubblesShape.value : 'rounded',
+      localizationEnabled: enhLocalizationEnabled ? enhLocalizationEnabled.checked : true,
+      autoContinueEnabled: enhAutoContinueEnabled ? enhAutoContinueEnabled.checked : true,
+      dismissCorruptEnabled: enhDismissCorruptEnabled ? enhDismissCorruptEnabled.checked : true,
+      autoSwitchOnQuota: enhAutoSwitchOnQuota ? enhAutoSwitchOnQuota.checked : true,
+      autoSwitchOnRateLimit: enhAutoSwitchOnRateLimit ? enhAutoSwitchOnRateLimit.checked : true,
+      autoRecoveryEnabled: enhAutoRecoveryEnabled ? enhAutoRecoveryEnabled.checked : true,
+      autoSendContinue: enhAutoSendContinue ? enhAutoSendContinue.checked : true,
+      recoveryRules: collectRecoveryRules(),
+      customRecoveryRules: collectCustomRules(),
+      notifyEnabled: enhNotifyEnabled ? enhNotifyEnabled.checked : true,
+      notifyTrigger: enhNotifyTrigger ? enhNotifyTrigger.value : 'always',
+      notifySound: enhNotifySound ? enhNotifySound.checked : true,
+      notifyDesktop: enhNotifyDesktop ? enhNotifyDesktop.checked : true,
+      notifyTone: enhNotifyTone ? enhNotifyTone.value : 'funk',
+      notifyRepeat: enhNotifyRepeat ? parseInt(enhNotifyRepeat.value) || 2 : 2,
+      customTone: enhCustomTone ? enhCustomTone.value : '',
+      audioFile: enhAudioFile ? enhAudioFile.value : '',
+    };
+  }
+
+  // 将侧栏设置同步到后端：postMessage 给扩展宿主写盘并重新注入 workbench
   function saveEnhanceSettings() {
     try {
-      const current = JSON.parse(localStorage.getItem('ws-better-settings') || '{}');
-      const updated = {
-        ...current,
-        bubblesEnabled: enhBubblesEnabled ? enhBubblesEnabled.checked : true,
-        bubblesAutoSend: enhBubblesAutoSend ? enhBubblesAutoSend.checked : true,
-        bubblesTheme: enhBubblesTheme ? enhBubblesTheme.value : 'emerald',
-        bubblesShape: enhBubblesShape ? enhBubblesShape.value : 'rounded',
-        localizationEnabled: enhLocalizationEnabled ? enhLocalizationEnabled.checked : true,
-        autoContinueEnabled: enhAutoContinueEnabled ? enhAutoContinueEnabled.checked : true,
-        dismissCorruptEnabled: enhDismissCorruptEnabled ? enhDismissCorruptEnabled.checked : true,
-        autoSwitchOnQuota: enhAutoSwitchOnQuota ? enhAutoSwitchOnQuota.checked : true,
-        autoSwitchOnRateLimit: enhAutoSwitchOnRateLimit ? enhAutoSwitchOnRateLimit.checked : true,
-        autoRecoveryEnabled: enhAutoRecoveryEnabled ? enhAutoRecoveryEnabled.checked : true,
-        autoSendContinue: enhAutoSendContinue ? enhAutoSendContinue.checked : true,
-        continueAfterSwitch: enhContinueAfterSwitch ? enhContinueAfterSwitch.checked : true,
-        autoApproveWebRequests: enhAutoApproveWebRequests ? enhAutoApproveWebRequests.checked : false,
-        recoveryMaxRetries: enhRecoveryMaxRetries ? parseInt(enhRecoveryMaxRetries.value) || 3 : 3,
-        notifyEnabled: enhNotifyEnabled ? enhNotifyEnabled.checked : true,
-        notifyTrigger: enhNotifyTrigger ? enhNotifyTrigger.value : 'always',
-        notifySound: enhNotifySound ? enhNotifySound.checked : true,
-        notifyDesktop: enhNotifyDesktop ? enhNotifyDesktop.checked : true,
-        notifyTone: enhNotifyTone ? enhNotifyTone.value : 'funk',
-        notifyRepeat: enhNotifyRepeat ? parseInt(enhNotifyRepeat.value) || 2 : 2,
-        customTone: enhCustomTone ? enhCustomTone.value : '',
-        audioFile: enhAudioFile ? enhAudioFile.value : '',
-      };
-      localStorage.setItem('ws-better-settings', JSON.stringify(updated));
+      const updated = collectEnhSettings();
+      // 本地缓存留底（postMessage 失败时仍可作为回退展示）
+      try { localStorage.setItem('ws-better-settings', JSON.stringify(updated)); } catch {}
+      vscode.postMessage({ type: 'enhSave', settings: updated });
       // 切换自定义行显示
       if (enhCustomToneRow) enhCustomToneRow.style.display = (updated.notifyTone === 'custom') ? 'flex' : 'none';
       if (enhAudioFileRow) enhAudioFileRow.style.display = (updated.notifyTone === 'file') ? 'flex' : 'none';
       updateBubblePreview();
+      showEnhReloadBanner();
     } catch {}
+  }
+
+  // 显示"设置已保存，重启 Windsurf 后生效"提示条（banner）
+  let _enhBannerTimer = null;
+  function showEnhReloadBanner() {
+    let banner = document.getElementById('enhReloadBanner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'enhReloadBanner';
+      banner.style.cssText = 'position:sticky;top:0;z-index:50;padding:6px 10px;margin:6px 0;background:linear-gradient(90deg,#3b82f6,#8b5cf6);color:#fff;border-radius:6px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;box-shadow:0 2px 6px rgba(0,0,0,.15);';
+      banner.innerHTML = '<span>✓ 设置已保存，重启 Windsurf 后生效</span><button id="enhReloadBtn" style="background:rgba(255,255,255,.2);border:none;color:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:12px;">立即重启</button>';
+      // 插到增强模块顶部
+      const host = document.querySelector('.enhance-module') || document.body;
+      host.insertBefore(banner, host.firstChild);
+      const btn = banner.querySelector('#enhReloadBtn');
+      if (btn) btn.addEventListener('click', () => { try { vscode.postMessage({ type: 'runCommand', command: 'workbench.action.reloadWindow' }); } catch {} });
+    }
+    banner.style.display = 'flex';
+    if (_enhBannerTimer) clearTimeout(_enhBannerTimer);
+    _enhBannerTimer = setTimeout(() => { banner.style.display = 'none'; }, 8000);
   }
 
   // 气泡预览：主题和形状数据（与 windsurf-better.js 保持一致）
@@ -2894,10 +3229,88 @@
     // 增强设置控件事件
     loadEnhanceSettings();
     updateBubblePreview();
-    const enhSettingsEls = [enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled, enhAutoContinueEnabled, enhDismissCorruptEnabled, enhAutoSwitchOnQuota, enhAutoSwitchOnRateLimit, enhAutoRecoveryEnabled, enhAutoSendContinue, enhContinueAfterSwitch, enhAutoApproveWebRequests, enhRecoveryMaxRetries, enhNotifyEnabled, enhNotifyTrigger, enhNotifySound, enhNotifyDesktop, enhNotifyTone, enhNotifyRepeat, enhCustomTone, enhAudioFile];
+    const enhSettingsEls = [enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled, enhAutoContinueEnabled, enhDismissCorruptEnabled, enhAutoSwitchOnQuota, enhAutoSwitchOnRateLimit, enhAutoRecoveryEnabled, enhAutoSendContinue, enhNotifyEnabled, enhNotifyTrigger, enhNotifySound, enhNotifyDesktop, enhNotifyTone, enhNotifyRepeat, enhCustomTone, enhAudioFile,
+      ruleNetworkAction, ruleNetworkMaxRetries, ruleNetworkDelay, ruleQuotaAction, ruleQuotaAfterAction, ruleModelAction, ruleModelAfterAction, ruleContinuationAction, rulePermissionAction, permScopeWeb, permScopeTerminal, permScopeFile, ruleUserAction];
     enhSettingsEls.forEach(el => {
       if (el) el.addEventListener('change', saveEnhanceSettings);
     });
+
+    // 模型优先级添加
+    if (modelPriorityAdd) {
+      modelPriorityAdd.addEventListener('click', () => {
+        const name = (modelPriorityInput ? modelPriorityInput.value : '').trim();
+        if (!name) return;
+        if (modelPriorityInput) modelPriorityInput.value = '';
+        const items = getModelPriorityFromDOM();
+        items.push(name);
+        renderModelPriority(items);
+        saveEnhanceSettings();
+      });
+    }
+    if (modelPriorityInput) {
+      modelPriorityInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); if (modelPriorityAdd) modelPriorityAdd.click(); }
+      });
+    }
+
+    // 测试按钮事件
+    if (fetchModelsBtn) {
+      fetchModelsBtn.addEventListener('click', () => {
+        fetchModelsBtn.textContent = '获取中...';
+        fetchModelsBtn.disabled = true;
+        sendCommand('fetch-models');
+        setTimeout(() => { fetchModelsBtn.textContent = '获取可用模型列表'; fetchModelsBtn.disabled = false; }, 5000);
+      });
+    }
+    if (testSwitchModelBtn) {
+      testSwitchModelBtn.addEventListener('click', () => {
+        const priority = getModelPriorityFromDOM();
+        if (priority.length === 0) {
+          showTestResult(testSwitchModelResult, 'error', '请先添加备选模型');
+          return;
+        }
+        showTestResult(testSwitchModelResult, 'running', '正在切换...');
+        sendCommand('test-switch-model', { model: priority[0] });
+      });
+    }
+    if (testRetryBtn) {
+      testRetryBtn.addEventListener('click', () => {
+        showTestResult(testRetryResult, 'running', '测试中...');
+        sendCommand('test-retry');
+      });
+    }
+    if (testSwitchAccountBtn) {
+      testSwitchAccountBtn.addEventListener('click', () => {
+        showTestResult(testSwitchAccountResult, 'running', '测试中...');
+        sendCommand('test-switch-account');
+      });
+    }
+    if (testSendContinueBtn) {
+      testSendContinueBtn.addEventListener('click', () => {
+        showTestResult(testSendContinueResult, 'running', '测试中...');
+        sendCommand('test-send-continue');
+      });
+    }
+    if (testPermissionBtn) {
+      testPermissionBtn.addEventListener('click', () => {
+        showTestResult(testPermissionResult, 'running', '测试中...');
+        sendCommand('test-permission');
+      });
+    }
+
+    // 初始获取当前模型名
+    sendCommand('get-current-model');
+
+    // 自定义规则添加
+    if (customRuleAdd) {
+      customRuleAdd.addEventListener('click', () => {
+        const rules = collectCustomRules();
+        rules.push({ name: '新规则', pattern: '', action: 'retry', enabled: true });
+        renderCustomRules(rules);
+        saveEnhanceSettings();
+      });
+    }
+
     // 浏览音频文件按钮
     if (enhAudioFileBrowse) {
       enhAudioFileBrowse.addEventListener('click', () => {
