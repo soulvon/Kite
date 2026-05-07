@@ -2149,7 +2149,7 @@
             ${focusBtn}<span class="inst-card-state">${stateText}</span>
           </div>
           <div class="inst-card-email" title="${escHtml(inst.bindEmail || '')}">${inst.bindEmail ? escHtml(inst.bindEmail) : '<span style="opacity:0.4">未绑定账号</span>'}</div>
-          <div class="inst-card-tag">${inst.assignedTag ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">📌 ' + escHtml(inst.assignedTag) + '</span>' : '<span class="inst-tag-none" data-inst-action="viewTag" style="opacity:0.4;cursor:pointer">未分配标签</span>'}</div>
+          <div class="inst-card-tag">${inst.assignedTag ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">📌 ' + escHtml(inst.assignedTag) + '</span>' : '<span class="inst-tag-none" data-inst-action="viewTag" style="opacity:0.4;cursor:pointer">未分配标签分组号池</span>'}</div>
           <div class="inst-card-actions">
             ${primaryBtn}
             <button class="icon-btn" data-inst-action="edit" title="编辑">
@@ -2194,7 +2194,7 @@
         if (tagEl) {
           tagEl.innerHTML = inst.assignedTag
             ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">📌 ' + escHtml(inst.assignedTag) + '</span>'
-            : '<span class="inst-tag-none" data-inst-action="viewTag" style="opacity:0.4;cursor:pointer">未分配标签</span>';
+            : '<span class="inst-tag-none" data-inst-action="viewTag" style="opacity:0.4;cursor:pointer">未分配标签分组号池</span>';
         }
         const actionsEl = card.querySelector('.inst-card-actions');
         if (actionsEl) {
