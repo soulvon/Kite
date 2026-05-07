@@ -6,7 +6,8 @@ export interface PoolSignal {
   type: 'quota-exhausted'
       | 'quota-daily-exhausted'
       | 'rate-limited'
-      | 'provider-overloaded';
+      | 'provider-overloaded'
+      | 'provider-unavailable';
   ts: number;
   lastMessage?: string;
   conversationId?: string;
@@ -49,7 +50,7 @@ export function getSignalBridgeScript(): string {
             if (settingsRaw) {
               const s = JSON.parse(settingsRaw);
               const isQuota = signal.type === 'quota-exhausted' || signal.type === 'quota-daily-exhausted';
-              const isRate = signal.type === 'rate-limited' || signal.type === 'provider-overloaded';
+              const isRate = signal.type === 'rate-limited' || signal.type === 'provider-overloaded' || signal.type === 'provider-unavailable';
               if (isQuota && s.autoSwitchOnQuota === false) return;
               if (isRate && s.autoSwitchOnRateLimit === false) return;
             }

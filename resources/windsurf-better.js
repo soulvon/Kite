@@ -1772,6 +1772,9 @@
 		{ pattern: /rate limit exceeded/i, signal: 'rate-limited' },
 		{ pattern: /upgrade to a Pro account for higher limits/i, signal: 'rate-limited' },
 		{ pattern: /权限拒绝.*rate limit/i, signal: 'rate-limited' },
+		// 第三方提供商临时故障：需要切号重试
+		{ pattern: /third-party model provider is experiencing issues/i, signal: 'provider-unavailable' },
+		{ pattern: /model provider is currently not available/i, signal: 'provider-unavailable' },
 	];
 
 	// C 类：自动继续触发
@@ -2045,7 +2048,7 @@
 				_lastErrorFingerprint = '';
 				// 检查设置是否允许
 				const isQuota = signal === 'quota-exhausted' || signal === 'quota-daily-exhausted';
-				const isRate = signal === 'rate-limited' || signal === 'provider-overloaded';
+				const isRate = signal === 'rate-limited' || signal === 'provider-overloaded' || signal === 'provider-unavailable';
 				if (isQuota && !settings.autoSwitchOnQuota) {
 					console.log(LOG_PREFIX + '[Recovery] B类错误(额度)但设置关闭，跳过');
 					recordRecoveryLog({ category: 'B', error: errorText.substring(0, 200), action: 'switch:' + signal, result: 'skipped-by-setting' });

@@ -1072,7 +1072,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
             <div class="enhance-option-row" id="enhAudioFileRow" style="display:none">
               <span class="enhance-option-label">文件路径</span>
-              <input type="text" class="enhance-select" id="enhAudioFile" style="flex:1" placeholder="C:\path\to\sound.wav 或 .mp3" title="支持 .wav / .mp3 文件">
+              <input type="text" class="enhance-select" id="enhAudioFile" style="flex:1" placeholder="音频文件路径（.wav / .mp3）" title="支持 .wav / .mp3 文件">
               <button class="enhance-test-btn" id="enhAudioFileBrowse" title="浏览">📂</button>
             </div>
             <div class="enhance-option-row">
@@ -1086,8 +1086,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       </details>
     </div>
 
-    <!-- 多实例管理面板（仅 Windows） -->
-    <div class="card instance-card" id="instanceArea"${process.platform !== 'win32' ? ' hidden' : ''}>
+    <!-- 多实例管理面板 -->
+    <div class="card instance-card" id="instanceArea">
       <details class="inst-details" id="instDetails" open>
         <summary class="inst-summary">
           <svg class="inst-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>

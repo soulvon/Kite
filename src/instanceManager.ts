@@ -2,7 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as cp from 'child_process';
 import * as crypto from 'crypto';
-import { getPoolRoot, ensureDir } from './utils';
+import * as os from 'os';
+import { getPoolRoot, getAppDataDir, ensureDir, isWindows, isMac } from './utils';
 import { CACHE_TTL } from './config';
 
 // ─── 类型 ───────────────────────────────────────────────
@@ -48,12 +49,11 @@ function getInstancesFilePath(): string {
 }
 
 function getDefaultUserDataDir(): string {
-  const appdata = process.env.APPDATA;
-  if (!appdata) { throw new Error('APPDATA 环境变量不存在'); }
+  const appDataDir = getAppDataDir();
   // 优先检测实际存在的目录，兼容 Windsurf / Windsurf - Next
   const candidates = [
-    path.join(appdata, 'Windsurf'),
-    path.join(appdata, 'Windsurf - Next'),
+    path.join(appDataDir, 'Windsurf'),
+    path.join(appDataDir, 'Windsurf - Next'),
   ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
@@ -349,6 +349,13 @@ async function detectWindsurfExePath(): Promise<string | null> {
 }
 
 async function doDetectWindsurfExePath(): Promise<string | null> {
+  if (isWindows) {
+    return doDetectWindsurfExePathWindows();
+  }
+  return doDetectWindsurfExePathUnix();
+}
+
+async function doDetectWindsurfExePathWindows(): Promise<string | null> {
   // 1. 从已运行的 Windsurf 进程取 exe 路径（异步，不阻塞）
   const entries = await getRunningWindsurfEntries();
   for (const [pid] of entries) {
@@ -407,6 +414,42 @@ Get-ItemProperty $paths -ErrorAction SilentlyContinue |
   return null;
 }
 
+async function doDetectWindsurfExePathUnix(): Promise<string | null> {
+  const home = os.homedir();
+
+  // 1. 常见安装路径
+  const candidates = isMac
+    ? [
+        '/Applications/Windsurf.app/Contents/MacOS/Electron',
+        path.join(home, 'Applications', 'Windsurf.app', 'Contents', 'MacOS', 'Electron'),
+      ]
+    : [
+        '/usr/bin/windsurf',
+        '/usr/local/bin/windsurf',
+        '/snap/bin/windsurf',
+        path.join(home, '.local', 'bin', 'windsurf'),
+        '/opt/Windsurf/windsurf',
+        '/opt/windsurf/windsurf',
+        '/usr/share/windsurf/windsurf',
+        '/usr/lib/windsurf/windsurf',
+        path.join(home, '.local', 'opt', 'windsurf', 'windsurf'),
+      ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+
+  // 2. which 查询 PATH
+  try {
+    const out = cp.execSync('which windsurf', {
+      encoding: 'utf8', timeout: 3000
+    });
+    const found = out.trim();
+    if (found && fs.existsSync(found)) return found;
+  } catch { /* ignore */ }
+
+  return null;
+}
+
 export async function startInstance(instanceId: string, onLog?: (msg: string) => void): Promise<void> {
   const log = onLog || (() => {});
 
@@ -427,20 +470,50 @@ export async function startInstance(instanceId: string, onLog?: (msg: string) =>
 
   const exePath = await detectWindsurfExePath();
   if (!exePath) {
-    throw new Error('未找到 Windsurf.exe。请确认已安装 Windsurf，或将其加入 PATH 环境变量');
+    throw new Error('未找到 Windsurf 可执行文件。请确认已安装 Windsurf，或将其加入 PATH 环境变量');
   }
 
   // 通过 CLI 模式启动：ELECTRON_RUN_AS_NODE=1 + cli.js
   // 直接 spawn Windsurf.exe 会被 Electron 单实例锁拦截（exit code 9）
+  // Linux: exePath 可能是 symlink（如 /usr/bin/windsurf → /usr/share/windsurf/bin/windsurf），需要解析真实路径
+  let realExePath = exePath;
+  try { realExePath = fs.realpathSync(exePath); } catch { /* ignore */ }
   const exeDir = path.dirname(exePath);
-  const cliJs = path.join(exeDir, 'resources', 'app', 'out', 'cli.js');
+  const realExeDir = path.dirname(realExePath);
+  const cliJsCandidates: string[] = isMac
+    ? [path.join(exeDir, '..', 'Resources', 'app', 'out', 'cli.js')]
+    : isWindows
+      ? [path.join(exeDir, 'resources', 'app', 'out', 'cli.js')]
+      : [
+          // 直接相对于 exe 目录
+          path.join(exeDir, 'resources', 'app', 'out', 'cli.js'),
+          // 解析 symlink 后的真实路径（../resources 常见于 bin/ 子目录）
+          path.join(realExeDir, 'resources', 'app', 'out', 'cli.js'),
+          path.join(realExeDir, '..', 'resources', 'app', 'out', 'cli.js'),
+          // 已知的 Linux 安装目录
+          '/usr/share/windsurf/resources/app/out/cli.js',
+          '/usr/lib/windsurf/resources/app/out/cli.js',
+          '/opt/windsurf/resources/app/out/cli.js',
+          '/opt/Windsurf/resources/app/out/cli.js',
+          path.join(os.homedir(), '.local', 'opt', 'windsurf', 'resources', 'app', 'out', 'cli.js'),
+        ];
+  const cliJs = cliJsCandidates.find(p => fs.existsSync(p));
 
   let spawnCmd: string;
   let spawnArgs: string[];
   let spawnEnv: NodeJS.ProcessEnv;
 
-  if (fs.existsSync(cliJs)) {
+  if (cliJs) {
     spawnCmd = exePath;
+    // Linux: exePath 可能是 shell wrapper（如 /usr/bin/windsurf），不支持 ELECTRON_RUN_AS_NODE
+    // 从 cli.js 路径推导出实际的 Electron 二进制文件
+    if (!isWindows && !isMac) {
+      const installRoot = path.resolve(path.dirname(cliJs), '..', '..', '..');
+      const actualBinary = path.join(installRoot, 'windsurf');
+      if (fs.existsSync(actualBinary) && actualBinary !== exePath) {
+        spawnCmd = actualBinary;
+      }
+    }
     spawnArgs = [cliJs, '--user-data-dir', inst.userDataDir];
     spawnEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1', VSCODE_DEV: '' };
   } else {
@@ -494,11 +567,18 @@ export async function stopInstance(instanceId: string): Promise<void> {
   }
 
   if (targetPids.length > 0) {
-    // 1. 先优雅关闭主窗口（让 Windsurf 自动保存）
-    const closeScript = targetPids
-      .map(p => `(Get-Process -Id ${p} -ErrorAction SilentlyContinue).CloseMainWindow() | Out-Null`)
-      .join('; ');
-    await runPowerShellAsync(closeScript, 5000);
+    // 1. 先优雅关闭（让 Windsurf 自动保存）
+    if (isWindows) {
+      const closeScript = targetPids
+        .map(p => `(Get-Process -Id ${p} -ErrorAction SilentlyContinue).CloseMainWindow() | Out-Null`)
+        .join('; ');
+      await runPowerShellAsync(closeScript, 5000);
+    } else {
+      // Unix: 发送 SIGTERM
+      for (const p of targetPids) {
+        try { process.kill(p, 'SIGTERM'); } catch { /* ignore */ }
+      }
+    }
 
     // 2. 异步等待最多 3 秒看进程是否退出
     const deadline = Date.now() + 3000;
@@ -516,7 +596,11 @@ export async function stopInstance(instanceId: string): Promise<void> {
       .map(([p]: [number, string | null]) => p);
     for (const p of stillAlive) {
       try {
-        cp.execSync(`taskkill /PID ${p} /T /F`, { timeout: 10000, windowsHide: true });
+        if (isWindows) {
+          cp.execSync(`taskkill /PID ${p} /T /F`, { timeout: 10000, windowsHide: true });
+        } else {
+          process.kill(p, 'SIGKILL');
+        }
       } catch { /* ignore */ }
     }
   }
@@ -529,7 +613,12 @@ export async function stopInstance(instanceId: string): Promise<void> {
 // ─── 进程检测 ───────────────────────────────────────────
 
 function normalizePath(p: string): string {
-  return p.trim().toLowerCase().replace(/\//g, '\\').replace(/\\+$/, '');
+  const trimmed = p.trim();
+  if (isWindows) {
+    return trimmed.toLowerCase().replace(/\//g, '\\').replace(/\\+$/, '');
+  }
+  // Linux/macOS: 统一用正斜杠，不转小写（大小写敏感文件系统）
+  return trimmed.replace(/\\+/g, '/').replace(/\/+$/, '');
 }
 
 /** 通过 EncodedCommand 安全运行 PowerShell（避免引号转义问题） */
@@ -563,6 +652,17 @@ function runPowerShellAsync(script: string, timeoutMs: number): Promise<string |
   });
 }
 
+/** 异步 Shell 执行（Linux/macOS 用） */
+function runShellAsync(cmd: string, timeoutMs: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      cp.exec(cmd, { encoding: 'utf8', timeout: timeoutMs }, (err, stdout) => resolve(err ? null : stdout));
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 // 短期缓存（避免频繁 wmic/powershell 调用）
 let _processCache: { entries: Array<[number, string | null]>; ts: number } | null = null;
 
@@ -572,6 +672,15 @@ async function getRunningWindsurfEntries(forceFresh = false): Promise<Array<[num
     return _processCache.entries;
   }
 
+  const entries = isWindows
+    ? await getRunningWindsurfEntriesWindows()
+    : await getRunningWindsurfEntriesUnix();
+
+  _processCache = { entries, ts: Date.now() };
+  return entries;
+}
+
+async function getRunningWindsurfEntriesWindows(): Promise<Array<[number, string | null]>> {
   const entries: Array<[number, string | null]> = [];
 
   // 1. 优先使用 PowerShell（异步，不阻塞事件循环）
@@ -589,7 +698,6 @@ async function getRunningWindsurfEntries(forceFresh = false): Promise<Array<[num
         // 没有 --user-data-dir 的主进程 = 使用默认目录
         entries.push([pid, m ? m[1].trim() : getDefaultUserDataDir()]);
       }
-      _processCache = { entries, ts: Date.now() };
       return entries;
     }
   } catch {
@@ -615,7 +723,40 @@ async function getRunningWindsurfEntries(forceFresh = false): Promise<Array<[num
     }
   } catch { /* ignore */ }
 
-  _processCache = { entries, ts: Date.now() };
+  return entries;
+}
+
+async function getRunningWindsurfEntriesUnix(): Promise<Array<[number, string | null]>> {
+  const entries: Array<[number, string | null]> = [];
+
+  // 使用 ps + grep 查找 windsurf 进程
+  try {
+    const stdout = await runShellAsync('ps aux', 5000);
+    if (!stdout) return entries;
+
+    const lines = stdout.split('\n');
+    for (const line of lines) {
+      // 匹配包含 windsurf 的进程行（排除 grep 自身和子进程 --type=）
+      if (!/windsurf/i.test(line) || /grep/i.test(line) || /--type=/i.test(line)) continue;
+
+      const parts = line.trim().split(/\s+/);
+      const pid = parseInt(parts[1], 10);
+      if (!pid || isNaN(pid)) continue;
+
+      // 尝试从 /proc/<pid>/cmdline 获取完整命令行（更精确）
+      let cmdline = '';
+      try {
+        cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+      } catch {
+        // macOS 没有 /proc，使用 ps 行的剩余部分
+        cmdline = parts.slice(10).join(' ');
+      }
+
+      const m = cmdline.match(/--user-data-dir[= ]+["']?([^"'\0]+?)["']?(?:\s+--|\s*$)/i);
+      entries.push([pid, m ? m[1].trim() : getDefaultUserDataDir()]);
+    }
+  } catch { /* ignore */ }
+
   return entries;
 }
 
@@ -644,24 +785,35 @@ export async function focusInstance(instanceId: string): Promise<void> {
   if (!match) throw new Error('实例未运行');
 
   const pid = match[0];
-  const script = `
-    Add-Type @'
-      using System;
-      using System.Runtime.InteropServices;
-      public class WinFocus {
-        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-        [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
-        [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
-      }
+
+  if (isWindows) {
+    const script = `
+      Add-Type @'
+        using System;
+        using System.Runtime.InteropServices;
+        public class WinFocus {
+          [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+          [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
+          [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+        }
 '@
-    $p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue
-    if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
-      $h = $p.MainWindowHandle
-      if ([WinFocus]::IsIconic($h)) { [WinFocus]::ShowWindow($h, 9) }
-      [WinFocus]::SetForegroundWindow($h)
+      $p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue
+      if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
+        $h = $p.MainWindowHandle
+        if ([WinFocus]::IsIconic($h)) { [WinFocus]::ShowWindow($h, 9) }
+        [WinFocus]::SetForegroundWindow($h)
+      }
+    `;
+    await runPowerShellAsync(script, 5000);
+  } else {
+    // Linux: 尝试 xdotool（best effort）
+    // macOS: 尝试 osascript
+    if (isMac) {
+      await runShellAsync(`osascript -e 'tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true'`, 3000);
+    } else {
+      await runShellAsync(`xdotool search --pid ${pid} --onlyvisible windowactivate 2>/dev/null || wmctrl -i -a $(wmctrl -lp | awk '$3==${pid}{print $1; exit}') 2>/dev/null`, 3000);
     }
-  `;
-  await runPowerShellAsync(script, 5000);
+  }
 }
 
 // ─── 绑定标记读取 ───────────────────────────────────────
@@ -713,8 +865,12 @@ export function getCurrentUserDataDir(): string {
   return _currentDirCache;
 }
 
-/** 查询单个进程的命令行和父进程 PID（PowerShell 优先，wmic 回退） */
+/** 查询单个进程的命令行和父进程 PID（跨平台） */
 function queryProcessInfo(pid: number): { commandLine: string; parentPid: number } | null {
+  if (!isWindows) {
+    return queryProcessInfoUnix(pid);
+  }
+
   // PowerShell
   const psCmd = `Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" | Select-Object CommandLine,ParentProcessId | ConvertTo-Json -Compress`;
   const stdout = runPowerShell(psCmd, 5000);
@@ -745,9 +901,44 @@ function queryProcessInfo(pid: number): { commandLine: string; parentPid: number
   return null;
 }
 
+function queryProcessInfoUnix(pid: number): { commandLine: string; parentPid: number } | null {
+  // Linux: 读取 /proc 文件系统
+  try {
+    const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+    const statContent = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const ppidMatch = statContent.match(/^\d+ \([^)]*\) \S+ (\d+)/);
+    return {
+      commandLine: cmdline,
+      parentPid: ppidMatch ? parseInt(ppidMatch[1], 10) : 0
+    };
+  } catch { /* /proc 不可用（macOS） */ }
+
+  // macOS / 通用回退: ps
+  try {
+    const psOut = cp.execSync(`ps -p ${pid} -o ppid=,command=`, {
+      encoding: 'utf8', timeout: 3000
+    });
+    const trimmed = psOut.trim();
+    const spaceIdx = trimmed.indexOf(' ');
+    return {
+      commandLine: spaceIdx >= 0 ? trimmed.slice(spaceIdx + 1) : '',
+      parentPid: parseInt(trimmed, 10) || 0
+    };
+  } catch { /* ignore */ }
+
+  return null;
+}
+
 // ─── 从 Cockpit Tools 导入实例 ───────────────────────────────
 
-const COCKPIT_INSTANCES_DIR = path.join(process.env.APPDATA || '', '.antigravity_cockpit', 'instances', 'windsurf');
+function getCockpitInstancesDir(): string {
+  try {
+    return path.join(getAppDataDir(), '.antigravity_cockpit', 'instances', 'windsurf');
+  } catch {
+    // getAppDataDir 可能在极端环境下抛异常，回退到 home 目录
+    return path.join(os.homedir(), '.antigravity_cockpit', 'instances', 'windsurf');
+  }
+}
 
 type CockpitInstance = { id: string; dir: string; name?: string; bindEmail?: string; imported?: boolean };
 
@@ -775,12 +966,12 @@ export function listCockpitInstances(forceFresh = false): CockpitInstance[] {
 
 function scanCockpitInstances(): Array<Omit<CockpitInstance, 'imported'>> {
   const result: Array<Omit<CockpitInstance, 'imported'>> = [];
-  if (!fs.existsSync(COCKPIT_INSTANCES_DIR)) return result;
+  if (!fs.existsSync(getCockpitInstancesDir())) return result;
 
-  const dirs = fs.readdirSync(COCKPIT_INSTANCES_DIR, { withFileTypes: true });
+  const dirs = fs.readdirSync(getCockpitInstancesDir(), { withFileTypes: true });
   for (const d of dirs) {
     if (!d.isDirectory()) continue;
-    const instDir = path.join(COCKPIT_INSTANCES_DIR, d.name);
+    const instDir = path.join(getCockpitInstancesDir(), d.name);
     const bindEmail = readBindMarkFromStateDb(instDir);
     result.push({
       id: d.name,
@@ -881,7 +1072,7 @@ function readBindMarkFromStateDb(instDir: string): string | null {
 }
 
 export async function importCockpitInstance(cockpitId: string, newName: string, newBindEmail: string): Promise<InstanceConfig> {
-  const cockpitDir = path.join(COCKPIT_INSTANCES_DIR, cockpitId);
+  const cockpitDir = path.join(getCockpitInstancesDir(), cockpitId);
   if (!fs.existsSync(cockpitDir)) { throw new Error('Cockpit 实例不存在'); }
 
   const store = loadStore();

@@ -38,11 +38,34 @@ Windsurf 无感换号：在编辑器侧栏内集中管理多个账号，一键�
 4. 在「自动切号」面板开启自动切换、调整阈值（默认 10%）。
 5. 通过卡片右上角的排序按钮选择排序方式。
 
+## 系统要求
+
+| 平台 | 最低版本 | 备注 |
+|------|----------|------|
+| **Windows** | v1.x+ | 完整支持 |
+| **macOS** | **v4.13.2+** | 依赖跨平台适配（旧版本会报 `APPDATA 环境变量不存在`） |
+| **Linux** | **v4.13.2+** | 同上；多实例窗口聚焦需额外安装 `xdotool` 或 `wmctrl` |
+
+> ⚠️ **macOS / Linux 用户请务必使用 v4.13.2+**。早期版本未适配跨平台路径，在非 Windows 系统上启动会直接报错。
+
 ## 安装
 
 1. 下载最新的 `.vsix` 包。
 2. VS Code / Windsurf：命令面板 → `Extensions: Install from VSIX...`，选择该文件。
 3. 首次切号时会自动提示应用 Session 注入补丁；按提示重启 Windsurf 即可。
+
+### macOS / Linux 首次使用补充
+
+Windsurf 主体安装在 `/Applications/`（macOS）或 `/usr/share/windsurf/`、`/opt/windsurf/`（Linux）时，需要写权限才能应用补丁。扩展检测到不可写时会自动弹提示并提供一键复制的 `chmod` 命令：
+
+```bash
+# 示例（实际路径以提示为准）
+sudo chmod -R a+w "/Applications/Windsurf.app"        # macOS
+sudo chmod -R a+w "/usr/share/windsurf"               # Linux .deb
+sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
+```
+
+执行完重启 Windsurf 即可；用户级安装（`~/.local/opt/windsurf/`）无需此步骤。
 
 ## 安全与隐私
 
@@ -87,6 +110,18 @@ npm run package      # 生成 vsix
 按 `F5` 启动扩展开发宿主进行调试。
 
 ## 更新日志
+
+### v4.13.2
+- **跨平台兼容（macOS / Linux 关键修复）**：
+  - 修复旧版在非 Windows 系统上启动报 `APPDATA 环境变量不存在` 的错误。
+  - `getAppDataDir()` 增加跨平台分支：Windows `%APPDATA%` / macOS `~/Library/Application Support` / Linux `$XDG_CONFIG_HOME` 或 `~/.config`。
+- **多实例跨平台启动**：
+  - Linux 可执行文件检测增加 `/usr/share/windsurf/`、`/usr/lib/windsurf/`、`~/.local/opt/windsurf/` 等路径。
+  - CLI 模式启动使用 `realpathSync` 解析 symlink，并从 `cli.js` 反推出真实 Electron 二进制位置（避免 shell wrapper 不支持 `ELECTRON_RUN_AS_NODE`）。
+  - 多实例面板以往仅 Windows 可见，现在全平台可用。
+  - 进程检测：Linux/macOS 改用 `ps aux` + `/proc/<pid>/cmdline`；stop 使用 SIGTERM→SIGKILL；focus 使用 `osascript`（macOS）/ `xdotool` 或 `wmctrl`（Linux）。
+- **权限友好提示**：激活时检测 Windsurf 安装目录是否可写，不可写时弹一次提示并提供一键复制的 `sudo chmod` 命令，点击「不再提示」后不再骚扰。
+- **提示音 / 音频文件**：macOS 使用 `afplay`，Linux 使用 `paplay`→`aplay` 回退；UI placeholder 改为跨平台描述。
 
 ### v4.13.0
 - **账号启用/禁用**：每张卡片新增眼睛图标按钮，点击切换启用/禁用状态；禁用的账号半透明显示并标记「已禁用」。

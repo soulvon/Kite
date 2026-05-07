@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 import { SidebarProvider } from './sidebarProvider';
 import { applyPatch, applyI18nOnly } from './sessionInjector';
 import * as accountStore from './accountStore';
@@ -7,6 +9,7 @@ import { AutoSwitcher } from './autoSwitcher';
 import { checkForUpdates, autoCheckOnStartup } from './updater';
 import { ensureEnhancement, restoreWorkbench } from './enhancementInjector';
 import { ensureBubbleRules, injectBubbleRules, removeBubbleRules, hasBubbleRules } from './rulesInjector';
+import { isWindows, isMac, isWritable } from './utils';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
@@ -25,6 +28,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // 自动检查更新（延迟 30 秒）
   autoCheckOnStartup();
+
+  // macOS/Linux: 检测安装目录是否可写，不可写则提示一次
+  checkInstallPermission(context);
 
   // 创建侧栏提供器
   sidebarProvider = new SidebarProvider(context.extensionUri, context, autoSwitcher);
@@ -309,6 +315,52 @@ async function autoSwitchByBindMark(context: vscode.ExtensionContext) {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * 检测 Windsurf 安装目录是否可写（macOS/Linux 系统级安装常见问题）
+ * 不可写时弹一次提示，记住用户选择
+ */
+function checkInstallPermission(context: vscode.ExtensionContext): void {
+  // Windows 不需要：用户级安装目录默认可写
+  if (isWindows) return;
+
+  // 已提示过则跳过
+  const DISMISS_KEY = 'windsurfPool.permissionWarningDismissed';
+  if (context.globalState.get<boolean>(DISMISS_KEY)) return;
+
+  const appRoot = vscode.env.appRoot;
+  // 关键文件：会话补丁需要写 extension.js，增强需要写 workbench.html
+  const targets = [
+    path.join(appRoot, 'extensions', 'windsurf', 'dist', 'extension.js'),
+    path.join(appRoot, 'extensions', 'windsurf', 'out', 'extension.js'),
+    path.join(appRoot, 'out', 'vs', 'code', 'electron-browser', 'workbench', 'workbench.html'),
+    path.join(appRoot, 'out', 'vs', 'code', 'browser', 'workbench', 'workbench.html'),
+  ];
+
+  // 任意一个存在且不可写即触发提示
+  const blocked = targets.find(p => fs.existsSync(p) && !isWritable(p));
+  if (!blocked) return;
+
+  // 推断安装根目录（用于生成 chmod 命令）
+  const installDir = isMac
+    ? appRoot.replace(/\/Contents\/Resources\/app$/, '')  // .app bundle
+    : appRoot.replace(/\/resources\/app$/, '');           // Linux 安装目录
+
+  const chmodCmd = `sudo chmod -R a+w "${installDir}"`;
+
+  vscode.window.showWarningMessage(
+    `检测到 Windsurf 安装目录无写权限，无法应用切号补丁和增强注入。\n请在终端执行：\n${chmodCmd}\n执行后重启 Windsurf 即可。`,
+    '复制命令',
+    '已了解，不再提示'
+  ).then(action => {
+    if (action === '复制命令') {
+      vscode.env.clipboard.writeText(chmodCmd);
+      vscode.window.showInformationMessage('命令已复制到剪贴板');
+    } else if (action === '已了解，不再提示') {
+      context.globalState.update(DISMISS_KEY, true);
+    }
+  });
 }
 
 export function deactivate() {

@@ -262,11 +262,14 @@ export class AutoSwitcher implements vscode.Disposable {
 
   private async _checkAndSwitch(): Promise<void> {
     const s = this.settings;
-    if (!s.enabled) return;
-    if (Date.now() < this._cooldownUntil) return;
+    if (!s.enabled) { console.log('[autoSwitch] skip: disabled'); return; }
+    if (Date.now() < this._cooldownUntil) {
+      console.log(`[autoSwitch] skip: cooldown ${Math.ceil((this._cooldownUntil - Date.now()) / 1000)}s`);
+      return;
+    }
 
     const curEmail = this._ctx.globalState.get<string>('lastEmail');
-    if (!curEmail) return;
+    if (!curEmail) { console.log('[autoSwitch] skip: no current account'); return; }
 
     // 当前号缓存过期则先刷新
     const curEntry = this._cache.get(curEmail);
@@ -274,21 +277,35 @@ export class AutoSwitcher implements vscode.Disposable {
       await this.refreshSingle(curEmail, true);
     }
 
-    const snap = this._cache.get(curEmail)?.snapshot;
-    if (!snap) return;
+    const freshEntry = this._cache.get(curEmail);
+    const snap = freshEntry?.snapshot;
+    if (!snap) {
+      console.log(`[autoSwitch] skip: no snapshot for ${curEmail}${freshEntry?.error ? ' err=' + freshEntry.error : ''}`);
+      return;
+    }
 
     const dPct = clamp(snap.dailyRemainingPercent);
     const wPct = clamp(snap.weeklyRemainingPercent);
     const curScore = calcScore(dPct, wPct, s.scoreMode);
+    const minPct = Math.min(dPct, wPct);
+    const minQ = s.minQuota ?? 10;
 
-    if (curScore > s.threshold) {
+    // 硬约束：若任一维度低于 minQuota，视为当前号不可用，强制触发切号
+    // 这避免了 scoreMode='daily' 时日限充足但周限耗尽却不切号的陷阱
+    const hardExhausted = minPct <= minQ;
+
+    if (!hardExhausted && curScore > s.threshold) {
       // 当前号额度充足，无需切换；不发空消息以免覆盖之前状态
       return;
     }
 
     // 确定瓶颈原因
     let reason: string;
-    if (dPct <= s.threshold && wPct <= s.threshold) {
+    if (hardExhausted && minPct === wPct && wPct < dPct) {
+      reason = `周配额耗尽 ${Math.round(wPct)}%`;
+    } else if (hardExhausted && minPct === dPct && dPct < wPct) {
+      reason = `日配额耗尽 ${Math.round(dPct)}%`;
+    } else if (dPct <= s.threshold && wPct <= s.threshold) {
       reason = `日 ${Math.round(dPct)}% / 周 ${Math.round(wPct)}%`;
     } else if (s.scoreMode === 'daily' || dPct <= s.threshold) {
       reason = `日配额 ${Math.round(dPct)}%`;
@@ -296,11 +313,12 @@ export class AutoSwitcher implements vscode.Disposable {
       reason = `周配额 ${Math.round(wPct)}%`;
     }
 
-    // 寻找最佳候选
-    const cand = this._findBest(curEmail, s.threshold, s.scoreMode);
+    // 寻找最佳候选（传入 curScore，使候选至少比当前号好）
+    const cand = this._findBest(curEmail, s.threshold, s.scoreMode, curScore);
     if (!cand) {
       const log = `[${ts()}] ${curEmail} ${reason} 低于阈值，无可用候选`;
       this._onSwitchEvent?.(log, `${curEmail} ${reason} 低于阈值，无可用候选`, 'warn');
+      console.log(`[autoSwitch] ${curEmail} curScore=${Math.round(curScore)} d=${Math.round(dPct)} w=${Math.round(wPct)} no candidates`);
       return;
     }
 
@@ -369,7 +387,7 @@ export class AutoSwitcher implements vscode.Disposable {
     return { email: cand.email };
   }
 
-  private _findBest(curEmail: string, threshold: number, mode: ScoreMode): { email: string; score: number } | null {
+  private _findBest(curEmail: string, threshold: number, mode: ScoreMode, curScore: number = 0): { email: string; score: number } | null {
     const s = this.settings;
     const strategy = s.switchStrategy || 'lowestNonZero';
     const minQ = s.minQuota ?? 10;
@@ -393,6 +411,13 @@ export class AutoSwitcher implements vscode.Disposable {
       }
     }
 
+    // 候选阈值：取 max(传入 threshold, 当前号 score)
+    // 语义：候选必须比当前号好；如果当前号 score 已经低于 threshold，则用 curScore 做下限
+    // 避免 threshold 过高导致"无可用候选"的陷阱
+    const effectiveThreshold = Math.max(threshold, curScore);
+    let rejectedDueToThreshold = 0;
+    let rejectedDueToMinQ = 0;
+
     for (const [email, entry] of this._cache.entries()) {
       if (email === curEmail) continue;
       if (disabledSet.has(email)) continue;
@@ -407,16 +432,20 @@ export class AutoSwitcher implements vscode.Disposable {
       const dPct = clamp(entry.snapshot.dailyRemainingPercent);
       const wPct = clamp(entry.snapshot.weeklyRemainingPercent);
 
-      // 关键修复：周限和日限是 AND 关系，任一耗尽即不可用
+      // 硬约束：周限和日限是 AND 关系，任一耗尽即不可用
       // 不能因 scoreMode='daily' 就忽略周限制约（反之亦然）
       const minViable = Math.min(dPct, wPct);
-      if (minViable <= minQ) continue; // 任一维度低于额度下限，视为不可用
+      if (minViable <= minQ) { rejectedDueToMinQ++; continue; }
 
       const score = calcScore(dPct, wPct, mode);
-      if (score > threshold) candidates.push({ email, score });
+      if (score > effectiveThreshold) candidates.push({ email, score });
+      else rejectedDueToThreshold++;
     }
 
-    if (candidates.length === 0) return null;
+    if (candidates.length === 0) {
+      console.log(`[autoSwitch] findBest: no candidates (checked ${this._cache.size}, rejected minQ=${rejectedDueToMinQ} threshold=${rejectedDueToThreshold}, effectiveThreshold=${effectiveThreshold})`);
+      return null;
+    }
 
     if (strategy === 'lowestNonZero') {
       // 分两组：已用号（score ≤ prefUsed）和满额号（score > prefUsed）
