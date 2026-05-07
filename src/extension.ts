@@ -9,6 +9,7 @@ import { AutoSwitcher } from './autoSwitcher';
 import { checkForUpdates, autoCheckOnStartup } from './updater';
 import { ensureEnhancement, restoreWorkbench } from './enhancementInjector';
 import { ensureBubbleRules, injectBubbleRules, removeBubbleRules, hasBubbleRules } from './rulesInjector';
+import { fixChecksums, restoreProductJson, getChecksumStatus } from './checksumFixer';
 import { isWindows, isMac, isWritable } from './utils';
 
 let sidebarProvider: SidebarProvider;
@@ -198,9 +199,16 @@ export function activate(context: vscode.ExtensionContext) {
     console.error('[windsurf-pool] Enhancement injection failed:', err);
   }
 
-  // [Windsurf 增强] 恢复原始 workbench.html 命令
+  // 统一在 ensureEnhancement 之后执行 checksum 修复：
+  // - 增强注入后：workbench.html 哈希已变，需要重算写回
+  // - 未注入时：检测到无需修改则直接跳过，开销忽略不计（~几十 ms 一次性）
+  // - Windsurf 升级覆盖 product.json 后：此处会再次自动修复
+  try { autoFixChecksums(); } catch (err) { console.error('[windsurf-pool] Checksum fix failed:', err); }
+
+  // [Windsurf 增强] 恢复原始 workbench.html 命令（一并恢复 product.json）
   const restoreCmd = vscode.commands.registerCommand('windsurfPool.restoreWorkbench', async () => {
     const restored = restoreWorkbench();
+    const productRestored = restoreProductJson();
     // 同步关闭开关，避免下次 activate 又自动注入；并清理 bubble rules
     await vscode.workspace.getConfiguration('windsurfPool.enhancement').update('enabled', false, vscode.ConfigurationTarget.Global);
     try { removeBubbleRules(); } catch {}
@@ -208,8 +216,11 @@ export function activate(context: vscode.ExtensionContext) {
     // 通知 webview 刷新状态
     try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
 
-    if (restored) {
-      const action = await vscode.window.showInformationMessage('已恢复原始 workbench.html，重启后生效。', '立即重启');
+    if (restored || productRestored) {
+      const parts: string[] = [];
+      if (restored) parts.push('workbench.html');
+      if (productRestored) parts.push('product.json');
+      const action = await vscode.window.showInformationMessage(`已恢复原始 ${parts.join(' + ')}，重启后生效。`, '立即重启');
       if (action === '立即重启') {
         vscode.commands.executeCommand('workbench.action.reloadWindow');
       }
@@ -218,6 +229,43 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
   context.subscriptions.push(restoreCmd);
+
+  // [Checksum 修复] 手动重算 product.json 校验值命令
+  const fixChecksumsCmd = vscode.commands.registerCommand('windsurfPool.fixChecksums', async () => {
+    // 单次调用即可完成检测+修复（fixed=0 时不写文件，相当于 dryRun）
+    const result = fixChecksums(false);
+    if (result.error) {
+      vscode.window.showErrorMessage('修复失败：' + result.error);
+      return;
+    }
+    if (result.total === 0) {
+      vscode.window.showWarningMessage('未找到 product.json 或 checksums 字段');
+      return;
+    }
+
+    const missingNote = result.missing.length > 0
+      ? `（⚠️ ${result.missing.length} 个文件未找到，已跳过）`
+      : '';
+    if (result.missing.length > 0) {
+      console.warn('[windsurf-pool] checksum missing files:', result.missing);
+    }
+
+    if (result.fixed === 0) {
+      vscode.window.showInformationMessage(
+        `product.json 校验值已是最新（${result.unchanged}/${result.total} 项匹配）${missingNote}`
+      );
+      return;
+    }
+
+    const action = await vscode.window.showInformationMessage(
+      `已修复 ${result.fixed}/${result.total} 项校验值，重启后"已损坏"提示将不再出现。${missingNote}`,
+      '立即重启'
+    );
+    if (action === '立即重启') {
+      vscode.commands.executeCommand('workbench.action.reloadWindow');
+    }
+  });
+  context.subscriptions.push(fixChecksumsCmd);
 
   // [Windsurf 增强] 自动注入回复建议提示规则
   try {
@@ -336,6 +384,7 @@ function checkInstallPermission(context: vscode.ExtensionContext): void {
     path.join(appRoot, 'extensions', 'windsurf', 'out', 'extension.js'),
     path.join(appRoot, 'out', 'vs', 'code', 'electron-browser', 'workbench', 'workbench.html'),
     path.join(appRoot, 'out', 'vs', 'code', 'browser', 'workbench', 'workbench.html'),
+    path.join(appRoot, 'product.json'),
   ];
 
   // 任意一个存在且不可写即触发提示
@@ -361,6 +410,27 @@ function checkInstallPermission(context: vscode.ExtensionContext): void {
       context.globalState.update(DISMISS_KEY, true);
     }
   });
+}
+
+/**
+ * 自动修复 product.json 中的 checksums（按配置开关控制，静默执行）
+ * 在补丁/增强应用后或启动时调用，从根本消除"installation appears corrupt"提示
+ */
+function autoFixChecksums(): void {
+  const enabled = vscode.workspace
+    .getConfiguration('windsurfPool.enhancement')
+    .get<boolean>('fixChecksums', true);
+  if (!enabled) return;
+  try {
+    const r = fixChecksums(false);
+    if (r.error) {
+      console.warn('[windsurf-pool] checksum fix:', r.error);
+    } else if (r.fixed > 0) {
+      console.log(`[windsurf-pool] product.json checksums 已修复 ${r.fixed}/${r.total} 项`);
+    }
+  } catch (err) {
+    console.warn('[windsurf-pool] checksum fix exception:', err);
+  }
 }
 
 export function deactivate() {

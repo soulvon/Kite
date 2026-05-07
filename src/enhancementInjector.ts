@@ -1,11 +1,16 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { readEnhSettings } from './enhSettingsStore';
 
 const MARKER_PREFIX = '<!-- ws-better-v';
 const MARKER_SUFFIX = ' -->';
 const BLOCK_START = '<!-- ws-better-start -->';
 const BLOCK_END = '<!-- ws-better-end -->';
+
+// 设置嵌入标记：用于强制重新注入（即便版本相同）以更新嵌入的设置
+const SETTINGS_MARKER_PREFIX = '<!-- ws-better-settings-hash:';
+const SETTINGS_MARKER_SUFFIX = ' -->';
 
 export interface EnhancementResult {
   injected: boolean;
@@ -15,7 +20,7 @@ export interface EnhancementResult {
 
 /**
  * 确保 windsurf-better.js 已注入到 workbench.html
- * 版本不匹配时自动更新
+ * 版本不匹配或共享设置变化时自动更新
  */
 export function ensureEnhancement(): EnhancementResult {
   const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', true);
@@ -30,9 +35,13 @@ export function ensureEnhancement(): EnhancementResult {
 
   const html = fs.readFileSync(workbenchPath, 'utf8');
   const patchVersion = getPatchVersion();
+  const settings = readEnhSettings();
+  const settingsHash = hashSettings(settings);
 
-  // 检查版本标记
-  if (html.includes(`${MARKER_PREFIX}${patchVersion}${MARKER_SUFFIX}`)) {
+  // 同时匹配版本和设置哈希才视为已最新；任一不同都重新注入
+  const versionMatch = html.includes(`${MARKER_PREFIX}${patchVersion}${MARKER_SUFFIX}`);
+  const settingsMatch = html.includes(`${SETTINGS_MARKER_PREFIX}${settingsHash}${SETTINGS_MARKER_SUFFIX}`);
+  if (versionMatch && settingsMatch) {
     return { injected: true, needRestart: false };
   }
 
@@ -64,10 +73,14 @@ export function ensureEnhancement(): EnhancementResult {
   // Trusted Types: 添加 abBubbles
   newHtml = ensureTrustedTypes(newHtml);
 
-  // 注入脚本
+  // 注入脚本：先嵌入共享设置为全局变量，再加载主脚本
+  const settingsJSON = JSON.stringify(settings).replace(/</g, '\\u003c');
+  const settingsBootstrap = `<script>window.__WS_BETTER_INJECTED_SETTINGS__=${settingsJSON};</script>\n`;
   const injection =
     `\n${BLOCK_START}\n` +
     `${MARKER_PREFIX}${patchVersion}${MARKER_SUFFIX}\n` +
+    `${SETTINGS_MARKER_PREFIX}${settingsHash}${SETTINGS_MARKER_SUFFIX}\n` +
+    settingsBootstrap +
     `<script>\n${scriptContent}\n</script>\n` +
     `${BLOCK_END}\n`;
 
@@ -136,6 +149,23 @@ function getPatchVersion(): string {
   if (!content) return '0.0.0';
   const match = content.match(/const VERSION = '([\d.]+)'/);
   return match ? match[1] : '0.0.0';
+}
+
+/**
+ * 计算设置对象的稳定哈希（用于检测设置变化）
+ * 使用排序后的 JSON 字符串避免键顺序差异
+ */
+function hashSettings(settings: Record<string, any>): string {
+  try {
+    const json = JSON.stringify(settings, Object.keys(settings).sort());
+    let h = 0;
+    for (let i = 0; i < json.length; i++) {
+      h = ((h << 5) - h + json.charCodeAt(i)) | 0;
+    }
+    return Math.abs(h).toString(36);
+  } catch {
+    return '0';
+  }
 }
 
 function ensureCSP(html: string): string {

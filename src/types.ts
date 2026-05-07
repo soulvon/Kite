@@ -72,7 +72,9 @@ export type WebviewMessageType =
   | 'getEnhancementStatus'
   | 'toggleEnhancement'
   | 'playNotifySound'
-  | 'browseAudioFile';
+  | 'browseAudioFile'
+  | 'enhLoad'
+  | 'enhSave';
 
 /**
  * Webview 消息
@@ -102,6 +104,7 @@ export interface WebviewMessage {
   emails?: string[];
   tag?: string;
   assignedTag?: string;
+  settings?: Record<string, any>;
 }
 
 /**
@@ -118,7 +121,9 @@ export type BackendMessageType =
   | 'showAlert'
   | 'autoSwitchEvent'
   | 'autoSwitchSettingsSync'
-  | 'audioFileSelected';
+  | 'audioFileSelected'
+  | 'enhLoaded'
+  | 'enhSaved';
 
 export interface UsageMessage {
   type: 'usage';

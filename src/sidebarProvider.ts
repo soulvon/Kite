@@ -9,7 +9,8 @@ import { injectSession } from './sessionInjector';
 import * as instanceManager from './instanceManager';
 import { AutoSwitcher } from './autoSwitcher';
 import { getSignalBridgeScript, handlePoolSignal, PoolSignal } from './signalBridge';
-import { getInjectionStatus } from './enhancementInjector';
+import { getInjectionStatus, ensureEnhancement } from './enhancementInjector';
+import { readEnhSettings, writeEnhSettings, mergeEnhSettings } from './enhSettingsStore';
 import { hasBubbleRules } from './rulesInjector';
 import { playSystemSound } from './soundPlayer';
 
@@ -199,6 +200,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    */
   private async handleMessage(message: WebviewMessage): Promise<void> {
     switch (message.type) {
+      case 'enhLoad': {
+        // webview 启动时拉取磁盘上的真相源
+        const settings = readEnhSettings();
+        this.postMessage({ type: 'enhLoaded', settings } as any);
+        return;
+      }
+      case 'enhSave': {
+        // webview 改了设置 → 写盘 → 重写 workbench.html 嵌入新值 → 提示重启
+        const patch = (message as any).settings || {};
+        const merged = mergeEnhSettings(patch);
+        // 立即重新注入 workbench.html，使下次 reload 即可生效
+        try {
+          ensureEnhancement();
+        } catch (err) {
+          console.warn('[windsurf-pool] re-inject after enhSave failed:', err);
+        }
+        // 回传保存结果（webview 可据此显示"已保存，重启生效"banner）
+        this.postMessage({ type: 'enhSaved', settings: merged } as any);
+        return;
+      }
       case 'loginSave': {
         const { email, password, batch, authMethod, tag } = message;
         if (!email || !password) {
@@ -926,11 +947,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <div class="enhance-option-row">
               <span class="enhance-option-label">主题</span>
               <select class="enhance-select" id="enhBubblesTheme">
-                <option value="emerald">翡翠</option>
-                <option value="aurora">极光</option>
-                <option value="sunset">日落</option>
-                <option value="ocean">海洋</option>
-                <option value="glass">毛玻璃</option>
+                <option value="emerald">绿青蓝（翡翠）</option>
+                <option value="aurora">紫粉（极光）</option>
+                <option value="sunset">橙红（日落）</option>
+                <option value="ocean">深蓝（海洋）</option>
+                <option value="glass">透明（毛玻璃）</option>
                 <option value="dark">暗夜</option>
               </select>
             </div>
@@ -991,23 +1012,175 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               <input type="checkbox" id="enhAutoRecoveryEnabled" checked>
               <span>启用自动恢复</span>
             </label>
-            <label class="enhance-option">
-              <input type="checkbox" id="enhAutoSendContinue" checked>
-              <span>工具上限自动继续</span>
-            </label>
-            <label class="enhance-option">
-              <input type="checkbox" id="enhContinueAfterSwitch" checked>
-              <span>切号后自动发送"继续"</span>
-            </label>
-            <label class="enhance-option">
-              <input type="checkbox" id="enhAutoApproveWebRequests" checked>
-              <span>Web 请求自动批准</span>
-            </label>
-            <div class="enhance-option-row">
-              <span class="enhance-option-label">最大重试</span>
-              <input type="number" class="enhance-select" id="enhRecoveryMaxRetries" value="3" min="1" max="10" style="width:48px;text-align:center">
-              <span class="enhance-option-label">次</span>
-            </div>
+
+            <!-- 网络超时 / 临时故障 -->
+            <details class="enhance-rule-details" open>
+              <summary class="enhance-rule-summary">网络超时 / 临时故障</summary>
+              <div class="enhance-rule-body">
+                <div class="enhance-option-row">
+                  <span class="enhance-option-label">处理方式</span>
+                  <select class="enhance-select" id="ruleNetworkAction" style="flex:1">
+                    <option value="retry">自动重试</option>
+                    <option value="switch-account">切换账号</option>
+                    <option value="notify">仅通知</option>
+                    <option value="ignore">忽略</option>
+                  </select>
+                </div>
+                <div class="enhance-option-row" id="ruleNetworkRetryOpts">
+                  <span class="enhance-option-label">最大重试</span>
+                  <input type="number" class="enhance-select" id="ruleNetworkMaxRetries" value="3" min="1" max="10" style="width:48px;text-align:center">
+                  <span class="enhance-option-label">次</span>
+                  <span class="enhance-option-label" style="margin-left:8px">延迟</span>
+                  <input type="number" class="enhance-select" id="ruleNetworkDelay" value="3" min="1" max="30" style="width:48px;text-align:center">
+                  <span class="enhance-option-label">秒</span>
+                </div>
+                <button class="enhance-test-btn" id="testRetryBtn">测试重试</button>
+                <div class="test-result" id="testRetryResult"></div>
+              </div>
+            </details>
+
+            <!-- 配额耗尽 / 速率限制 -->
+            <details class="enhance-rule-details" open>
+              <summary class="enhance-rule-summary">配额耗尽 / 速率限制</summary>
+              <div class="enhance-rule-body">
+                <div class="enhance-option-row">
+                  <span class="enhance-option-label">处理方式</span>
+                  <select class="enhance-select" id="ruleQuotaAction" style="flex:1">
+                    <option value="switch-account">切换账号</option>
+                    <option value="switch-model">切换模型</option>
+                    <option value="notify">仅通知</option>
+                    <option value="ignore">忽略</option>
+                  </select>
+                </div>
+                <div class="enhance-option-row">
+                  <span class="enhance-option-label">切换后</span>
+                  <select class="enhance-select" id="ruleQuotaAfterAction" style="flex:1">
+                    <option value="auto">智能判断</option>
+                    <option value="send-continue">发送继续</option>
+                    <option value="retry-message">重发消息</option>
+                    <option value="none">不操作</option>
+                  </select>
+                </div>
+                <button class="enhance-test-btn" id="testSwitchAccountBtn">测试切号</button>
+                <div class="test-result" id="testSwitchAccountResult"></div>
+              </div>
+            </details>
+
+            <!-- 模型不可用 -->
+            <details class="enhance-rule-details" open>
+              <summary class="enhance-rule-summary">模型不可用</summary>
+              <div class="enhance-rule-body">
+                <div class="enhance-option-row">
+                  <span class="enhance-option-label">处理方式</span>
+                  <select class="enhance-select" id="ruleModelAction" style="flex:1">
+                    <option value="switch-model">切换模型</option>
+                    <option value="switch-account">切换账号</option>
+                    <option value="retry">自动重试</option>
+                    <option value="notify">仅通知</option>
+                    <option value="ignore">忽略</option>
+                  </select>
+                </div>
+                <div class="enhance-option-row">
+                  <span class="enhance-option-label">切换后</span>
+                  <select class="enhance-select" id="ruleModelAfterAction" style="flex:1">
+                    <option value="send-continue">发送继续</option>
+                    <option value="auto">智能判断</option>
+                    <option value="retry-message">重发消息</option>
+                    <option value="none">不操作</option>
+                  </select>
+                </div>
+                <div class="enhance-option-row" style="flex-wrap:wrap;gap:4px">
+                  <span class="enhance-option-label" style="width:100%">模型优先级（拖拽排序）</span>
+                  <div class="enhance-option-row" style="margin-bottom:4px">
+                    <button class="enhance-test-btn" id="fetchModelsBtn" style="flex:1">获取可用模型列表</button>
+                  </div>
+                  <div id="modelPriorityList" class="model-priority-list"></div>
+                  <div id="availableModelsList" class="available-models-list" style="display:none"></div>
+                  <div class="enhance-option-row" style="margin-top:4px">
+                    <input type="text" class="enhance-select" id="modelPriorityInput" placeholder="手动输入模型名..." style="flex:1">
+                    <button class="enhance-test-btn" id="modelPriorityAdd">添加</button>
+                  </div>
+                </div>
+                <div class="enhance-option-row" style="margin-top:4px;gap:4px">
+                  <span class="enhance-option-label">当前模型:</span>
+                  <span id="currentModelName" style="font-size:12px;color:var(--accent)">-</span>
+                </div>
+                <div class="enhance-option-row" style="gap:4px">
+                  <button class="enhance-test-btn" id="testSwitchModelBtn" style="flex:1">测试切换模型</button>
+                </div>
+                <div class="test-result" id="testSwitchModelResult"></div>
+              </div>
+            </details>
+
+            <!-- 工具调用上限 / 响应截断 -->
+            <details class="enhance-rule-details">
+              <summary class="enhance-rule-summary">工具调用上限 / 响应截断</summary>
+              <div class="enhance-rule-body">
+                <div class="enhance-option-row">
+                  <span class="enhance-option-label">处理方式</span>
+                  <select class="enhance-select" id="ruleContinuationAction" style="flex:1">
+                    <option value="send-continue">发送继续</option>
+                    <option value="notify">仅通知</option>
+                    <option value="ignore">忽略</option>
+                  </select>
+                </div>
+                <label class="enhance-option">
+                  <input type="checkbox" id="enhAutoSendContinue" checked>
+                  <span>自动发送 continue</span>
+                </label>
+                <button class="enhance-test-btn" id="testSendContinueBtn">测试发送 continue</button>
+                <div class="test-result" id="testSendContinueResult"></div>
+              </div>
+            </details>
+
+            <!-- 权限请求 -->
+            <details class="enhance-rule-details">
+              <summary class="enhance-rule-summary">权限请求</summary>
+              <div class="enhance-rule-body">
+                <div class="enhance-option-row">
+                  <span class="enhance-option-label">处理方式</span>
+                  <select class="enhance-select" id="rulePermissionAction" style="flex:1">
+                    <option value="auto-allow">自动允许</option>
+                    <option value="notify">仅通知</option>
+                  </select>
+                </div>
+                <div id="permissionScopeOpts">
+                  <label class="enhance-option"><input type="checkbox" id="permScopeWeb" checked><span>Web 请求</span></label>
+                  <label class="enhance-option"><input type="checkbox" id="permScopeTerminal"><span>终端命令</span></label>
+                  <label class="enhance-option"><input type="checkbox" id="permScopeFile"><span>文件写入</span></label>
+                </div>
+                <button class="enhance-test-btn" id="testPermissionBtn">测试权限检测</button>
+                <div class="test-result" id="testPermissionResult"></div>
+              </div>
+            </details>
+
+            <!-- 需要用户介入 -->
+            <details class="enhance-rule-details">
+              <summary class="enhance-rule-summary">需要用户介入</summary>
+              <div class="enhance-rule-body">
+                <div class="enhance-option-row">
+                  <span class="enhance-option-label">处理方式</span>
+                  <select class="enhance-select" id="ruleUserAction" style="flex:1">
+                    <option value="notify">仅通知</option>
+                    <option value="ignore">忽略</option>
+                  </select>
+                </div>
+                <p class="enhance-hint" style="margin:4px 0 0;font-size:11px;opacity:0.6">登录失效、上下文过长、版本过期等</p>
+              </div>
+            </details>
+
+            <!-- 自定义规则 -->
+            <details class="enhance-rule-details">
+              <summary class="enhance-rule-summary">自定义规则</summary>
+              <div class="enhance-rule-body">
+                <div id="customRulesList"></div>
+                <div class="enhance-option-row" style="margin-top:4px">
+                  <button class="enhance-test-btn" id="customRuleAdd" style="width:100%">+ 添加规则</button>
+                </div>
+              </div>
+            </details>
+
+            <!-- 恢复历史日志 -->
             <details class="enhance-recovery-log-details">
               <summary class="enhance-recovery-log-summary">
                 <span>恢复历史日志</span>
@@ -1016,10 +1189,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               <div class="enhance-recovery-log-toolbar">
                 <select class="enhance-select" id="recoveryLogFilter" style="flex:1">
                   <option value="">全部分类</option>
-                  <option value="A">A 类（重试）</option>
-                  <option value="B">B 类（切号）</option>
-                  <option value="C">C 类（继续）</option>
-                  <option value="D">D 类（通知）</option>
+                  <option value="networkErrors">网络超时</option>
+                  <option value="quotaErrors">配额耗尽</option>
+                  <option value="modelErrors">模型不可用</option>
+                  <option value="continuationErrors">响应截断</option>
+                  <option value="permissionRequests">权限请求</option>
+                  <option value="userIntervention">用户介入</option>
+                  <option value="custom">自定义规则</option>
                 </select>
                 <button class="enhance-test-btn" id="recoveryLogRefresh" title="刷新">刷新</button>
                 <button class="enhance-test-btn" id="recoveryLogClear" title="清空">清空</button>
