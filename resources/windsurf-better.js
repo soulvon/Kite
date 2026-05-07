@@ -4,7 +4,7 @@
  */
 (function () {
 	'use strict';
-	const VERSION = '1.0.2';
+	const VERSION = '1.1.0';
 	const LOG_PREFIX = '[WS-Better]';
 	
 	// ========== 统一配置 ==========
@@ -28,6 +28,16 @@
 		continueAfterSwitch: true,  // 切号后自动发送"继续"而非重发原消息
 		recoveryMaxRetries: 3,
 		recoveryBaseDelay: 5000,
+		// 分类恢复规则
+		recoveryRules: {
+			networkErrors:      { action: 'retry', maxRetries: 3, delay: 3000 },
+			quotaErrors:        { action: 'switch-account', afterAction: 'auto' },
+			modelErrors:        { action: 'switch-model', afterAction: 'send-continue', modelPriority: ['claude-3.5-sonnet', 'gpt-4o', 'claude-3-haiku'] },
+			continuationErrors: { action: 'send-continue' },
+			permissionRequests: { action: 'auto-allow', scope: ['web-request', 'terminal', 'file-write'] },
+			userIntervention:   { action: 'notify' },
+		},
+		customRecoveryRules: [],  // [{name, pattern, action, ...}]
 		// 完成提醒
 		notifyEnabled: true,
 		notifyTrigger: 'always',    // always | error | idle
@@ -39,11 +49,15 @@
 	const STORAGE_KEY = 'ws-better-settings';
 	
 	function loadSettings() {
+		// 优先级：扩展宿主嵌入的设置 > localStorage > 默认值
+		// 嵌入值是真相源（侧栏改设置后扩展会重写 workbench.html）
+		const injected = (typeof window !== 'undefined' && window.__WS_BETTER_INJECTED_SETTINGS__) || null;
 		try {
 			const r = localStorage.getItem(STORAGE_KEY);
-			return r ? { ...DEFAULT_SETTINGS, ...JSON.parse(r) } : { ...DEFAULT_SETTINGS };
+			const local = r ? JSON.parse(r) : {};
+			return { ...DEFAULT_SETTINGS, ...local, ...(injected || {}) };
 		} catch {
-			return { ...DEFAULT_SETTINGS };
+			return { ...DEFAULT_SETTINGS, ...(injected || {}) };
 		}
 	}
 	
@@ -54,6 +68,9 @@
 	}
 	
 	let settings = loadSettings();
+	// 启动时把合并后的真相同步回 localStorage，保证 windsurf-better.js 自己的设置面板
+	// 在不重启的情况下也能反映侧栏改动
+	saveSettings(settings);
 	
 	// ========== 回复建议提示功能 ==========
 	const CHAT_ROOT_SELECTOR = '.chat-client-root';
@@ -71,11 +88,11 @@
 	];
 	
 	const BUBBLE_THEMES = [
-		{ id:'emerald',name:'翡翠',bg:'linear-gradient(135deg,#22c55e,#06b6d4,#3b82f6)',bgHover:'linear-gradient(135deg,#16a34a,#0891b2,#2563eb)',color:'#fff',shadow:'0 2px 8px rgba(34,197,94,.2)',border:'none',letterBg:'rgba(255,255,255,.2)',letterColor:'#fff',tagBg:'linear-gradient(135deg,#22c55e,#06b6d4,#3b82f6)'},
-		{ id:'aurora',name:'极光',bg:'linear-gradient(135deg,#a855f7,#ec4899)',bgHover:'linear-gradient(135deg,#9333ea,#db2777)',color:'#fff',shadow:'0 2px 8px rgba(168,85,247,.2)',border:'none',letterBg:'rgba(255,255,255,.2)',letterColor:'#fff',tagBg:'linear-gradient(135deg,#a855f7,#ec4899)'},
-		{ id:'sunset',name:'日落',bg:'linear-gradient(135deg,#f59e0b,#ef4444)',bgHover:'linear-gradient(135deg,#d97706,#dc2626)',color:'#fff',shadow:'0 2px 8px rgba(245,158,11,.2)',border:'none',letterBg:'rgba(255,255,255,.2)',letterColor:'#fff',tagBg:'linear-gradient(135deg,#f59e0b,#ef4444)'},
-		{ id:'ocean',name:'海洋',bg:'#1e40af',bgHover:'#1e3a8a',color:'#fff',shadow:'0 2px 8px rgba(30,64,175,.25)',border:'none',letterBg:'rgba(255,255,255,.15)',letterColor:'#fff',tagBg:'#1e40af'},
-		{ id:'glass',name:'毛玻璃',bg:'rgba(255,255,255,.08)',bgHover:'rgba(255,255,255,.14)',color:'rgba(255,255,255,.8)',shadow:'0 2px 8px rgba(0,0,0,.1)',border:'1px solid rgba(255,255,255,.12)',letterBg:'rgba(255,255,255,.1)',letterColor:'rgba(255,255,255,.6)',tagBg:'rgba(167,139,250,.3)',blur:true},
+		{ id:'emerald',name:'绿青蓝（翡翠）',bg:'linear-gradient(135deg,#22c55e,#06b6d4,#3b82f6)',bgHover:'linear-gradient(135deg,#16a34a,#0891b2,#2563eb)',color:'#fff',shadow:'0 2px 8px rgba(34,197,94,.2)',border:'none',letterBg:'rgba(255,255,255,.2)',letterColor:'#fff',tagBg:'linear-gradient(135deg,#22c55e,#06b6d4,#3b82f6)'},
+		{ id:'aurora',name:'紫粉（极光）',bg:'linear-gradient(135deg,#a855f7,#ec4899)',bgHover:'linear-gradient(135deg,#9333ea,#db2777)',color:'#fff',shadow:'0 2px 8px rgba(168,85,247,.2)',border:'none',letterBg:'rgba(255,255,255,.2)',letterColor:'#fff',tagBg:'linear-gradient(135deg,#a855f7,#ec4899)'},
+		{ id:'sunset',name:'橙红（日落）',bg:'linear-gradient(135deg,#f59e0b,#ef4444)',bgHover:'linear-gradient(135deg,#d97706,#dc2626)',color:'#fff',shadow:'0 2px 8px rgba(245,158,11,.2)',border:'none',letterBg:'rgba(255,255,255,.2)',letterColor:'#fff',tagBg:'linear-gradient(135deg,#f59e0b,#ef4444)'},
+		{ id:'ocean',name:'深蓝（海洋）',bg:'#1e40af',bgHover:'#1e3a8a',color:'#fff',shadow:'0 2px 8px rgba(30,64,175,.25)',border:'none',letterBg:'rgba(255,255,255,.15)',letterColor:'#fff',tagBg:'#1e40af'},
+		{ id:'glass',name:'透明（毛玻璃）',bg:'rgba(255,255,255,.08)',bgHover:'rgba(255,255,255,.14)',color:'rgba(255,255,255,.8)',shadow:'0 2px 8px rgba(0,0,0,.1)',border:'1px solid rgba(255,255,255,.12)',letterBg:'rgba(255,255,255,.1)',letterColor:'rgba(255,255,255,.6)',tagBg:'rgba(167,139,250,.3)',blur:true},
 		{ id:'dark',name:'暗夜',bg:'#1f2937',bgHover:'#111827',color:'#e5e7eb',shadow:'0 2px 8px rgba(0,0,0,.3)',border:'1px solid rgba(255,255,255,.08)',letterBg:'rgba(255,255,255,.1)',letterColor:'#9ca3af',tagBg:'#374151'},
 	];
 	const BUBBLE_SHAPES = [{id:'pill',radius:'20px'},{id:'rounded',radius:'10px'},{id:'soft',radius:'6px'},{id:'sharp',radius:'2px'}];
@@ -157,21 +174,49 @@
 		const inputEl = findInputEl();
 		if (!inputEl) { logBubbles('找不到输入框'); return false; }
 		inputEl.focus();
-		if (inputEl.getAttribute('data-lexical-editor') === 'true') {
+
+		// 方案1: Lexical editor — execCommand (最常见)
+		if (inputEl.getAttribute('data-lexical-editor') === 'true' || inputEl.contentEditable === 'true') {
 			const sel = window.getSelection();
-			if (sel && inputEl.firstChild) { sel.selectAllChildren(inputEl); sel.deleteFromDocument(); }
-			document.execCommand('insertText', false, text);
+			if (sel) {
+				const range = document.createRange();
+				range.selectNodeContents(inputEl);
+				sel.removeAllRanges(); sel.addRange(range);
+				sel.deleteFromDocument();
+			}
+			const ok = document.execCommand('insertText', false, text);
+			if (ok && (inputEl.textContent || '').trim().length > 0) {
+				inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+				logBubbles('已写入(execCommand)');
+				return true;
+			}
+
+			// 方案2: 合成 paste 事件
+			try {
+				if (sel) { const r = document.createRange(); r.selectNodeContents(inputEl); sel.removeAllRanges(); sel.addRange(r); }
+				const dt = new DataTransfer();
+				dt.setData('text/plain', text);
+				const pasteEvent = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+				inputEl.dispatchEvent(pasteEvent);
+				if ((inputEl.textContent || '').trim().length > 0) {
+					logBubbles('已写入(合成paste)');
+					return true;
+				}
+			} catch (e) { /* paste 失败，继续下一方案 */ }
+
+			// 方案3: DOM 直接操作 (fallback)
+			inputEl.innerHTML = '';
+			text.split('\n').forEach(line => {
+				const p = document.createElement('p');
+				p.textContent = line || '\u200B';
+				inputEl.appendChild(p);
+			});
 			inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-			logBubbles('已写入(Lexical)');
+			logBubbles('已写入(DOM fallback)');
 			return true;
 		}
-		if (inputEl.contentEditable === 'true') {
-			inputEl.textContent = '';
-			document.execCommand('insertText', false, text);
-			inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-			logBubbles('已写入(contenteditable)');
-			return true;
-		}
+
+		// textarea / input
 		if (inputEl.tagName === 'TEXTAREA' || inputEl.tagName === 'INPUT') {
 			const ns = Object.getOwnPropertyDescriptor(inputEl.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value')?.set;
 			if (ns) ns.call(inputEl, text); else inputEl.value = text;
@@ -180,6 +225,8 @@
 			logBubbles('已写入(textarea)');
 			return true;
 		}
+
+		// 最终兜底
 		inputEl.innerHTML = '';
 		text.split('\n').forEach(line => {
 			const p = document.createElement('p');
@@ -1270,6 +1317,32 @@
 		['Add " *" at the end of a command for prefix matching (e.g., "git *" matches all git commands).', '在命令末尾添加 " *" 进行前缀匹配（例如 "git *" 匹配所有 git 命令）。'],
 
 		// ========== DeepWiki ==========
+		// ========== 智能体/模型切换 ==========
+		['Send the task to a single model', '发送任务到单个模型'],
+		['Select multiple models to compare', '选择多个模型进行对比'],
+		['Devin Local', 'Devin 本地'],
+		['Describe your task to Devin', '向 Devin 描述你的任务'],
+		['Switch agent location', '切换智能体位置'],
+		['Switch agent', '切换智能体'],
+		['See more', '查看更多'],
+		['Model provider unreachable', '模型提供商不可达'],
+		['Purchase extra usage to continue using premium models', '购买额外用量以继续使用高级模型'],
+		['Your included weekly usage quota is exhausted.', '您的每周配额已用完。'],
+		['Your included weekly usage quota is exhausted', '您的每周配额已用完'],
+		['Devin AI coding agent via Devin for Terminal', 'Devin AI 编程智能体，通过 Devin for Terminal'],
+		['Devin Cloud', 'Devin 云端'],
+		['Cannot switch agents during an active session', '无法在活动会话期间切换智能体'],
+		['Cannot switch modes after cascade has started', '无法在 Cascade 开始后切换模式'],
+		['Reasoning Effort', '推理强度'],
+		['Prompt cache has expired.', '提示缓存已过期。'],
+		['Prompt cache has expired', '提示缓存已过期'],
+		['Higher cost expected.', '预计费用更高。'],
+		['Higher cost expected', '预计费用更高'],
+		['Install Update', '安装更新'],
+		['Your modified files:', '你修改的文件：'],
+		['Your modified files', '你修改的文件'],
+		['Auto-fix', '自动修复'],
+
 		['DeepWiki', 'DeepWiki'],
 		['Welcome to DeepWiki', '欢迎使用 DeepWiki'],
 		['Right-click on a symbol and select', '右键点击符号并选择'],
@@ -1359,6 +1432,18 @@
 		[/^context length exceeded$/i, '上下文长度超限'],
 		[/^prompt is too long$/i, '提示词过长'],
 		[/^maximum context length\s*(.*)$/i, '已达最大上下文长度 $1'],
+		[/^Send the task to a single model\s*\((.+)\)$/i, '发送任务到单个模型 ($1)'],
+		[/^Select multiple models to compare\s*\((.+)\)$/i, '选择多个模型进行对比 ($1)'],
+		[/^Switch agent location\s*\((.+)\)$/i, '切换智能体位置 ($1)'],
+		[/^Switch agent\s*\((.+)\)$/i, '切换智能体 ($1)'],
+		[/^Describe your task to Devin$/i, '向 Devin 描述你的任务'],
+		[/^Invalid argument:\s*The third-party model provider is experiencing issues and is currently not available\.\s*Please try this model again later\.\s*\(trace ID:\s*([^)]+?)\)?\.?$/i, '参数无效：第三方模型提供商出现问题，当前不可用。请稍后重试此模型。（跟踪 ID：$1）'],
+		[/^Invalid argument:\s*The third-party model provider is experiencing issues and is currently not available\.\s*Please try this model again later\.?$/i, '参数无效：第三方模型提供商出现问题，当前不可用。请稍后重试此模型。'],
+		[/^Model provider unreachable$/i, '模型提供商不可达'],
+		[/^Purchase extra usage to continue using premium models\s*\u2192?$/i, '购买额外用量以继续使用高级模型 →'],
+		[/^Cannot switch agents during an active session\s*\((.+)\)$/i, '无法在活动会话期间切换智能体 ($1)'],
+		[/^Plan ends in (\d+) days?$/i, '套餐将在 $1 天后到期'],
+		[/^(\d+)%\s*\(([^)]+)\)\s*context used$/i, '$1% ($2) 上下文已用'],
 	];
 	
 	function logLocalization(...args) { console.log(LOG_PREFIX + '[Localization]', ...args); }
@@ -1738,68 +1823,222 @@
 	}
 
 	// ========== 自动恢复（AutoRecovery） ==========
-	// A 类：可自动重试的错误
-	const RETRYABLE_ERRORS = [
-		/Model provider unreachable/i,
-		/an internal error occurred/i,
-		/retryable error from model provider/i,
-		/API provider is overloaded\.\s*Please try again/i,
-		/This is taking a long time/i,
-		// 社区高频：deadline exceeded（thinking 超时被中断）
-		/Deadline exceeded:.*context deadline exceeded/i,
-		/context deadline exceeded/i,
-		/Client\.Timeout or context cancellation/i,
-		// 社区高频：Cascade 内部错误（Claude Sonnet 4 等）
-		/Cascade has encountered an internal error in this step/i,
-		/No credits consumed on this tool call/i,
-		// 社区高频：通用未预期错误
-		/Encountered unexpected error during/i,
-		// 社区高频：请求耗时过长
-		/This request is taking longer than expected/i,
-		// 模型 / 上下文流式中断
-		/stream.*was\s*(interrupted|cancelled|aborted)/i,
-		/connection.*was\s*(reset|closed)/i,
+
+	// ── 错误模式分类表 ──
+	// 每条: { pattern, category, signal?, hint? }
+	// category: networkErrors | quotaErrors | modelErrors | continuationErrors | permissionRequests | userIntervention
+	const ERROR_PATTERNS = [
+		// ── 网络超时 / 临时故障 ──
+		{ pattern: /Model provider unreachable/i,                              category: 'networkErrors' },
+		{ pattern: /an internal error occurred/i,                              category: 'networkErrors' },
+		{ pattern: /retryable error from model provider/i,                     category: 'networkErrors' },
+		{ pattern: /API provider is overloaded\.\s*Please try again/i,         category: 'networkErrors' },
+		{ pattern: /This is taking a long time/i,                              category: 'networkErrors' },
+		{ pattern: /Deadline exceeded:.*context deadline exceeded/i,            category: 'networkErrors' },
+		{ pattern: /context deadline exceeded/i,                               category: 'networkErrors' },
+		{ pattern: /Client\.Timeout or context cancellation/i,                 category: 'networkErrors' },
+		{ pattern: /Cascade has encountered an internal error in this step/i,  category: 'networkErrors' },
+		{ pattern: /No credits consumed on this tool call/i,                   category: 'networkErrors' },
+		{ pattern: /Encountered unexpected error during/i,                     category: 'networkErrors' },
+		{ pattern: /This request is taking longer than expected/i,             category: 'networkErrors' },
+		{ pattern: /stream.*was\s*(interrupted|cancelled|aborted)/i,           category: 'networkErrors' },
+		{ pattern: /connection.*was\s*(reset|closed)/i,                        category: 'networkErrors' },
+
+		// ── 配额耗尽 / 速率限制 ──
+		{ pattern: /daily usage quota has been exhausted/i,                    category: 'quotaErrors', signal: 'quota-daily-exhausted' },
+		{ pattern: /usage quota is exhausted/i,                                category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /resource_exhausted/i,                                      category: 'quotaErrors', signal: 'rate-limited' },
+		{ pattern: /all API providers are over capacity/i,                     category: 'quotaErrors', signal: 'provider-overloaded' },
+		{ pattern: /Failed precondition.*quota/i,                              category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /all API providers are over their global rate limit/i,      category: 'quotaErrors', signal: 'rate-limited' },
+		{ pattern: /rate limit exceeded/i,                                     category: 'quotaErrors', signal: 'rate-limited' },
+		{ pattern: /upgrade to a Pro account for higher limits/i,              category: 'quotaErrors', signal: 'rate-limited' },
+		{ pattern: /权限拒绝.*rate limit/i,                                    category: 'quotaErrors', signal: 'rate-limited' },
+
+		// ── 模型不可用（第三方提供商故障） ──
+		{ pattern: /third-party model provider is experiencing issues/i,       category: 'modelErrors', signal: 'provider-unavailable' },
+		{ pattern: /model provider is currently not available/i,               category: 'modelErrors', signal: 'provider-unavailable' },
+
+		// ── 工具调用上限 / 响应截断 ──
+		{ pattern: /reached.*invocation limit/i,                               category: 'continuationErrors', triggerAction: 'send-continue' },
+		{ pattern: /Cascade can make up to \d+ tool calls per prompt/i,        category: 'continuationErrors', triggerAction: 'send-continue' },
+		{ pattern: /maximum (?:number of )?tool calls reached/i,               category: 'continuationErrors', triggerAction: 'send-continue' },
+		{ pattern: /tool call limit reached/i,                                 category: 'continuationErrors', triggerAction: 'send-continue' },
+
+		// ── 需要用户介入 ──
+		{ pattern: /Windsurf version is out of date/i,                         category: 'userIntervention', hint: '请更新 Windsurf 版本' },
+		{ pattern: /Failed to log in:\s*\[deadline_exceeded\]/i,               category: 'userIntervention', hint: '登录态失效，请重新登录或重启 Windsurf' },
+		{ pattern: /Authentication (?:failed|expired)/i,                       category: 'userIntervention', hint: '认证失败，请重新登录' },
+		{ pattern: /unauthorized/i,                                            category: 'userIntervention', hint: '未授权，请重新登录' },
+		{ pattern: /context length exceeded/i,                                 category: 'userIntervention', hint: '上下文超长，请压缩对话或新开会话' },
+		{ pattern: /prompt is too long/i,                                      category: 'userIntervention', hint: '提示词过长，请精简后重试' },
+		{ pattern: /maximum context length/i,                                  category: 'userIntervention', hint: '已达模型最大上下文，请新开会话' },
 	];
 
-	// B 类：需要切号的错误
-	const SWITCHABLE_ERRORS = [
-		{ pattern: /daily usage quota has been exhausted/i, signal: 'quota-daily-exhausted' },
-		{ pattern: /usage quota is exhausted/i, signal: 'quota-exhausted' },
-		{ pattern: /resource_exhausted/i, signal: 'rate-limited' },
-		{ pattern: /all API providers are over capacity/i, signal: 'provider-overloaded' },
-		{ pattern: /Failed precondition.*quota/i, signal: 'quota-exhausted' },
-		{ pattern: /all API providers are over their global rate limit/i, signal: 'rate-limited' },
-		{ pattern: /rate limit exceeded/i, signal: 'rate-limited' },
-		{ pattern: /upgrade to a Pro account for higher limits/i, signal: 'rate-limited' },
-		{ pattern: /权限拒绝.*rate limit/i, signal: 'rate-limited' },
-		// 第三方提供商临时故障：需要切号重试
-		{ pattern: /third-party model provider is experiencing issues/i, signal: 'provider-unavailable' },
-		{ pattern: /model provider is currently not available/i, signal: 'provider-unavailable' },
-	];
+	// 按钮触发（继续回复 / Continue response）
+	const CONTINUE_BUTTON_TEXTS = ['Continue response', '继续回复'];
 
-	// C 类：自动继续触发
-	const CONTINUE_TRIGGERS = [
-		{ text: 'Continue response', action: 'click' },
-		{ text: '继续回复', action: 'click' },
-		{ pattern: /reached.*invocation limit/i, action: 'send-continue' },
-		// 官方文档：每个 prompt 最多 20 次工具调用
-		{ pattern: /Cascade can make up to \d+ tool calls per prompt/i, action: 'send-continue' },
-		{ pattern: /maximum (?:number of )?tool calls reached/i, action: 'send-continue' },
-		{ pattern: /tool call limit reached/i, action: 'send-continue' },
-	];
+	// ── 切换模型 ──
+	// Windsurf 模型选择器通过 aria-label="Model Selector" 的按钮触发
+	let _modelSwitchInProgress = false;
 
-	// D 类：仅通知（无法自动恢复，需要用户介入）
-	const NOTIFY_ONLY = [
-		{ pattern: /Windsurf version is out of date/i, hint: '请更新 Windsurf 版本' },
-		// 登录态失效：换号无用，需要重新登录
-		{ pattern: /Failed to log in:\s*\[deadline_exceeded\]/i, hint: '登录态失效，请重新登录或重启 Windsurf' },
-		{ pattern: /Authentication (?:failed|expired)/i, hint: '认证失败，请重新登录' },
-		{ pattern: /unauthorized/i, hint: '未授权，请重新登录' },
-		// 上下文太长：切号无用，需要压缩对话
-		{ pattern: /context length exceeded/i, hint: '上下文超长，请压缩对话或新开会话' },
-		{ pattern: /prompt is too long/i, hint: '提示词过长，请精简后重试' },
-		{ pattern: /maximum context length/i, hint: '已达模型最大上下文，请新开会话' },
-	];
+	function getCurrentModelName() {
+		// 模型选择器按钮通常显示当前模型名
+		const btn = document.querySelector('button[aria-label*="Model Selector"], button[aria-label*="模型选择"]');
+		if (btn) {
+			const text = (btn.textContent || '').trim();
+			if (text) return text;
+		}
+		return null;
+	}
+
+	async function switchModel(targetModel) {
+		if (_modelSwitchInProgress) {
+			console.log(LOG_PREFIX + '[ModelSwitch] 切换进行中，跳过');
+			return false;
+		}
+		_modelSwitchInProgress = true;
+		try {
+			console.log(LOG_PREFIX + '[ModelSwitch] 尝试切换到: ' + targetModel);
+
+			// 1. 找到并点击模型选择器按钮
+			const selectorBtn = document.querySelector('button[aria-label*="Model Selector"], button[aria-label*="模型选择"]');
+			if (!selectorBtn) {
+				console.log(LOG_PREFIX + '[ModelSwitch] 找不到模型选择器按钮');
+				return false;
+			}
+			selectorBtn.click();
+			await sleep(500);
+
+			// 2. 等待下拉面板出现
+			const panel = await waitForElement('[class*="model-selector"], [class*="modelSelector"], [class*="dropdown"], [role="listbox"], [role="menu"]', 2000);
+			if (!panel) {
+				console.log(LOG_PREFIX + '[ModelSwitch] 模型下拉面板未出现');
+				// 尝试按 Escape 关闭可能弹出的东西
+				document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+				return false;
+			}
+
+			// 3. 在面板中查找搜索框并输入模型名
+			const searchInput = panel.querySelector('input[type="text"], input[placeholder*="model"], input[placeholder*="模型"], input[placeholder*="search"], input[placeholder*="搜索"]');
+			if (searchInput) {
+				searchInput.focus();
+				searchInput.value = '';
+				// 模拟逐字输入以触发搜索
+				const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+				nativeInputValueSetter.call(searchInput, targetModel);
+				searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+				await sleep(500);
+			}
+
+			// 4. 查找匹配的模型选项并点击
+			const options = panel.querySelectorAll('[role="option"], [role="menuitem"], [class*="option"], [class*="item"], [class*="row"]');
+			let matched = null;
+			const target = targetModel.toLowerCase();
+			for (const opt of options) {
+				const text = (opt.textContent || '').toLowerCase();
+				if (text.includes(target)) {
+					matched = opt;
+					break;
+				}
+			}
+
+			if (!matched) {
+				// 退一步：宽泛匹配（去掉版本号）
+				const baseTarget = target.replace(/[\d.-]+/g, '').trim();
+				for (const opt of options) {
+					const text = (opt.textContent || '').toLowerCase().replace(/[\d.-]+/g, '').trim();
+					if (text.includes(baseTarget) || baseTarget.includes(text)) {
+						matched = opt;
+						break;
+					}
+				}
+			}
+
+			if (matched) {
+				matched.click();
+				console.log(LOG_PREFIX + '[ModelSwitch] ✅ 已切换到: ' + targetModel);
+				await sleep(300);
+				return true;
+			} else {
+				console.log(LOG_PREFIX + '[ModelSwitch] 未找到模型: ' + targetModel);
+				// 关闭面板
+				document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+				return false;
+			}
+		} catch (err) {
+			console.log(LOG_PREFIX + '[ModelSwitch] 错误: ' + err);
+			return false;
+		} finally {
+			_modelSwitchInProgress = false;
+		}
+	}
+
+	// ── 获取所有可用模型 ──
+	async function getAvailableModels() {
+		const selectorBtn = document.querySelector('button[aria-label*="Model Selector"], button[aria-label*="模型选择"]');
+		if (!selectorBtn) {
+			console.log(LOG_PREFIX + '[ModelSwitch] 找不到模型选择器按钮');
+			return [];
+		}
+		selectorBtn.click();
+		await sleep(600);
+
+		const panel = await waitForElement('[class*="model-selector"], [class*="modelSelector"], [class*="dropdown"], [role="listbox"], [role="menu"]', 2000);
+		if (!panel) {
+			console.log(LOG_PREFIX + '[ModelSwitch] 模型下拉面板未出现');
+			document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+			return [];
+		}
+
+		const options = panel.querySelectorAll('[role="option"], [role="menuitem"], [class*="option"], [class*="item"], [class*="row"]');
+		const models = [];
+		for (const opt of options) {
+			const text = (opt.textContent || '').trim();
+			// 过滤掉搜索框文字、空文本、过长文本
+			if (text && text.length > 1 && text.length < 60 && !text.includes('Search') && !text.includes('搜索')) {
+				// 提取主要模型名（去掉描述信息）
+				const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+				const name = lines[0] || text;
+				if (name && !models.includes(name)) models.push(name);
+			}
+		}
+
+		// 关闭面板
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await sleep(200);
+
+		console.log(LOG_PREFIX + '[ModelSwitch] 检测到可用模型: ' + models.join(', '));
+		return models;
+	}
+
+	async function switchToNextModel(modelPriority) {
+		const current = (getCurrentModelName() || '').toLowerCase();
+		console.log(LOG_PREFIX + '[ModelSwitch] 当前模型: ' + (current || '未知'));
+		for (const model of modelPriority) {
+			// 跳过当前正在使用的模型
+			if (current && current.includes(model.toLowerCase())) continue;
+			const ok = await switchModel(model);
+			if (ok) return model;
+		}
+		console.log(LOG_PREFIX + '[ModelSwitch] 所有备选模型均不可用');
+		return null;
+	}
+
+	function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+	function waitForElement(selector, timeout) {
+		return new Promise(resolve => {
+			const el = document.querySelector(selector);
+			if (el) return resolve(el);
+			const observer = new MutationObserver(() => {
+				const el = document.querySelector(selector);
+				if (el) { observer.disconnect(); resolve(el); }
+			});
+			observer.observe(document.body, { childList: true, subtree: true });
+			setTimeout(() => { observer.disconnect(); resolve(null); }, timeout);
+		});
+	}
 
 	let recoveryObserver = null;
 	let recoveryRetryCount = 0;
@@ -1828,11 +2067,23 @@
 		return findSendBtnAdvanced();
 	}
 
+	// 按钮可见性检查（参考 steipete）
+	function isVisibleAndClickable(el) {
+		if (!el) return false;
+		const style = window.getComputedStyle(el);
+		const rect = el.getBoundingClientRect();
+		return !!(rect.width > 0 || rect.height > 0 || el.getClientRects().length)
+			&& style.visibility !== 'hidden'
+			&& style.display !== 'none'
+			&& parseFloat(style.opacity) > 0
+			&& !el.disabled;
+	}
+
 	function findRetryButton() {
 		const btns = document.querySelectorAll('button, [role="button"]');
 		for (const btn of btns) {
 			const txt = (btn.textContent || '').trim().toLowerCase();
-			if (txt === 'retry' || txt === '重试' || txt === 'try again' || txt === '再试一次') return btn;
+			if ((txt === 'retry' || txt === '重试' || txt === 'try again' || txt === '再试一次') && isVisibleAndClickable(btn)) return btn;
 		}
 		return null;
 	}
@@ -1939,30 +2190,53 @@
 		} catch {}
 	}
 
+	// ── 冷却机制（防止重复触发） ──
+	let _lastActionClickTs = 0;
+	const ACTION_COOLDOWN_MS = 3000;
+
+	function isInCooldown() {
+		return Date.now() - _lastActionClickTs < ACTION_COOLDOWN_MS;
+	}
+
+	function markActionClick() {
+		_lastActionClickTs = Date.now();
+	}
+
 	function sendInputAndClick(text) {
+		if (isInCooldown()) {
+			console.log(LOG_PREFIX + '[Recovery] 冷却中，跳过');
+			return false;
+		}
 		if (!setInputText(text)) return false;
+		markActionClick();
 		setTimeout(() => {
 			const sendBtn = findSendBtnAdvanced();
-			if (sendBtn && !sendBtn.disabled) sendBtn.click();
+			if (sendBtn && isVisibleAndClickable(sendBtn)) sendBtn.click();
 		}, 500);
 		return true;
 	}
 
 	function retryLastMessage(opts) {
 		opts = opts || {};
-		// 优先点击 Retry 按钮（最干净的方式）
+		if (isInCooldown()) {
+			console.log(LOG_PREFIX + '[Recovery] 冷却中，跳过 retryLastMessage');
+			return;
+		}
+		if (opts.afterSwitch) {
+			// 切号后：使用 quotaErrors 的 afterAction 配置
+			const rule = getRuleForCategory('quotaErrors');
+			const afterAction = (rule && rule.afterAction) || (settings.continueAfterSwitch ? 'send-continue' : 'auto');
+			executeAfterAction(afterAction);
+			return;
+		}
+		// 非切号场景：优先点击 Retry 按钮
 		const retryBtn = findRetryButton();
 		if (retryBtn) {
 			console.log(LOG_PREFIX + '[Recovery] 点击重试按钮');
+			markActionClick();
 			retryBtn.click();
 			return;
 		}
-		// 切号后场景：优先发送"继续"避免重做整个原始任务
-		if (opts.afterSwitch && settings.continueAfterSwitch) {
-			console.log(LOG_PREFIX + '[Recovery] 切号后自动发送"继续"');
-			if (sendInputAndClick('继续')) return;
-		}
-		// 否则重发最后一条用户消息
 		if (lastUserMessage) {
 			console.log(LOG_PREFIX + '[Recovery] 重发最后一条消息');
 			sendInputAndClick(lastUserMessage);
@@ -1996,108 +2270,226 @@
 		} catch {}
 	}
 
+	// ── 获取当前分类的恢复规则 ──
+	function getRuleForCategory(category) {
+		const rules = settings.recoveryRules || {};
+		return rules[category] || null;
+	}
+
+	// ── 匹配自定义规则（优先于内置） ──
+	function matchCustomRule(errorText) {
+		const customs = settings.customRecoveryRules || [];
+		for (const rule of customs) {
+			if (!rule.enabled || !rule.pattern) continue;
+			try {
+				const re = new RegExp(rule.pattern, 'i');
+				if (re.test(errorText)) return rule;
+			} catch {}
+		}
+		return null;
+	}
+
+	// ── 执行 afterAction（切换后动作） ──
+	function executeAfterAction(afterAction, opts) {
+		opts = opts || {};
+		const action = afterAction || 'auto';
+		if (action === 'none') return;
+		if (action === 'send-continue') {
+			console.log(LOG_PREFIX + '[Recovery] 执行后续动作: 发送继续');
+			sendInputAndClick('继续');
+			return;
+		}
+		if (action === 'retry-message') {
+			console.log(LOG_PREFIX + '[Recovery] 执行后续动作: 重发消息');
+			if (lastUserMessage) sendInputAndClick(lastUserMessage);
+			return;
+		}
+		// auto: 智能判断 — 有 Retry 按钮就点，否则发继续
+		const retryBtn = findRetryButton();
+		if (retryBtn) {
+			console.log(LOG_PREFIX + '[Recovery] auto: 点击重试按钮');
+			markActionClick();
+			retryBtn.click();
+		} else {
+			console.log(LOG_PREFIX + '[Recovery] auto: 发送继续');
+			sendInputAndClick('继续');
+		}
+	}
+
+	// ── 统一错误处理入口 ──
 	function checkForErrors() {
 		if (!settings.autoRecoveryEnabled) return;
-		
+
 		const { text: errorText } = getLatestErrorText();
 		if (!errorText) return;
-		
+
 		// 防抖：同一错误 10 秒内不重复处理
 		const now = Date.now();
 		if (now - lastRecoveryTs < 10000) return;
 
-		// A 类：可自动重试
-		for (const pattern of RETRYABLE_ERRORS) {
-			if (pattern.test(errorText)) {
-				// 错误指纹比较：不同错误说明上次重试已成功，重置计数
-				const fingerprint = makeErrorFingerprint(errorText);
-				if (fingerprint !== _lastErrorFingerprint) {
-					if (recoveryRetryCount > 0) {
-						console.log(LOG_PREFIX + '[Recovery] 检测到新错误，重置重试计数');
-					}
-					recoveryRetryCount = 0;
-					_lastErrorFingerprint = fingerprint;
-				}
-				if (recoveryRetryCount >= settings.recoveryMaxRetries) {
-					console.log(LOG_PREFIX + '[Recovery] 达到最大重试次数');
-					showRecoveryNotification('已达最大重试次数 (' + settings.recoveryMaxRetries + ')');
-					recoveryRetryCount = 0;
-					_lastErrorFingerprint = '';
-					recordRecoveryLog({ category: 'A', error: errorText.substring(0, 200), action: 'retry', result: 'gave-up' });
-					return;
-				}
-				recoveryRetryCount++;
-				lastRecoveryTs = now;
-				const delay = settings.recoveryBaseDelay * recoveryRetryCount;
-				console.log(LOG_PREFIX + '[Recovery] A类错误，' + delay + 'ms 后重试 (' + recoveryRetryCount + '/' + settings.recoveryMaxRetries + ')');
-				showRecoveryNotification('错误检测到，' + Math.round(delay / 1000) + 's 后重试...');
-				recordRecoveryLog({ category: 'A', error: errorText.substring(0, 200), action: 'retry', result: 'scheduled', delay, attempt: recoveryRetryCount });
-				setTimeout(() => {
-					const retryBtn = findRetryButton();
-					if (retryBtn) retryBtn.click();
-				}, delay);
-				return;
-			}
+		// 优先匹配自定义规则
+		const customRule = matchCustomRule(errorText);
+		if (customRule) {
+			lastRecoveryTs = now;
+			console.log(LOG_PREFIX + '[Recovery] 命中自定义规则: ' + customRule.name);
+			recordRecoveryLog({ category: 'custom', error: errorText.substring(0, 200), action: customRule.action, result: 'matched:' + customRule.name });
+			executeRuleAction(customRule, errorText, now);
+			return;
 		}
 
-		// B 类：需要切号
-		for (const { pattern, signal } of SWITCHABLE_ERRORS) {
-			if (pattern.test(errorText)) {
-				lastRecoveryTs = now;
-				recoveryRetryCount = 0;
-				_lastErrorFingerprint = '';
-				// 检查设置是否允许
-				const isQuota = signal === 'quota-exhausted' || signal === 'quota-daily-exhausted';
-				const isRate = signal === 'rate-limited' || signal === 'provider-overloaded' || signal === 'provider-unavailable';
-				if (isQuota && !settings.autoSwitchOnQuota) {
-					console.log(LOG_PREFIX + '[Recovery] B类错误(额度)但设置关闭，跳过');
-					recordRecoveryLog({ category: 'B', error: errorText.substring(0, 200), action: 'switch:' + signal, result: 'skipped-by-setting' });
-					return;
-				}
-				if (isRate && !settings.autoSwitchOnRateLimit) {
-					console.log(LOG_PREFIX + '[Recovery] B类错误(限流)但设置关闭，跳过');
-					recordRecoveryLog({ category: 'B', error: errorText.substring(0, 200), action: 'switch:' + signal, result: 'skipped-by-setting' });
-					return;
-				}
-				console.log(LOG_PREFIX + '[Recovery] B类错误，发送切号信号: ' + signal);
-				recordRecoveryLog({ category: 'B', error: errorText.substring(0, 200), action: 'switch:' + signal, result: 'signal-sent' });
+		// 匹配内置错误模式表
+		for (const ep of ERROR_PATTERNS) {
+			if (!ep.pattern.test(errorText)) continue;
+
+			const category = ep.category;
+			const rule = getRuleForCategory(category);
+			if (!rule) continue;
+
+			const action = rule.action || 'notify';
+			console.log(LOG_PREFIX + '[Recovery] 命中 [' + category + '] 动作=' + action);
+
+			// 根据 action 分发处理
+			if (action === 'retry') {
+				handleRetryAction(rule, errorText, now, category);
+			} else if (action === 'switch-account') {
+				handleSwitchAccountAction(rule, ep, errorText, now, category);
+			} else if (action === 'switch-model') {
+				handleSwitchModelAction(rule, ep, errorText, now, category);
+			} else if (action === 'send-continue') {
+				handleSendContinueAction(errorText, now, category);
+			} else if (action === 'notify') {
+				const hint = ep.hint || errorText.substring(0, 80);
+				showRecoveryNotification(hint);
+				recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'notify', result: hint });
+			}
+			// action === 'ignore' → 什么都不做
+			return;
+		}
+	}
+
+	// ── 通用规则执行 ──
+	function executeRuleAction(rule, errorText, now) {
+		const action = rule.action || 'notify';
+		if (action === 'retry') {
+			handleRetryAction(rule, errorText, now, 'custom');
+		} else if (action === 'switch-account') {
+			handleSwitchAccountAction(rule, rule, errorText, now, 'custom');
+		} else if (action === 'switch-model') {
+			handleSwitchModelAction(rule, rule, errorText, now, 'custom');
+		} else if (action === 'send-continue') {
+			handleSendContinueAction(errorText, now, 'custom');
+		} else if (action === 'notify') {
+			showRecoveryNotification(rule.hint || errorText.substring(0, 80));
+			recordRecoveryLog({ category: 'custom', error: errorText.substring(0, 200), action: 'notify', result: rule.hint || 'notified' });
+		}
+	}
+
+	// ── 动作: 自动重试 ──
+	function handleRetryAction(rule, errorText, now, category) {
+		const maxRetries = rule.maxRetries || settings.recoveryMaxRetries || 3;
+		const baseDelay = rule.delay || settings.recoveryBaseDelay || 3000;
+
+		const fingerprint = makeErrorFingerprint(errorText);
+		if (fingerprint !== _lastErrorFingerprint) {
+			if (recoveryRetryCount > 0) console.log(LOG_PREFIX + '[Recovery] 新错误，重置计数');
+			recoveryRetryCount = 0;
+			_lastErrorFingerprint = fingerprint;
+		}
+		if (recoveryRetryCount >= maxRetries) {
+			console.log(LOG_PREFIX + '[Recovery] 达到最大重试 (' + maxRetries + ')');
+			showRecoveryNotification('已达最大重试次数 (' + maxRetries + ')');
+			recoveryRetryCount = 0;
+			_lastErrorFingerprint = '';
+			recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'retry', result: 'gave-up' });
+			return;
+		}
+		recoveryRetryCount++;
+		lastRecoveryTs = now;
+		const delay = baseDelay * recoveryRetryCount;
+		console.log(LOG_PREFIX + '[Recovery] ' + delay + 'ms 后重试 (' + recoveryRetryCount + '/' + maxRetries + ')');
+		showRecoveryNotification(Math.round(delay / 1000) + 's 后重试...');
+		recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'retry', result: 'scheduled', delay, attempt: recoveryRetryCount });
+		setTimeout(() => {
+			if (isInCooldown()) return;
+			const retryBtn = findRetryButton();
+			if (retryBtn) { markActionClick(); retryBtn.click(); }
+		}, delay);
+	}
+
+	// ── 动作: 切换账号 ──
+	function handleSwitchAccountAction(rule, ep, errorText, now, category) {
+		lastRecoveryTs = now;
+		recoveryRetryCount = 0;
+		_lastErrorFingerprint = '';
+		const signal = ep.signal || 'quota-exhausted';
+		console.log(LOG_PREFIX + '[Recovery] 切换账号，信号=' + signal);
+		recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'switch-account:' + signal, result: 'signal-sent' });
+		sendPoolSignal(signal, lastUserMessage);
+	}
+
+	// ── 动作: 切换模型 ──
+	function handleSwitchModelAction(rule, ep, errorText, now, category) {
+		lastRecoveryTs = now;
+		recoveryRetryCount = 0;
+		_lastErrorFingerprint = '';
+		const modelPriority = rule.modelPriority || settings.recoveryRules.modelErrors.modelPriority || [];
+		const afterAction = rule.afterAction || 'send-continue';
+		if (modelPriority.length === 0) {
+			console.log(LOG_PREFIX + '[Recovery] 无备选模型，尝试切号');
+			// 降级为切号
+			const signal = ep.signal || 'provider-unavailable';
+			sendPoolSignal(signal, lastUserMessage);
+			recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'switch-model', result: 'no-models-fallback-switch' });
+			return;
+		}
+		showRecoveryNotification('模型不可用，尝试切换模型...');
+		recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'switch-model', result: 'attempting' });
+
+		(async () => {
+			const switched = await switchToNextModel(modelPriority);
+			if (switched) {
+				showRecoveryNotification('已切换到 ' + switched);
+				recordRecoveryLog({ category, error: '', action: 'switch-model', result: 'switched:' + switched });
+				// 切换后执行后续动作
+				setTimeout(() => executeAfterAction(afterAction), 1500);
+			} else {
+				// 所有模型都不可用，降级为切号
+				console.log(LOG_PREFIX + '[Recovery] 模型切换失败，降级切号');
+				const signal = ep.signal || 'provider-unavailable';
 				sendPoolSignal(signal, lastUserMessage);
-				return;
+				recordRecoveryLog({ category, error: '', action: 'switch-model', result: 'failed-fallback-switch' });
 			}
-		}
+		})();
+	}
 
-		// D 类：仅通知（用户需介入）
-		for (const { pattern, hint } of NOTIFY_ONLY) {
-			if (pattern.test(errorText)) {
-				console.log(LOG_PREFIX + '[Recovery] D类通知: ' + errorText.substring(0, 60));
-				showRecoveryNotification(hint || errorText.substring(0, 80));
-				recordRecoveryLog({ category: 'D', error: errorText.substring(0, 200), action: 'notify', result: hint || 'notified' });
-				return;
-			}
+	// ── 动作: 发送继续 ──
+	function handleSendContinueAction(errorText, now, category) {
+		lastRecoveryTs = now;
+		console.log(LOG_PREFIX + '[Recovery] 自动发送 continue');
+		recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'send-continue', result: 'sent' });
+		if (setInputText('continue')) {
+			setTimeout(() => {
+				const sendBtn = findSendBtnAdvanced();
+				if (sendBtn) sendBtn.click();
+			}, 500);
 		}
 	}
 
 	let _lastContinueTs = 0;
 	function checkForContinuePrompts() {
 		if (!settings.autoSendContinue) return;
-		// 冷却期：避免同一上限提示反复触发
 		if (Date.now() - _lastContinueTs < 15000) return;
 
-		// 1) text-equals 类型：仅在按钮上匹配
+		// 1) 按钮文字匹配：Continue response / 继续回复（已由 autoContinue 模块处理）
 		const btns = document.querySelectorAll('button, [role="button"]');
 		for (const btn of btns) {
 			const txt = (btn.textContent || '').trim();
-			for (const trigger of CONTINUE_TRIGGERS) {
-				if (trigger.text && txt === trigger.text && trigger.action === 'click') {
-					// 已由 autoContinue 模块处理
-					return;
-				}
-			}
+			if (CONTINUE_BUTTON_TEXTS.includes(txt)) return;
 		}
 
-		// 2) pattern 类型（工具调用上限等）：扫描消息文本，不仅限于按钮
-		const patternTriggers = CONTINUE_TRIGGERS.filter(t => t.pattern && t.action === 'send-continue');
-		if (patternTriggers.length === 0) return;
+		// 2) 消息文本匹配（工具调用上限等 continuationErrors 模式）
+		const contPatterns = ERROR_PATTERNS.filter(p => p.category === 'continuationErrors');
+		if (contPatterns.length === 0) return;
 
 		const messageSelectors = [
 			'[class*="message"]', '[class*="Message"]',
@@ -2116,15 +2508,14 @@
 				candidates.push(el);
 			});
 		}
-		// 取最近的 30 个候选元素，避免全文档扫描
 		const recent = candidates.slice(-30);
 		for (const el of recent) {
 			const txt = (el.textContent || '').trim();
 			if (!txt || txt.length > 600) continue;
-			for (const trigger of patternTriggers) {
-				if (trigger.pattern.test(txt)) {
+			for (const cp of contPatterns) {
+				if (cp.pattern.test(txt)) {
 					console.log(LOG_PREFIX + '[Recovery] 工具上限/截断，自动发送 continue');
-					recordRecoveryLog({ category: 'C', error: txt.substring(0, 200), action: 'send-continue', result: 'sent' });
+					recordRecoveryLog({ category: 'continuationErrors', error: txt.substring(0, 200), action: 'send-continue', result: 'sent' });
 					_lastContinueTs = Date.now();
 					if (setInputText('continue')) {
 						setTimeout(() => {
@@ -2138,19 +2529,34 @@
 		}
 	}
 
-	function checkForWebRequestApproval() {
-		if (!settings.autoApproveWebRequests) return;
-		// 查找 Web 请求批准按钮
+	function checkForPermissionApproval() {
+		const rule = getRuleForCategory('permissionRequests');
+		if (!rule || rule.action !== 'auto-allow') return;
+		const scopes = rule.scope || ['web-request'];
+
 		const btns = document.querySelectorAll('button, [role="button"]');
 		for (const btn of btns) {
 			const txt = (btn.textContent || '').trim().toLowerCase();
-			if (txt === 'allow' || txt === '允许' || txt === 'approve' || txt === '批准') {
-				const parent = btn.closest('[class*="web-request"], [class*="approval"], [class*="permission"]');
-				if (parent) {
-					console.log(LOG_PREFIX + '[Recovery] 自动批准 Web 请求');
-					btn.click();
-					return;
-				}
+			const isAllow = txt === 'allow' || txt === '允许' || txt === 'approve' || txt === '批准'
+				|| txt === 'accept' || txt === '接受' || txt === 'run' || txt === '运行'
+				|| txt === 'allow and run' || txt === '允许并运行';
+			if (!isAllow) continue;
+
+			// 检查上下文判断权限类型
+			const container = btn.closest('[class*="approval"], [class*="permission"], [class*="request"], [class*="dialog"], [class*="modal"], [class*="notification"]');
+			if (!container) continue;
+			const ctx = (container.textContent || '').toLowerCase();
+
+			let matched = false;
+			if (scopes.includes('web-request') && (ctx.includes('web') || ctx.includes('url') || ctx.includes('fetch') || ctx.includes('http'))) matched = true;
+			if (scopes.includes('terminal') && (ctx.includes('terminal') || ctx.includes('command') || ctx.includes('execute') || ctx.includes('run'))) matched = true;
+			if (scopes.includes('file-write') && (ctx.includes('file') || ctx.includes('write') || ctx.includes('create') || ctx.includes('edit') || ctx.includes('modify'))) matched = true;
+
+			if (matched) {
+				console.log(LOG_PREFIX + '[Recovery] 自动批准权限请求: ' + txt);
+				recordRecoveryLog({ category: 'permissionRequests', error: '', action: 'auto-allow', result: txt });
+				btn.click();
+				return;
 			}
 		}
 	}
@@ -2169,7 +2575,7 @@
 				trackLastUserMessage();
 				checkForErrors();
 				checkForContinuePrompts();
-				checkForWebRequestApproval();
+				checkForPermissionApproval();
 				checkForPoolResult();
 			}, 500);
 		});
@@ -2347,9 +2753,7 @@
 				// 仅在有错误时触发
 				const { text } = getLatestErrorText();
 				if (!text) return false;
-				for (const p of RETRYABLE_ERRORS) { if (p.test(text)) return true; }
-				for (const { pattern } of SWITCHABLE_ERRORS) { if (pattern.test(text)) return true; }
-				for (const { pattern } of NOTIFY_ONLY) { if (pattern.test(text)) return true; }
+				for (const ep of ERROR_PATTERNS) { if (ep.pattern.test(text)) return true; }
 				return false;
 			}
 			case 'idle': {
@@ -2360,6 +2764,74 @@
 		}
 	}
 	
+	// ========== 侧栏命令处理 ==========
+	async function handleSidebarCommand(cmd) {
+		const respond = (result) => {
+			localStorage.setItem('ws-better-command-result', JSON.stringify({
+				id: cmd.id, action: cmd.action, ts: Date.now(), ...result
+			}));
+		};
+
+		switch (cmd.action) {
+			case 'fetch-models': {
+				respond({ status: 'running' });
+				const models = await getAvailableModels();
+				const current = getCurrentModelName();
+				respond({ status: 'done', models, currentModel: current });
+				break;
+			}
+			case 'test-switch-model': {
+				const target = cmd.model;
+				if (!target) { respond({ status: 'error', message: '未指定模型' }); return; }
+				respond({ status: 'running', message: '正在切换到 ' + target + '...' });
+				const ok = await switchModel(target);
+				const newModel = getCurrentModelName();
+				respond({ status: ok ? 'done' : 'error', message: ok ? '已切换到 ' + (newModel || target) : '切换失败: ' + target, newModel });
+				break;
+			}
+			case 'test-retry': {
+				const retryBtn = findRetryButton();
+				if (retryBtn) {
+					respond({ status: 'done', message: '找到重试按钮并点击' });
+					retryBtn.click();
+				} else {
+					respond({ status: 'error', message: '未找到重试按钮（当前可能没有错误）' });
+				}
+				break;
+			}
+			case 'test-send-continue': {
+				if (setInputText('continue')) {
+					setTimeout(() => {
+						const sendBtn = findSendBtnAdvanced();
+						if (sendBtn) sendBtn.click();
+					}, 500);
+					respond({ status: 'done', message: '已发送 continue' });
+				} else {
+					respond({ status: 'error', message: '未找到输入框' });
+				}
+				break;
+			}
+			case 'test-switch-account': {
+				respond({ status: 'running', message: '正在发送切号信号...' });
+				sendPoolSignal('quota-exhausted', lastUserMessage);
+				respond({ status: 'done', message: '切号信号已发送（等待 pool 响应）' });
+				break;
+			}
+			case 'test-permission': {
+				checkForPermissionApproval();
+				respond({ status: 'done', message: '权限检测已执行' });
+				break;
+			}
+			case 'get-current-model': {
+				const current = getCurrentModelName();
+				respond({ status: 'done', currentModel: current || '未知' });
+				break;
+			}
+			default:
+				respond({ status: 'error', message: '未知命令: ' + cmd.action });
+		}
+	}
+
 	// ========== 初始化 ==========
 	function init() {
 		console.log('🚀 Windsurf Better v' + VERSION + ' 初始化');
@@ -2400,6 +2872,17 @@
 			enqueue(document.body);
 			logLocalization('✅汉化已启用');
 		}
+
+		// 监听命令（从侧栏发来的测试/操作命令）
+		window.addEventListener('storage', (e) => {
+			if (e.key !== 'ws-better-command') return;
+			try {
+				const cmd = JSON.parse(e.newValue);
+				if (!cmd || !cmd.action) return;
+				console.log(LOG_PREFIX + '[Command] 收到命令: ' + cmd.action);
+				handleSidebarCommand(cmd);
+			} catch {}
+		});
 
 		// 监听 localStorage 变化（侧栏设置面板同步）
 		window.addEventListener('storage', (e) => {
