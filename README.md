@@ -20,6 +20,7 @@ Windsurf 无感换号：在编辑器侧栏内集中管理多个账号，一键�
 - **失败重试与限流**：自动重试瞬时错误、相邻请求最小间隔、单项超时兜底。
 - **重复账号去重**：批量导入时自动跳过号池已存在的邮箱。
 - **Windsurf 增强脚本**：注入 windsurf-better.js，提供界面汉化、回复建议气泡、自动恢复、完成提醒等功能。
+- **校验值自动修复**：补丁/增强会修改 `workbench.html` 等被 Electron 校验的核心文件，默认启用 `fixChecksums` 后自动重算 product.json 中的 SHA256 哈希，**从根本消除"installation appears corrupt"提示**（无需依赖 DOM 自动点掉通知的兜底）。
 - **自动恢复（AutoRecovery）**：错误分类检测（A 类重试 / B 类切号 / C 类继续 / D 类通知），自动重试与信号桥切号。
 - **完成提醒**：AI 回复完成时播放提示音和/或弹桌面通知，支持多种铃声和触发条件。
 - **切号策略**：最低非零优先（推荐）/ 满额度优先，自动跳过 Free 账号，可配置额度下限和已用号阈值。
@@ -110,6 +111,26 @@ npm run package      # 生成 vsix
 按 `F5` 启动扩展开发宿主进行调试。
 
 ## 更新日志
+
+### v4.15.0
+- **汉化大幅扩充**：新增 30+ 条翻译，覆盖智能体切换（Switch agent / Switch agent location）、模型选择（Send the task to a single model / Select multiple models to compare）、Devin 相关（Devin Local / Devin Cloud / Describe your task to Devin）、错误提示（Model provider unreachable / 第三方模型提供商不可用 / 每周配额耗尽）、UI 文本（See more / Auto-fix / Install Update / Reasoning Effort / Your modified files / Prompt cache has expired / Higher cost expected / Cannot switch modes after cascade has started）等。
+- **增强设置共享机制**：新增 `enhSettingsStore.ts`，侧栏修改增强设置后自动写入 `workbench.html`（通过 `window.__WS_BETTER_INJECTED_SETTINGS__` 全局变量嵌入），windsurf-better.js 启动时优先读取注入值，保证侧栏与增强脚本设置一致。
+- **注入器设置感知**：`enhancementInjector.ts` 增加设置哈希检测，版本相同但设置变化时也会重新注入，确保改设置后无需手动重注入。
+- **自动恢复冷却机制**：所有自动操作（重试、切号、发送继续）增加 3 秒冷却期，防止短时间内重复触发导致消息刷屏。
+- **按钮可见性检查**：重试按钮和发送按钮点击前增加 `isVisibleAndClickable` 校验（检测 display/visibility/opacity/disabled），避免误点不可见按钮。
+- **自动恢复面板重构**：恢复规则分类从 A/B/C/D 改为语义化名称（网络超时 / 配额耗尽 / 模型不可用 / 响应截断 / 权限请求 / 用户介入），新增模型优先级排序、可用模型获取、自定义规则等完整 UI。
+- **windsurf-better.js v1.1.0**：设置加载优先级改为 注入值 > localStorage > 默认值；启动时同步合并后的设置回 localStorage。
+
+### v4.14.0
+- **新增「校验值修复」(`checksumFixer.ts`)**：从根本消除 Windsurf 启动时弹出的 `Your Windsurf installation appears to be corrupt. Please reinstall.` 提示。
+  - **原理**：Electron 启动时按 `product.json` 中的 `checksums` 字段对若干核心文件（含 `workbench.html`）做 SHA256 校验，失败即弹通知。补丁/增强修改了这些文件就必然触发。
+  - **方案**：增强注入和补丁应用后自动重算所有 checksums 项的真实哈希并写回 `product.json`，让校验通过。算法与 VS Code 内置一致：`SHA256 → base64 → 去尾部 = 填充`。
+  - **配置**：`windsurfPool.enhancement.fixChecksums`（默认 `true`）。需要保留旧行为可关闭。
+  - **手动命令**：命令面板搜「修复 product.json 校验值」（`windsurfPool.fixChecksums`），可独立触发；并显示是否需要修复及修复结果。
+  - **兜底保留**：DOM 自动点掉「已损坏」通知的逻辑（`dismissCorruptEnabled`）保留，作为校验值修复失败时的双保险。
+  - **备份恢复**：首次修改前自动备份为 `product.json.origin`；执行「恢复原始 Workbench」会一并恢复 `product.json`。
+  - **已知现象**：Windsurf 自动更新后**首次启动**可能仍会闪一下「已损坏」通知（此时扩展尚未激活、checksums 还未重算），扩展激活后会自动修复，**第二次启动起完全无感**。该闪动已由 DOM 兜底逻辑关闭。
+  - **权限要求**：`product.json` 已加入权限预检，macOS/Linux 若目录不可写会弹一键 `sudo chmod` 提示。
 
 ### v4.13.2
 - **跨平台兼容（macOS / Linux 关键修复）**：
