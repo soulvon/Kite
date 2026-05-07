@@ -325,6 +325,10 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
 
     // 复制原方法体的"剩余部分"：从 if(!t)throw... 到 ,o} 结束
     const bodyStart = content.indexOf(`if(!${varT})`, handleAuthIdx);
+    if (bodyStart < 0 || bodyStart >= insertPoint) {
+      vscode.window.showWarningMessage('未能定位 handleAuthToken 方法体起点');
+      return false;
+    }
     const bodyEnd = insertPoint;
     const originalBodyTail = content.substring(bodyStart, bodyEnd); // 已包含 if 检查 + 主体 + 结尾的 },o}
 

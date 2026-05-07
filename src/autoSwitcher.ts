@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as accountStore from './accountStore';
 import { fetchUsage } from './usageService';
 import { StoredAccount, UsageSnapshot } from './types';
+import { getCurrentInstanceTag } from './instanceManager';
 
 // ─── 类型 ───────────────────────────────────────────────
 
@@ -13,6 +14,8 @@ export interface UsageCacheEntry {
 }
 
 export type ScoreMode = 'min' | 'daily' | 'weekly';
+export type SwitchStrategy = 'lowestNonZero' | 'highestFirst';
+export type PoolScope = 'all' | 'tag' | 'instance';
 
 export interface AutoSwitchSettings {
   enabled: boolean;
@@ -21,6 +24,11 @@ export interface AutoSwitchSettings {
   cooldownSec: number;
   refreshMin: number;
   scoreMode: ScoreMode;
+  switchStrategy: SwitchStrategy;
+  minQuota: number;             // 低于此值视为“额度耗尽”，挑号时排除
+  preferUsedThreshold: number;  // ≤此值视为“已经在用”，先消耗完它
+  poolScope: PoolScope;         // 切号范围
+  poolTag?: string;             // poolScope='tag' 时指定标签
 }
 
 type UsageUpdateCb = (email: string, snapshot: UsageSnapshot | null, error?: string) => void;
@@ -36,9 +44,15 @@ const DEFAULTS: AutoSwitchSettings = {
   cooldownSec: 30,
   scoreMode: 'min' as ScoreMode,
   refreshMin: 5,
+  switchStrategy: 'lowestNonZero' as SwitchStrategy,
+  minQuota: 10,
+  preferUsedThreshold: 50,
+  poolScope: 'all' as PoolScope,
+  poolTag: undefined,
 };
 
-const THROTTLE_MS = 800;
+const THROTTLE_MS = 2000;
+const ERROR_BACKOFF_MS = 5000;
 const CURRENT_TTL_MS = 60_000;
 const ANTI_BOUNCE_MS = 5 * 60_000;
 
@@ -72,6 +86,11 @@ export class AutoSwitcher implements vscode.Disposable {
       cooldownSec: this._ctx.globalState.get('as.cooldownSec', DEFAULTS.cooldownSec),
       refreshMin: this._ctx.globalState.get('as.refreshMin', DEFAULTS.refreshMin),
       scoreMode: this._ctx.globalState.get('as.scoreMode', DEFAULTS.scoreMode) as ScoreMode,
+      switchStrategy: this._ctx.globalState.get('as.switchStrategy', DEFAULTS.switchStrategy) as SwitchStrategy,
+      minQuota: this._ctx.globalState.get('as.minQuota', DEFAULTS.minQuota),
+      preferUsedThreshold: this._ctx.globalState.get('as.preferUsedThreshold', DEFAULTS.preferUsedThreshold),
+      poolScope: this._ctx.globalState.get('as.poolScope', DEFAULTS.poolScope) as PoolScope,
+      poolTag: this._ctx.globalState.get<string>('as.poolTag', DEFAULTS.poolTag as any),
     };
   }
 
@@ -82,6 +101,11 @@ export class AutoSwitcher implements vscode.Disposable {
     if (p.cooldownSec !== undefined) await this._ctx.globalState.update('as.cooldownSec', p.cooldownSec);
     if (p.refreshMin !== undefined) await this._ctx.globalState.update('as.refreshMin', p.refreshMin);
     if (p.scoreMode !== undefined) await this._ctx.globalState.update('as.scoreMode', p.scoreMode);
+    if (p.switchStrategy !== undefined) await this._ctx.globalState.update('as.switchStrategy', p.switchStrategy);
+    if (p.minQuota !== undefined) await this._ctx.globalState.update('as.minQuota', p.minQuota);
+    if (p.preferUsedThreshold !== undefined) await this._ctx.globalState.update('as.preferUsedThreshold', p.preferUsedThreshold);
+    if (p.poolScope !== undefined) await this._ctx.globalState.update('as.poolScope', p.poolScope);
+    if (p.poolTag !== undefined) await this._ctx.globalState.update('as.poolTag', p.poolTag);
     this._restartTimers();
   }
 
@@ -114,12 +138,37 @@ export class AutoSwitcher implements vscode.Disposable {
   async refreshAll(force = false): Promise<void> {
     if (this._refreshing) return;
     this._refreshing = true;
+    let consecutiveErrors = 0;
     try {
       const accounts = await accountStore.readAccounts(this._ctx);
       for (const acct of accounts) {
+        if (acct.disabled) continue;
         if (!force && this._shouldSkip(acct.email)) continue;
-        await this._refreshOne(acct);
-        await sleep(THROTTLE_MS);
+        const { snapshot, error } = await fetchUsage(acct);
+        const entry: UsageCacheEntry = { snapshot, error, ts: Date.now() };
+        if (snapshot) {
+          const d = snapshot.dailyRemainingPercent;
+          const w = snapshot.weeklyRemainingPercent;
+          if (d <= 0 && w <= 0) {
+            const reset = Math.min(snapshot.dailyResetAtUnix || Infinity, snapshot.weeklyResetAtUnix || Infinity);
+            if (reset !== Infinity) entry.skipUntil = reset * 1000;
+          } else if (d <= 0 && snapshot.dailyResetAtUnix) {
+            entry.skipUntil = snapshot.dailyResetAtUnix * 1000;
+          } else if (w <= 0 && snapshot.weeklyResetAtUnix) {
+            entry.skipUntil = snapshot.weeklyResetAtUnix * 1000;
+          }
+        }
+        this._cache.set(acct.email, entry);
+        this._onUsageUpdate?.(acct.email, snapshot, error);
+
+        // 网络错误时指数退避，避免频繁请求被断开
+        if (error) {
+          consecutiveErrors++;
+          await sleep(THROTTLE_MS + ERROR_BACKOFF_MS * Math.min(consecutiveErrors, 3));
+        } else {
+          consecutiveErrors = 0;
+          await sleep(THROTTLE_MS);
+        }
       }
       // 全量刷新完成后检查自动切号
       this._checkAndSwitch();
@@ -141,8 +190,8 @@ export class AutoSwitcher implements vscode.Disposable {
     if (this._checkTimer) { clearInterval(this._checkTimer); this._checkTimer = null; }
 
     const s = this.settings;
-    // 全量刷新定时器（始终运行）
-    this._refreshTimer = setInterval(() => this.refreshAll(), s.refreshMin * 60_000);
+    // 全量刷新定时器（始终运行）；force=true 避免被自身 TTL 跳过所有账号
+    this._refreshTimer = setInterval(() => this.refreshAll(true), s.refreshMin * 60_000);
     // 自动切号检查（仅启用时）
     if (s.enabled) {
       this._checkTimer = setInterval(() => this._checkAndSwitch(), s.checkSec * 1000);
@@ -192,6 +241,23 @@ export class AutoSwitcher implements vscode.Disposable {
     return false;
   }
 
+  // ── 内部：切号后刷新推送 ──
+
+  private async _refreshAndPush(oldEmail: string, newEmail: string): Promise<void> {
+    // 切号后延迟 3s 再刷新，避免请求风暴
+    await sleep(3000);
+    try {
+      const accounts = await accountStore.readAccounts(this._ctx);
+      for (const email of [oldEmail, newEmail]) {
+        const acct = accounts.find(a => a.email === email);
+        if (acct) {
+          await this._refreshOne(acct, true);
+          await sleep(THROTTLE_MS);
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
   // ── 内部：自动切号 ──
 
   private async _checkAndSwitch(): Promise<void> {
@@ -216,7 +282,7 @@ export class AutoSwitcher implements vscode.Disposable {
     const curScore = calcScore(dPct, wPct, s.scoreMode);
 
     if (curScore > s.threshold) {
-      this._onSwitchEvent?.('', '', '');
+      // 当前号额度充足，无需切换；不发空消息以免覆盖之前状态
       return;
     }
 
@@ -255,23 +321,123 @@ export class AutoSwitcher implements vscode.Disposable {
       if (ok) {
         await accountStore.setCurrentAccount(this._ctx, cand.email);
         this._onRefreshUI?.();
+        // 切号后立即刷新新旧账号配额并推送到 webview
+        this._refreshAndPush(curEmail, cand.email);
       }
     } catch { /* ignore */ }
   }
 
+  /**
+   * 强制立即切号（由信号桥触发，跳过定时器和冷却期）
+   * @param reason 触发原因（如 quota-exhausted）
+   * @returns 切换成功返回新账号 email，失败返回 null
+   */
+  async forceSwitch(reason: string): Promise<{ email: string } | null> {
+    const s = this.settings;
+    const curEmail = this._ctx.globalState.get<string>('lastEmail');
+    if (!curEmail) return null;
+
+    // 强制刷新所有号的额度
+    await this.refreshAll(true);
+
+    // 找最佳候选（不看 threshold，只看谁额度最多）
+    const cand = this._findBest(curEmail, 0, s.scoreMode);
+    if (!cand || cand.score <= 0) return null;
+
+    // 执行切换
+    const accounts = await accountStore.readAccounts(this._ctx);
+    const acct = accounts.find(a => a.email === cand.email);
+    if (!acct) return null;
+
+    const { injectSession } = await import('./sessionInjector');
+    const ok = await injectSession(this._ctx, acct);
+    if (!ok) return null;
+
+    // 与 _checkAndSwitch 保持一致：更新冷却时间和反向切号防护
+    this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
+    this._lastSwitchedFrom = curEmail;
+    this._lastSwitchedAt = Date.now();
+
+    await accountStore.setCurrentAccount(this._ctx, cand.email);
+    this._onRefreshUI?.();
+    // 切号后立即刷新新旧账号配额并推送到 webview
+    this._refreshAndPush(curEmail, cand.email);
+
+    const log = `[${ts()}] 信号切号(${reason}): ${curEmail} → ${cand.email}`;
+    this._onSwitchEvent?.(log, `${reason} → ${cand.email}`, '');
+
+    return { email: cand.email };
+  }
+
   private _findBest(curEmail: string, threshold: number, mode: ScoreMode): { email: string; score: number } | null {
-    let best: { email: string; score: number } | null = null;
+    const s = this.settings;
+    const strategy = s.switchStrategy || 'lowestNonZero';
+    const minQ = s.minQuota ?? 10;
+    const prefUsed = s.preferUsedThreshold ?? 50;
+
+    interface Cand { email: string; score: number; }
+    const candidates: Cand[] = [];
+
+    // 读取账号列表，用于检查 disabled 状态和标签
+    const allAccounts = accountStore.readAccountsSync(this._ctx);
+    const disabledSet = new Set(allAccounts.filter(a => a.disabled).map(a => a.email));
+
+    // 根据 poolScope 构建允许的邮箱集合
+    let poolEmails: Set<string> | null = null; // null = 不限制
+    if (s.poolScope === 'tag' && s.poolTag) {
+      poolEmails = new Set(allAccounts.filter(a => a.tag === s.poolTag).map(a => a.email));
+    } else if (s.poolScope === 'instance') {
+      const instTag = getCurrentInstanceTag();
+      if (instTag) {
+        poolEmails = new Set(allAccounts.filter(a => a.tag === instTag).map(a => a.email));
+      }
+    }
+
     for (const [email, entry] of this._cache.entries()) {
       if (email === curEmail) continue;
+      if (disabledSet.has(email)) continue;
+      if (poolEmails && !poolEmails.has(email)) continue;
       // 防止来回切：5 分钟内不回切到刚离开的号
       if (email === this._lastSwitchedFrom && Date.now() - this._lastSwitchedAt < ANTI_BOUNCE_MS) continue;
       if (!entry.snapshot) continue;
-      const score = calcScore(clamp(entry.snapshot.dailyRemainingPercent), clamp(entry.snapshot.weeklyRemainingPercent), mode);
-      if (score > threshold && (!best || score > best.score)) {
-        best = { email, score };
-      }
+      // 跳过 Free 计划的账号
+      const plan = (entry.snapshot.planName || '').toLowerCase();
+      if (plan.includes('free')) continue;
+
+      const dPct = clamp(entry.snapshot.dailyRemainingPercent);
+      const wPct = clamp(entry.snapshot.weeklyRemainingPercent);
+
+      // 关键修复：周限和日限是 AND 关系，任一耗尽即不可用
+      // 不能因 scoreMode='daily' 就忽略周限制约（反之亦然）
+      const minViable = Math.min(dPct, wPct);
+      if (minViable <= minQ) continue; // 任一维度低于额度下限，视为不可用
+
+      const score = calcScore(dPct, wPct, mode);
+      if (score > threshold) candidates.push({ email, score });
     }
-    return best;
+
+    if (candidates.length === 0) return null;
+
+    if (strategy === 'lowestNonZero') {
+      // 分两组：已用号（score ≤ prefUsed）和满额号（score > prefUsed）
+      const used = candidates.filter(c => c.score <= prefUsed);
+      const fresh = candidates.filter(c => c.score > prefUsed);
+      // 优先选已用号中额度最低的（消耗完再换新号）
+      if (used.length > 0) {
+        used.sort((a, b) => a.score - b.score);
+        return used[0];
+      }
+      // 没有已用号，选满额号中额度最低的
+      fresh.sort((a, b) => a.score - b.score);
+      return fresh[0];
+    } else {
+      // highestFirst：旧策略，选额度最高的
+      let best: Cand | null = null;
+      for (const c of candidates) {
+        if (!best || c.score > best.score) best = c;
+      }
+      return best;
+    }
   }
 }
 

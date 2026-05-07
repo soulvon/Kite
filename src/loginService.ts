@@ -2,6 +2,11 @@ import { LoginResult } from './types';
 import { post } from './httpClient';
 import { FIREBASE_API_KEY } from './config';
 
+/** 安全解析 JSON，失败返回 null（避免 502 HTML 错误页抛 Unexpected token） */
+function safeJsonParse<T = any>(s: string): T | null {
+  try { return JSON.parse(s); } catch { return null; }
+}
+
 /**
  * 检测认证方式
  */
@@ -9,10 +14,12 @@ async function detectAuthMethod(email: string): Promise<{ method: 'auth1' | 'fir
   try {
     const det = await post('https://windsurf.com/_devin-auth/connections', { product: 'windsurf', email });
     if (det.status === 200) {
-      const dd = JSON.parse(det.body);
-      const method = (dd.auth_method?.method || 'firebase').toLowerCase();
-      const hasPassword = dd.auth_method?.has_password ?? null;
-      return { method: method as 'auth1' | 'firebase', hasPassword };
+      const dd = safeJsonParse(det.body);
+      if (dd) {
+        const method = (dd.auth_method?.method || 'firebase').toLowerCase();
+        const hasPassword = dd.auth_method?.has_password ?? null;
+        return { method: method as 'auth1' | 'firebase', hasPassword };
+      }
     }
   } catch {
     // 忽略错误，默认使用 firebase
@@ -33,7 +40,8 @@ async function loginAuth1(email: string, password: string): Promise<LoginResult>
     return { ok: false, error: `Auth1登录失败:HTTP${lr.status}` };
   }
 
-  const loginResult = JSON.parse(lr.body);
+  const loginResult = safeJsonParse(lr.body);
+  if (!loginResult) return { ok: false, error: 'Auth1 响应不是 JSON（服务器可能不可用）' };
   const auth1Token = loginResult.token;
   const userId = loginResult.user_id || '';
 
@@ -54,11 +62,12 @@ async function loginAuth1(email: string, password: string): Promise<LoginResult>
   );
 
   if (pa.status !== 200) {
-    const em = JSON.parse(pa.body)?.message || '';
+    const em = safeJsonParse(pa.body)?.message || '';
     return { ok: false, error: `PostAuth失败:${pa.status}${em ? ' ' + em : ''}` };
   }
 
-  const pd = JSON.parse(pa.body);
+  const pd = safeJsonParse(pa.body);
+  if (!pd) return { ok: false, error: 'PostAuth 响应不是 JSON' };
   const sessionToken = pd.sessionToken || pd.session_token;
 
   if (!sessionToken) {
@@ -88,7 +97,7 @@ async function loginFirebase(email: string, password: string): Promise<LoginResu
   );
 
   if (fr.status !== 200) {
-    const errMsg = JSON.parse(fr.body)?.error?.message || '';
+    const errMsg = safeJsonParse(fr.body)?.error?.message || '';
     const errMap: Record<string, string> = {
       EMAIL_NOT_FOUND: '邮箱不存在',
       INVALID_PASSWORD: '密码错误',
@@ -99,7 +108,9 @@ async function loginFirebase(email: string, password: string): Promise<LoginResu
     return { ok: false, error: errMap[errMsg] || `Firebase登录失败:${errMsg || 'HTTP' + fr.status}` };
   }
 
-  const idToken = JSON.parse(fr.body).idToken;
+  const fbResp = safeJsonParse(fr.body);
+  if (!fbResp) return { ok: false, error: 'Firebase 响应不是 JSON' };
+  const idToken = fbResp.idToken;
   if (!idToken) {
     return { ok: false, error: 'Firebase响应缺少idToken' };
   }
@@ -115,7 +126,8 @@ async function loginFirebase(email: string, password: string): Promise<LoginResu
     return { ok: false, error: `RegisterUser失败:HTTP${rr.status}` };
   }
 
-  const rd = JSON.parse(rr.body);
+  const rd = safeJsonParse(rr.body);
+  if (!rd) return { ok: false, error: 'RegisterUser 响应不是 JSON' };
   const apiKey = rd.api_key || rd.apiKey;
   if (!apiKey) {
     return { ok: false, error: 'RegisterUser响应缺少api_key' };
@@ -154,11 +166,12 @@ export async function loginByAuth1Token(auth1Token: string): Promise<LoginResult
     );
 
     if (pa.status !== 200) {
-      const em = (() => { try { return JSON.parse(pa.body)?.message || ''; } catch { return ''; } })();
+      const em = safeJsonParse(pa.body)?.message || '';
       return { ok: false, error: `PostAuth失败:${pa.status}${em ? ' ' + em : ''}` };
     }
 
-    const pd = JSON.parse(pa.body);
+    const pd = safeJsonParse(pa.body);
+    if (!pd) return { ok: false, error: 'PostAuth 响应不是 JSON' };
     const sessionToken = pd.sessionToken || pd.session_token;
 
     if (!sessionToken) {
@@ -184,7 +197,7 @@ export async function loginByAuth1Token(auth1Token: string): Promise<LoginResult
     let email = '';
     let name = '';
     if (ur.status === 200) {
-      const ud = JSON.parse(ur.body);
+      const ud = safeJsonParse(ur.body);
       email = ud?.userStatus?.email || ud?.userStatus?.userName || '';
       name = ud?.userStatus?.name || ud?.userStatus?.userName || '';
     }

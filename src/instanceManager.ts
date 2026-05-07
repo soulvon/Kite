@@ -18,6 +18,7 @@ export interface InstanceConfig {
   createdAt: number;
   lastPid?: number;
   source?: InstanceSource;  // 默认 local，cockpit 表示引用 Cockpit Tools 目录
+  assignedTag?: string;     // 分配的账号标签（切号范围）
 }
 
 export interface InstanceView extends InstanceConfig {
@@ -312,6 +313,21 @@ export function updateInstanceName(instanceId: string, newName: string): void {
   if (store.instances.some(i => i.id !== instanceId && i.name === name)) { throw new Error('实例名称已存在'); }
   inst.name = name;
   saveStore(store);
+}
+
+export function updateInstanceTag(instanceId: string, tag: string | undefined): void {
+  const store = loadStore();
+  const inst = store.instances.find(i => i.id === instanceId);
+  if (!inst) { throw new Error('实例不存在'); }
+  inst.assignedTag = tag || undefined;
+  saveStore(store);
+}
+
+export function getCurrentInstanceTag(): string | undefined {
+  const store = loadStore();
+  const currentDir = normalizePath(getCurrentUserDataDir());
+  const inst = store.instances.find(i => normalizePath(i.userDataDir) === currentDir);
+  return inst?.assignedTag;
 }
 
 // ─── 启动 / 停止 ───────────────────────────────────────

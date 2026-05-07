@@ -5,6 +5,8 @@ import * as accountStore from './accountStore';
 import { readBindMark, getCurrentUserDataDir } from './instanceManager';
 import { AutoSwitcher } from './autoSwitcher';
 import { checkForUpdates, autoCheckOnStartup } from './updater';
+import { ensureEnhancement, restoreWorkbench } from './enhancementInjector';
+import { ensureBubbleRules, injectBubbleRules, removeBubbleRules, hasBubbleRules } from './rulesInjector';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
@@ -172,6 +174,109 @@ export function activate(context: vscode.ExtensionContext) {
     await checkForUpdates(false);
   });
   context.subscriptions.push(checkUpdatesCmd);
+
+  // [Windsurf 增强] 自动注入 DOM 增强脚本到 workbench.html
+  try {
+    const result = ensureEnhancement();
+    if (result.needRestart) {
+      vscode.window.showInformationMessage(
+        'Windsurf 增强已更新，重启后生效。',
+        '立即重启'
+      ).then(action => {
+        if (action === '立即重启') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        }
+      });
+    }
+  } catch (err) {
+    console.error('[windsurf-pool] Enhancement injection failed:', err);
+  }
+
+  // [Windsurf 增强] 恢复原始 workbench.html 命令
+  const restoreCmd = vscode.commands.registerCommand('windsurfPool.restoreWorkbench', async () => {
+    const restored = restoreWorkbench();
+    // 同步关闭开关，避免下次 activate 又自动注入；并清理 bubble rules
+    await vscode.workspace.getConfiguration('windsurfPool.enhancement').update('enabled', false, vscode.ConfigurationTarget.Global);
+    try { removeBubbleRules(); } catch {}
+
+    // 通知 webview 刷新状态
+    try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
+
+    if (restored) {
+      const action = await vscode.window.showInformationMessage('已恢复原始 workbench.html，重启后生效。', '立即重启');
+      if (action === '立即重启') {
+        vscode.commands.executeCommand('workbench.action.reloadWindow');
+      }
+    } else {
+      vscode.window.showWarningMessage('未找到备份文件；已关闭增强开关并清理规则。');
+    }
+  });
+  context.subscriptions.push(restoreCmd);
+
+  // [Windsurf 增强] 自动注入回复建议提示规则
+  try {
+    ensureBubbleRules();
+  } catch (err) {
+    console.error('[windsurf-pool] Bubble rules injection failed:', err);
+  }
+
+  // [Windsurf 增强] 手动注入/移除回复建议规则命令
+  const injectRulesCmd = vscode.commands.registerCommand('windsurfPool.injectBubbleRules', () => {
+    const result = injectBubbleRules();
+    try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
+    if (result.injected) {
+      vscode.window.showInformationMessage('智能建议规则已注入到 ~/.windsurfrules');
+    } else {
+      vscode.window.showInformationMessage(result.error || '规则已存在，无需重复注入');
+    }
+  });
+  context.subscriptions.push(injectRulesCmd);
+
+  const removeRulesCmd = vscode.commands.registerCommand('windsurfPool.removeBubbleRules', () => {
+    const removed = removeBubbleRules();
+    try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
+    if (removed) {
+      vscode.window.showInformationMessage('已从 ~/.windsurfrules 移除智能建议规则');
+    } else {
+      vscode.window.showInformationMessage('未找到已注入的规则');
+    }
+  });
+  context.subscriptions.push(removeRulesCmd);
+
+  // [Windsurf 增强] 重新注入命令
+  const reinjectCmd = vscode.commands.registerCommand('windsurfPool.reinjectEnhancement', async () => {
+    // 增强开关被用户关闭时，ensureEnhancement 会直接 return 且无 error，友好提示而非报"未知错误"
+    const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', true);
+    if (!enabled) {
+      const action = await vscode.window.showWarningMessage(
+        'Windsurf 增强已关闭，无法注入。是否立即启用？',
+        '立即启用', '取消'
+      );
+      if (action === '立即启用') {
+        await vscode.workspace.getConfiguration('windsurfPool.enhancement').update('enabled', true, vscode.ConfigurationTarget.Global);
+      } else {
+        return;
+      }
+    }
+    try {
+      const result = ensureEnhancement();
+      try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
+      if (result.injected && result.needRestart) {
+        vscode.window.showInformationMessage('增强脚本已注入，重启后生效。', '立即重启').then(action => {
+          if (action === '立即重启') {
+            vscode.commands.executeCommand('workbench.action.reloadWindow');
+          }
+        });
+      } else if (result.injected) {
+        vscode.window.showInformationMessage('增强脚本已是最新版本。');
+      } else {
+        vscode.window.showWarningMessage('注入失败：' + (result.error || '未知错误'));
+      }
+    } catch (err) {
+      vscode.window.showErrorMessage('注入异常：' + String(err));
+    }
+  });
+  context.subscriptions.push(reinjectCmd);
 }
 
 /**

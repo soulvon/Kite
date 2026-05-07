@@ -5,11 +5,19 @@
   let accounts = [];
   let lastEmail = '';
   let usageCache = new Map();
-  let autoSwitchEnabled = false;
+  let autoSwitchEnabled = true;
   let autoSwitchThreshold = 10;
   let autoSwitchCheckSec = 60;
   let autoSwitchCooldownSec = 30;
   let autoSwitchScoreMode = 'min';
+  let autoSwitchStrategy = 'lowestNonZero';
+  let autoSwitchMinQuota = 10;
+  let autoSwitchPreferUsedThreshold = 50;
+  let autoSwitchPoolScope = 'all';
+  let autoSwitchPoolTag = '';
+  let autoSwitchSynced = false; // 是否已收到后端同步
+  let pageSize = 20; // 每页显示数量，0=全部
+  let currentPage = 1;
   let refreshInterval = null;
   let externalAccount = ''; // Windsurf 当前登录但不在号池中的账户
 
@@ -86,9 +94,243 @@
   const emptyState = $('#emptyState');
   const asEnabledEl = $('#asEnabled');
   const asThresholdEl = $('#asThreshold');
-  const asBadge = $('#asBadge');
   const refreshAllBtn = $('#refreshAllBtn');
-  const settingsBtn = $('#settingsBtn');
+
+  // Windsurf 增强面板元素
+  const enhanceToggleBtn = $('#enhanceToggleBtn');
+  const enhanceScriptStatus = $('#enhanceScriptStatus');
+  const enhanceReinjectBtn = $('#enhanceReinjectBtn');
+  const enhanceInjectRulesBtn = $('#enhanceInjectRulesBtn');
+  const enhanceRestoreBtn = $('#enhanceRestoreBtn');
+  const enhanceBubbleRules = $('#enhanceBubbleRules');
+  const featLocalization = $('#featLocalization');
+  const featBubbles = $('#featBubbles');
+  const featAutoRecovery = $('#featAutoRecovery');
+  const featSignalBridge = $('#featSignalBridge');
+  // 增强设置控件
+  const enhBubblesEnabled = $('#enhBubblesEnabled');
+  const enhBubblesAutoSend = $('#enhBubblesAutoSend');
+  const enhBubblesTheme = $('#enhBubblesTheme');
+  const enhBubblesShape = $('#enhBubblesShape');
+  const enhLocalizationEnabled = $('#enhLocalizationEnabled');
+  const enhAutoContinueEnabled = $('#enhAutoContinueEnabled');
+  const enhDismissCorruptEnabled = $('#enhDismissCorruptEnabled');
+  const enhAutoSwitchOnQuota = $('#enhAutoSwitchOnQuota');
+  const enhAutoSwitchOnRateLimit = $('#enhAutoSwitchOnRateLimit');
+  const enhAutoRecoveryEnabled = $('#enhAutoRecoveryEnabled');
+  const enhAutoSendContinue = $('#enhAutoSendContinue');
+  const enhContinueAfterSwitch = $('#enhContinueAfterSwitch');
+  const enhAutoApproveWebRequests = $('#enhAutoApproveWebRequests');
+  const enhRecoveryMaxRetries = $('#enhRecoveryMaxRetries');
+  const enhNotifyEnabled = $('#enhNotifyEnabled');
+  const enhNotifyTrigger = $('#enhNotifyTrigger');
+  const enhNotifySound = $('#enhNotifySound');
+  const enhNotifyDesktop = $('#enhNotifyDesktop');
+  const enhNotifyTone = $('#enhNotifyTone');
+  const enhNotifyRepeat = $('#enhNotifyRepeat');
+  const enhNotifyTest = $('#enhNotifyTest');
+  const enhCustomToneRow = $('#enhCustomToneRow');
+  const enhCustomTone = $('#enhCustomTone');
+  const enhAudioFileRow = $('#enhAudioFileRow');
+  const enhAudioFile = $('#enhAudioFile');
+  const enhAudioFileBrowse = $('#enhAudioFileBrowse');
+
+  // ==================== 多选 ====================
+  let selectMode = false;
+  const selectedEmails = new Set();
+
+  // ==================== 搜索 & 排序 ====================
+  let searchQuery = '';
+  let sortDirection = 'desc'; // desc | asc
+
+  // ==================== 统一过滤器 ====================
+  // 每个维度是一个 Set，空 Set 表示不过滤该维度（显示全部）
+  let filterPlans = new Set();   // 套餐名称
+  let filterTags = new Set();    // 标签
+  let filterStatuses = new Set(); // 状态
+
+  // 兼容旧分组逻辑（现在不做分组，只过滤）
+  let groupBy = 'none';
+  let activeTagFilter = null;
+  let activeTagFilters = [];
+
+  // ==================== 标签管理 ====================
+  let tagEditMode = null; // null | 'add' | 'edit' | 'batch'
+  let tagEditEmail = null; // 正在编辑标签的账号邮箱
+  let tagEditBatchEmails = null; // 批量模式下要打标签的账号列表
+
+  // ========== 过滤器辅助 ==========
+  function getAccountStatus(account) {
+    const cached = usageCache.get(account.email);
+    const snap = cached?.snapshot;
+    const err = cached?.error;
+    if (err) return '异常';
+    if (!snap) return '未加载';
+    if (snap.planEnd && new Date(snap.planEnd).getTime() < Date.now()) return '已到期';
+    if ((snap.weeklyRemainingPercent || 0) <= 0) return '周额度耗尽';
+    if ((snap.dailyRemainingPercent || 0) <= 0) return '日额度耗尽';
+    return '正常';
+  }
+
+  function planTierClass(planName) {
+    const p = (planName || '').toLowerCase();
+    if (p.includes('free')) return 'tier-free';
+    if (p.includes('trial')) return 'tier-trial';
+    if (p.includes('pro')) return 'tier-pro';
+    if (p.includes('team')) return 'tier-team';
+    if (p.includes('enterprise')) return 'tier-enterprise';
+    return 'tier-unknown';
+  }
+
+  function getAccountPlan(account) {
+    const snap = usageCache.get(account.email)?.snapshot;
+    return snap ? (snap.planName || 'Unknown') : '未加载';
+  }
+
+  function passesFilter(account) {
+    if (filterPlans.size > 0 && !filterPlans.has(getAccountPlan(account))) return false;
+    if (filterTags.size > 0 && !filterTags.has(account.tag || '无标签')) return false;
+    if (filterStatuses.size > 0 && !filterStatuses.has(getAccountStatus(account))) return false;
+    return true;
+  }
+
+  // 当前搜索 + 筛选后可见的账号集合（与 renderCards 中筛选逻辑一致）
+  function getVisibleAccounts() {
+    let list = accounts.slice();
+    const q = (searchQuery || '').trim().toLowerCase();
+    if (q) {
+      list = list.filter(a => (a.email || '').toLowerCase().includes(q) || (a.tag || '').toLowerCase().includes(q));
+    }
+    list = list.filter(a => passesFilter(a));
+    return list;
+  }
+
+  function buildFilterDropdown() {
+    const planList = document.getElementById('filterPlanList');
+    const tagList = document.getElementById('filterTagList');
+    const statusList = document.getElementById('filterStatusList');
+    if (!planList || !tagList || !statusList) return;
+
+    // 统计各维度计数
+    const planCounts = {};
+    const tagCounts = {};
+    const statusCounts = {};
+    accounts.forEach(a => {
+      const p = getAccountPlan(a);
+      planCounts[p] = (planCounts[p] || 0) + 1;
+      const t = a.tag || '无标签';
+      tagCounts[t] = (tagCounts[t] || 0) + 1;
+      const s = getAccountStatus(a);
+      statusCounts[s] = (statusCounts[s] || 0) + 1;
+    });
+
+    function renderOptions(container, counts, activeSet) {
+      container.innerHTML = '';
+      Object.entries(counts).sort((a, b) => b[1] - a[1]).forEach(([val, cnt]) => {
+        const el = document.createElement('div');
+        el.className = 'filter-option' + (activeSet.has(val) ? ' is-active' : '');
+        el.dataset.value = val;
+        el.innerHTML = `<span class="filter-option-name">${escHtml(val)}</span><span class="filter-option-count">${cnt}</span>`;
+        container.appendChild(el);
+      });
+    }
+
+    renderOptions(planList, planCounts, filterPlans);
+    renderOptions(tagList, tagCounts, filterTags);
+    renderOptions(statusList, statusCounts, filterStatuses);
+
+    // 更新触发器标签
+    updateFilterLabel();
+  }
+
+  function updateFilterLabel() {
+    const labelEl = document.getElementById('filterLabel');
+    const countEl = document.getElementById('filterCount');
+    if (!labelEl || !countEl) return;
+    const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size;
+    if (totalFilters === 0) {
+      labelEl.textContent = 'ALL';
+      countEl.textContent = '(' + accounts.length + ')';
+    } else {
+      const matched = accounts.filter(a => passesFilter(a)).length;
+      labelEl.textContent = '筛选中';
+      countEl.textContent = '(' + matched + '/' + accounts.length + ')';
+    }
+  }
+
+  function getAccountGroup(account) {
+    const snap = usageCache.get(account.email)?.snapshot;
+    const err = usageCache.get(account.email)?.error;
+    switch (groupBy) {
+      case 'tag': return account.tag || '未分组';
+      case 'plan': return snap ? (snap.planName || 'Unknown') : '未加载';
+      case 'status': {
+        if (err) return '异常';
+        if (!snap) return '未加载';
+        if (snap.planEnd && new Date(snap.planEnd).getTime() < Date.now()) return '已到期';
+        if ((snap.weeklyRemainingPercent || 0) <= 0) return '周额度耗尽';
+        if ((snap.dailyRemainingPercent || 0) <= 0) return '日额度耗尽';
+        const minPct = Math.min(snap.dailyRemainingPercent || 0, snap.weeklyRemainingPercent || 0);
+        if (minPct < 10) return '额度不足';
+        return '正常';
+      }
+      case 'tier': {
+        // 按会员等级：Free / Pro / Team / Enterprise / 未知
+        if (!snap) return '未加载';
+        const plan = (snap.planName || '').toLowerCase();
+        if (plan.includes('free')) return '🆓 Free';
+        if (plan.includes('enterprise')) return '🏢 Enterprise';
+        if (plan.includes('team')) return '👥 Team';
+        if (plan.includes('pro')) return '⭐ Pro';
+        return '❓ 其他';
+      }
+      case 'usage': {
+        // 按用量水平
+        if (err) return '❌ 失效';
+        if (!snap) return '⏳ 未加载';
+        const minPct = Math.min(snap.dailyRemainingPercent || 0, snap.weeklyRemainingPercent || 0);
+        if (minPct <= 0) return '🔴 已用尽 (0%)';
+        if (minPct <= 10) return '🟠 即将耗尽 (≤10%)';
+        if (minPct <= 30) return '🟡 用量较高 (≤30%)';
+        if (minPct <= 60) return '🟢 用量适中 (≤60%)';
+        return '🔵 余量充足 (>60%)';
+      }
+      case 'expiry': {
+        // 按到期状态
+        if (!snap) return '⏳ 未加载';
+        if (!snap.planEnd) return '📅 无到期信息';
+        const endTs = new Date(snap.planEnd).getTime();
+        const now = Date.now();
+        const daysLeft = Math.ceil((endTs - now) / 86400000);
+        if (daysLeft < 0) return '⛔ 已过期';
+        if (daysLeft <= 3) return '🔴 3天内到期';
+        if (daysLeft <= 7) return '🟠 7天内到期';
+        if (daysLeft <= 30) return '🟡 30天内到期';
+        return '🟢 30天以上';
+      }
+      case 'domain': {
+        const parts = account.email.split('@');
+        return parts.length > 1 ? parts[1] : '未知';
+      }
+      default: return '__all__';
+    }
+  }
+
+  function updateBatchCount() {
+    const visible = getVisibleAccounts();
+    const visibleSelected = visible.filter(a => selectedEmails.has(a.email)).length;
+    const el = document.getElementById('batchCount');
+    if (el) {
+      // 当筛选后的可见数 != 总账号数时，显示"已选 N/可见M"提升清晰度
+      if (visible.length !== accounts.length) {
+        el.textContent = '已选 ' + selectedEmails.size + '（可见 ' + visibleSelected + '/' + visible.length + '）';
+      } else {
+        el.textContent = '已选 ' + selectedEmails.size;
+      }
+    }
+    const allCb = document.getElementById('batchCheckAll');
+    if (allCb) allCb.checked = visible.length > 0 && visibleSelected === visible.length;
+  }
 
   // ==================== 卡片视图 ====================
   function buildCard(account, isActive) {
@@ -99,14 +341,22 @@
     const cached = usageCache.get(account.email);
     const snap = cached?.snapshot;
     const err = cached?.error;
+    const tagActive = account.tag && filterTags.has(account.tag);
+    const tagHtml = account.tag ? `<span class="grid-tag-chip${tagActive ? ' is-active' : ''}" data-action="filterTag" title="点击筛选此标签 / 右键修改标签">${escHtml(account.tag)}</span>` : `<span class="grid-tag-add" data-action="editTag" title="添加标签">+ 标签</span>`;
 
+    if (selectMode) card.classList.add('is-select-mode');
+    if (account.disabled) card.classList.add('is-disabled');
     card.innerHTML = `
+      ${selectMode ? `<div class="grid-check-col"><input type="checkbox" class="grid-check-input" data-email="${escHtml(account.email)}" ${selectedEmails.has(account.email) ? 'checked' : ''}></div>` : ''}
+      <div class="grid-card-body">
       <div class="grid-card-head">
         <div class="grid-card-email" title="${escHtml(account.email)}">${escHtml(account.email)}</div>
         ${isActive ? '<span class="grid-active-tag">当前</span>' : ''}
+        ${account.disabled ? '<span class="grid-disabled-tag">已禁用</span>' : ''}
       </div>
       <div class="grid-card-meta">
-        <span class="grid-plan-chip" data-field="plan">${snap ? escHtml(snap.planName || 'Unknown') : '...'}</span>
+        <span class="grid-plan-chip ${snap ? planTierClass(snap.planName) : ''}" data-field="plan">${snap ? escHtml(snap.planName || 'Unknown') : '...'}</span>
+        ${tagHtml}
       </div>
       <div class="grid-card-quotas">
         <div class="grid-quota-item">
@@ -130,6 +380,7 @@
           : '<button class="grid-switch-btn" data-action="switch">切换</button>'
         }
         <div class="grid-actions-right">
+          <button class="status-toggle-btn ${account.disabled ? 'is-disabled' : 'is-enabled'}" data-action="toggleDisabled" title="${account.disabled ? '点击启用账号' : '点击禁用账号'}">${account.disabled ? '已禁用' : '已启用'}</button>
           <button class="icon-btn" data-action="refresh" title="刷新配额">
             <svg width="18" height="18" viewBox="0 0 1402 1024" fill="currentColor"><path d="M136.479 521.213a45.223 45.223 0 0 1-30.526-78.01l156.02-145.845a45.223 45.223 0 0 1 62.182 1.13l149.237 145.845a45.223 45.223 0 0 1-63.313 64.443L291.369 392.326 167.005 508.776a45.223 45.223 0 0 1-30.526 12.437zM1051.12 740.545a45.223 45.223 0 0 1-30.526-12.436L863.443 582.264a45.596 45.596 0 1 1 62.182-66.704l124.364 117.58 118.711-116.45a45.223 45.223 0 0 1 63.313 64.443l-149.237 146.976a45.223 45.223 0 0 1-31.656 12.436z"/><path d="M1048.859 737.154a45.223 45.223 0 0 1-45.224-45.224V513.298c0-183.154-149.236-332.391-332.391-332.391a332.391 332.391 0 0 0-218.202 81.402 45.255 45.255 0 0 1-59.921-67.835 422.838 422.838 0 0 1 700.961 318.824v178.632a45.223 45.223 0 0 1-45.223 45.224zM671.244 933.875a422.838 422.838 0 0 1-422.838-422.838V332.405a45.223 45.223 0 0 1 90.447 0v178.632c0 183.154 149.237 332.391 332.391 332.391a331.261 331.261 0 0 0 223.856-87.055 45.223 45.223 0 0 1 61.051 66.705 421.707 421.707 0 0 1-284.907 110.797z"/></svg>
           </button>
@@ -139,6 +390,7 @@
         </div>
       </div>
       <div class="grid-card-error" ${err ? '' : 'hidden'}>${err ? escHtml(err) : ''}</div>
+      </div>
     `;
 
     return card;
@@ -149,7 +401,10 @@
     if (!email || !snapshot) return;
 
     const planEl = card.querySelector('[data-field="plan"]');
-    if (planEl) planEl.textContent = snapshot.planName || 'Unknown';
+    if (planEl) {
+      planEl.textContent = snapshot.planName || 'Unknown';
+      planEl.className = 'grid-plan-chip ' + planTierClass(snapshot.planName);
+    }
 
     const dailyPctEl = card.querySelector('[data-field="dailyPct"]');
     const dailyBarEl = card.querySelector('[data-field="dailyBar"]');
@@ -207,39 +462,63 @@
     }, 400);
   }
 
-  // 排序模式：min | daily | weekly | planEnd | email | default
-  let sortMode = 'min';
+  // 排序模式：recommend | min | daily | weekly | planEnd | email | created | default
+  let sortMode = 'recommend';
 
   function getSnap(email) { return usageCache.get(email)?.snapshot; }
 
   function cmpByMode(a, b, mode) {
     const sa = getSnap(a.email), sb = getSnap(b.email);
     const has = (s) => s ? 1 : 0;
+    const dir = (sortDirection === 'asc') ? -1 : 1;
     switch (mode) {
+      case 'recommend': {
+        // 智能推荐：综合配额余量 + 计划未过期 + 无错误优先
+        const ea = usageCache.get(a.email)?.error, eb = usageCache.get(b.email)?.error;
+        // 失效账号排最后
+        if (ea && !eb) return 1;
+        if (!ea && eb) return -1;
+        // 未加载排在失效之前、已加载之后
+        if (!sa && sb) return 1;
+        if (sa && !sb) return -1;
+        if (!sa && !sb) return 0;
+        // 过期排后
+        const aNow = sa.planEnd ? new Date(sa.planEnd).getTime() > Date.now() : true;
+        const bNow = sb.planEnd ? new Date(sb.planEnd).getTime() > Date.now() : true;
+        if (aNow && !bNow) return -1;
+        if (!aNow && bNow) return 1;
+        // 按综合配额余量降序
+        const va = Math.min(sa.dailyRemainingPercent||0, sa.weeklyRemainingPercent||0);
+        const vb = Math.min(sb.dailyRemainingPercent||0, sb.weeklyRemainingPercent||0);
+        return (vb - va) * dir;
+      }
       case 'min': {
         const va = sa ? Math.min(sa.dailyRemainingPercent||0, sa.weeklyRemainingPercent||0) : -1;
         const vb = sb ? Math.min(sb.dailyRemainingPercent||0, sb.weeklyRemainingPercent||0) : -1;
-        return vb - va;
+        return (vb - va) * dir;
       }
       case 'daily': {
         const va = sa ? (sa.dailyRemainingPercent||0) : -1;
         const vb = sb ? (sb.dailyRemainingPercent||0) : -1;
-        return vb - va;
+        return (vb - va) * dir;
       }
       case 'weekly': {
         const va = sa ? (sa.weeklyRemainingPercent||0) : -1;
         const vb = sb ? (sb.weeklyRemainingPercent||0) : -1;
-        return vb - va;
+        return (vb - va) * dir;
       }
       case 'planEnd': {
-        // 升序：到期日近的在前；未加载最后
         if (has(sa) !== has(sb)) return has(sb) - has(sa);
         const va = sa?.planEnd ? new Date(sa.planEnd).getTime() : Infinity;
         const vb = sb?.planEnd ? new Date(sb.planEnd).getTime() : Infinity;
-        return va - vb;
+        return (va - vb) * dir;
       }
       case 'email':
-        return (a.email || '').localeCompare(b.email || '');
+        return (a.email || '').localeCompare(b.email || '') * dir;
+      case 'created': {
+        const ta = a.created_at || 0, tb = b.created_at || 0;
+        return (tb - ta) * dir;
+      }
       case 'default':
       default:
         return 0;
@@ -249,40 +528,106 @@
   function renderCards() {
     if (!accountGrid) return;
 
-    const sorted = [...accounts].sort((a, b) => {
+    // 搜索筛选
+    let filtered = [...accounts];
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      filtered = filtered.filter(a => (a.email || '').toLowerCase().includes(q) || (a.tag || '').toLowerCase().includes(q));
+    }
+    // 统一过滤器
+    filtered = filtered.filter(a => passesFilter(a));
+    // 更新过滤器标签
+    updateFilterLabel();
+
+    const sorted = filtered.sort((a, b) => {
       if (a.email === lastEmail) return -1;
       if (b.email === lastEmail) return 1;
       return cmpByMode(a, b, sortMode);
     });
 
-    const newEmails = sorted.map(a => a.email);
-    const oldCards = [...accountGrid.querySelectorAll('.grid-card')];
-    const oldEmails = oldCards.map(c => c.dataset.email);
+    // 始终重建（分组模式下有 header）
+    accountGrid.innerHTML = '';
 
-    // 结构变化（账号增减或顺序改变）时才重建，否则原地更新
-    const structChanged = newEmails.length !== oldEmails.length || newEmails.some((e, i) => e !== oldEmails[i]);
+    // 更新标签栏
+    renderTagBar();
 
-    if (structChanged) {
-      accountGrid.innerHTML = '';
-      sorted.forEach(account => {
+    if (groupBy === 'none') {
+      // 分页
+      const total = sorted.length;
+      let pageItems = sorted;
+      if (pageSize > 0 && total > pageSize) {
+        const maxPage = Math.ceil(total / pageSize);
+        if (currentPage > maxPage) currentPage = maxPage;
+        if (currentPage < 1) currentPage = 1;
+        const start = (currentPage - 1) * pageSize;
+        pageItems = sorted.slice(start, start + pageSize);
+      }
+      pageItems.forEach(account => {
         accountGrid.appendChild(buildCard(account, account.email === lastEmail));
       });
+      // 分页控件
+      if (pageSize > 0 && total > pageSize) {
+        const maxPage = Math.ceil(total / pageSize);
+        const pager = document.createElement('div');
+        pager.className = 'pager-bar';
+        pager.innerHTML = `
+          <button class="pager-btn" data-page="prev" ${currentPage <= 1 ? 'disabled' : ''}>&lt;</button>
+          <span class="pager-info">${currentPage} / ${maxPage}</span>
+          <button class="pager-btn" data-page="next" ${currentPage >= maxPage ? 'disabled' : ''}>&gt;</button>
+          <span class="pager-info pager-total">共 ${total} 个</span>
+        `;
+        accountGrid.appendChild(pager);
+        pager.querySelectorAll('.pager-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            if (btn.dataset.page === 'prev' && currentPage > 1) { currentPage--; renderCards(); }
+            else if (btn.dataset.page === 'next' && currentPage < maxPage) { currentPage++; renderCards(); }
+          });
+        });
+      }
     } else {
-      sorted.forEach((account, i) => {
-        const card = oldCards[i];
-        if (!card) return;
-        const isActive = account.email === lastEmail;
-        card.className = 'grid-card' + (isActive ? ' is-active' : '');
-        const cached = usageCache.get(account.email);
-        if (cached?.snapshot) updateCard(card, cached.snapshot);
+      // 分组渲染
+      const groups = new Map();
+      sorted.forEach(account => {
+        const key = getAccountGroup(account);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(account);
       });
+
+      // 排序分组：未分组/未加载 放最后
+      const sortedKeys = [...groups.keys()].sort((a, b) => {
+        const tailWords = ['未分组', '未加载', '未知', '__all__'];
+        const ai = tailWords.indexOf(a), bi = tailWords.indexOf(b);
+        if (ai >= 0 && bi < 0) return 1;
+        if (ai < 0 && bi >= 0) return -1;
+        return a.localeCompare(b);
+      });
+
+      for (const key of sortedKeys) {
+        const items = groups.get(key);
+        const header = document.createElement('div');
+        header.className = 'group-header';
+        header.dataset.group = key;
+        const groupEmails = items.map(a => a.email);
+        const allSelected = groupEmails.every(e => selectedEmails.has(e));
+        header.innerHTML = `
+          ${selectMode ? `<label class="group-check"><input type="checkbox" class="group-check-input" data-group="${escHtml(key)}" ${allSelected ? 'checked' : ''}></label>` : ''}
+          <span class="group-name">${escHtml(key)}</span>
+          <span class="group-count">${items.length}</span>
+        `;
+        accountGrid.appendChild(header);
+        items.forEach(account => {
+          accountGrid.appendChild(buildCard(account, account.email === lastEmail));
+        });
+      }
     }
 
-    if (gridCount) gridCount.textContent = accounts.length + ' 个';
+    const hasFilter = searchQuery.trim() || activeTagFilters.length > 0 || activeTagFilter;
+    if (gridCount) gridCount.textContent = hasFilter ? filtered.length + ' / ' + accounts.length + ' 个' : accounts.length + ' 个';
     if (emptyState) emptyState.hidden = accounts.length > 0;
     if (accountGrid) accountGrid.hidden = accounts.length === 0;
 
     updateSummary();
+    if (selectMode) updateBatchCount();
   }
 
   // ==================== 号池汇总 ====================
@@ -338,6 +683,126 @@
     el.textContent = text;
     el.hidden = !text;
     el.className = 'batch-msg' + (isError ? ' is-error' : text ? ' is-ok' : '');
+  }
+
+  // ==================== 标签管理 ====================
+  function persistTagFilters() {
+    try {
+      const st = vscode.getState() || {};
+      st._filterTags = [...filterTags];
+      vscode.setState(st);
+    } catch {}
+  }
+
+  function renderTagBar() {
+    const tagListEl = document.getElementById('tagList');
+    if (!tagListEl) return;
+
+    // 获取所有唯一标签
+    const tags = new Set();
+    accounts.forEach(acc => {
+      if (acc.tag) tags.add(acc.tag);
+    });
+
+    tagListEl.innerHTML = '';
+
+    // "全部"按钮 → 清空标签筛选
+    const allChip = document.createElement('span');
+    allChip.className = 'tag-chip' + (filterTags.size === 0 ? ' is-active' : '');
+    allChip.textContent = '全部';
+    allChip.onclick = () => {
+      filterTags.clear();
+      persistTagFilters();
+      currentPage = 1;
+      const dropdown = document.getElementById('filterDropdown');
+      if (dropdown && !dropdown.hidden) buildFilterDropdown();
+      renderTagBar();
+      renderCards();
+    };
+    tagListEl.appendChild(allChip);
+
+    // 每个标签 → toggle filterTags Set
+    tags.forEach(tag => {
+      const chip = document.createElement('span');
+      chip.className = 'tag-chip' + (filterTags.has(tag) ? ' is-active' : '');
+      chip.textContent = tag;
+      chip.onclick = () => {
+        if (filterTags.has(tag)) filterTags.delete(tag);
+        else filterTags.add(tag);
+        persistTagFilters();
+        currentPage = 1;
+        const dropdown = document.getElementById('filterDropdown');
+        if (dropdown && !dropdown.hidden) buildFilterDropdown();
+        renderTagBar();
+        renderCards();
+      };
+      tagListEl.appendChild(chip);
+    });
+  }
+
+  function openTagEditModal(mode, emailOrEmails = null) {
+    tagEditMode = mode;
+    tagEditEmail = null;
+    tagEditBatchEmails = null;
+
+    const overlay = document.getElementById('tagEditOverlay');
+    const title = document.getElementById('tagEditTitle');
+    const input = document.getElementById('tagEditInput');
+    const error = document.getElementById('tagEditError');
+
+    if (!overlay || !title || !input || !error) return;
+
+    error.hidden = true;
+    input.value = '';
+
+    if (mode === 'edit' && typeof emailOrEmails === 'string') {
+      tagEditEmail = emailOrEmails;
+      const account = accounts.find(a => a.email === emailOrEmails);
+      title.textContent = '编辑标签';
+      input.value = account?.tag || '';
+      input.placeholder = '输入标签名称';
+    } else if (mode === 'batch' && Array.isArray(emailOrEmails)) {
+      tagEditBatchEmails = [...emailOrEmails];
+      title.textContent = `为 ${emailOrEmails.length} 个账号打标签`;
+      input.placeholder = '输入标签名称（留空则清除标签）';
+    } else {
+      title.textContent = '添加标签';
+      input.placeholder = '输入标签名称';
+    }
+
+    overlay.hidden = false;
+    input.focus();
+  }
+
+  function closeTagEditModal() {
+    const overlay = document.getElementById('tagEditOverlay');
+    if (overlay) overlay.hidden = true;
+    tagEditMode = null;
+    tagEditEmail = null;
+    tagEditBatchEmails = null;
+  }
+
+  function saveTagEdit() {
+    const input = document.getElementById('tagEditInput');
+    const error = document.getElementById('tagEditError');
+    if (!input || !error) return;
+
+    const newTag = input.value.trim();
+
+    // 批量模式允许空标签（用于清除）；其他模式空值视为非法
+    if (!newTag && tagEditMode !== 'batch') {
+      error.textContent = '标签不能为空';
+      error.hidden = false;
+      return;
+    }
+
+    if (tagEditMode === 'edit' && tagEditEmail) {
+      postMsg('updateTag', { email: tagEditEmail, tag: newTag });
+    } else if (tagEditMode === 'batch' && tagEditBatchEmails && tagEditBatchEmails.length > 0) {
+      postMsg('batchTag', { emails: tagEditBatchEmails, tag: newTag });
+    }
+
+    closeTagEditModal();
   }
 
   // ==================== 批量导入模态弹窗 ====================
@@ -547,9 +1012,9 @@
     vscode.setState(Object.assign(vscode.getState() || {}, { _batchIndex: idx + 1 }));
     _lastBatchSentAt = Date.now();
     if (isToken) {
-      postMsg('batchTokenImport', { token: item.token, batch: true });
+      postMsg('batchTokenImport', { token: item.token, batch: true, tag: item.tag || '' });
     } else {
-      postMsg('loginSave', { email: item.email, password: item.password, batch: true, authMethod: item.authMethod || 'auto' });
+      postMsg('loginSave', { email: item.email, password: item.password, batch: true, authMethod: item.authMethod || 'auto', tag: item.tag || '' });
     }
 
     // 超时兜底：后端无响应也推进
@@ -688,6 +1153,9 @@
       seen.add(email.toLowerCase());
       accts.push({ email, password, authMethod });
     }
+    const batchTagEl = document.getElementById('batchTag');
+    const batchTag = batchTagEl ? batchTagEl.value.trim() : '';
+    if (batchTag) accts.forEach(a => a.tag = batchTag);
     const { fresh, skipped } = filterExistingAccounts(accts);
     if (fresh.length === 0) {
       const msg = skipped.length ? `所有 ${skipped.length} 个账号已存在，跳过导入` : (errors.length ? errors.join('\n') : '未解析到有效账号');
@@ -801,9 +1269,12 @@
     const asScoreModeEl = document.getElementById('asScoreMode');
     if (asScoreModeEl) asScoreModeEl.value = autoSwitchScoreMode;
     updateScoreModeHint();
-    if (asBadge) {
-      asBadge.textContent = autoSwitchEnabled ? 'ON' : 'OFF';
-      asBadge.className = 'as-badge' + (autoSwitchEnabled ? ' is-on' : '');
+    const asPoolScopeEl = document.getElementById('asPoolScope');
+    const asPoolTagEl = document.getElementById('asPoolTag');
+    if (asPoolScopeEl) asPoolScopeEl.value = autoSwitchPoolScope;
+    if (asPoolTagEl) {
+      populateTagSelect(asPoolTagEl, autoSwitchPoolTag);
+      asPoolTagEl.style.display = autoSwitchPoolScope === 'tag' ? '' : 'none';
     }
   }
 
@@ -916,6 +1387,28 @@
         setTimeout(() => postMsg('delete', { email }), 200);
         break;
       }
+      case 'editTag': {
+        openTagEditModal('edit', email);
+        break;
+      }
+      case 'filterTag': {
+        const acc = accounts.find(a => a.email === email);
+        const tag = acc?.tag;
+        if (!tag) break;
+        if (filterTags.has(tag)) filterTags.delete(tag);
+        else filterTags.add(tag);
+        persistTagFilters();
+        currentPage = 1;
+        const dropdown = document.getElementById('filterDropdown');
+        if (dropdown && !dropdown.hidden) buildFilterDropdown();
+        renderTagBar();
+        renderCards();
+        break;
+      }
+      case 'toggleDisabled': {
+        postMsg('toggleDisabled', { email });
+        break;
+      }
     }
   }
 
@@ -925,7 +1418,8 @@
     if (!email || !password) return;
     const amEl = document.querySelector('input[name="batchAuthMethod"]:checked');
     const authMethod = amEl ? amEl.value : 'auto';
-    postMsg('loginSave', { email, password, authMethod });
+    const tag = $('#loginTag')?.value?.trim() || '';
+    postMsg('loginSave', { email, password, authMethod, tag });
   }
 
   // ==================== 消息监听 ====================
@@ -934,6 +1428,14 @@
     accounts = newAccounts;
     lastEmail = newLastEmail;
     externalAccount = newExternalAccount || '';
+    // 自动清除无效过滤器：如果过滤器激活但 0 条匹配，清掉过时状态
+    const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size;
+    if (totalFilters > 0 && accounts.length > 0 && accounts.filter(a => passesFilter(a)).length === 0) {
+      filterPlans.clear();
+      filterTags.clear();
+      filterStatuses.clear();
+      try { const st = vscode.getState() || {}; st._filterPlans = []; st._filterTags = []; st._filterStatuses = []; vscode.setState(st); } catch {}
+    }
     renderCards();
     // 更新外部账户提示条
     const banner = document.getElementById('externalBanner');
@@ -1027,13 +1529,194 @@
         autoSwitchCheckSec = msg.checkSec || 60;
         autoSwitchCooldownSec = msg.cooldownSec || 30;
         autoSwitchScoreMode = msg.scoreMode || 'min';
+        autoSwitchStrategy = msg.switchStrategy || 'lowestNonZero';
+        autoSwitchMinQuota = msg.minQuota ?? 10;
+        autoSwitchPreferUsedThreshold = msg.preferUsedThreshold ?? 50;
+        autoSwitchPoolScope = msg.poolScope || 'all';
+        autoSwitchPoolTag = msg.poolTag || '';
+        autoSwitchSynced = true;
         syncAutoSwitchUI();
-        const asBody = document.getElementById('asBody');
-        if (asBody) asBody.style.display = autoSwitchEnabled ? '' : 'none';
+        syncStrategyUI();
+        const asDetailsSync = document.getElementById('asDetails');
+        if (asDetailsSync) { if (autoSwitchEnabled) asDetailsSync.setAttribute('open', ''); else asDetailsSync.removeAttribute('open'); }
+        break;
+      }
+
+      case 'enhancementStatus': {
+        updateEnhancementUI(msg);
+        break;
+      }
+
+      case 'audioFileSelected': {
+        if (enhAudioFile && msg.path) {
+          enhAudioFile.value = msg.path;
+          saveEnhanceSettings();
+        }
         break;
       }
     }
   });
+
+  // ==================== Windsurf 增强 UI ====================
+  function updateEnhancementUI(msg) {
+    const { injected, patchVersion, extensionVersion, enabled, autoRecovery } = msg;
+
+    // 按钮状态
+    if (enhanceToggleBtn) {
+      enhanceToggleBtn.textContent = enabled ? '已启用' : '未启用';
+      enhanceToggleBtn.className = 'enhance-toggle-btn' + (enabled ? ' is-on' : '');
+    }
+
+    // 增强脚本注入状态
+    if (enhanceScriptStatus) {
+      enhanceScriptStatus.className = 'enhance-value';
+      if (injected) {
+        enhanceScriptStatus.textContent = 'v' + patchVersion + '  ✓ 已注入';
+        enhanceScriptStatus.classList.add('is-ok');
+      } else {
+        enhanceScriptStatus.textContent = '✗ 未注入';
+        enhanceScriptStatus.classList.add('is-err');
+      }
+    }
+
+    // 智能建议规则状态
+    if (enhanceBubbleRules) {
+      enhanceBubbleRules.className = 'enhance-value';
+      if (msg.bubbleRulesInjected) {
+        enhanceBubbleRules.textContent = '✓ 已注入';
+        enhanceBubbleRules.classList.add('is-ok');
+      } else {
+        enhanceBubbleRules.textContent = '✗ 未注入';
+        enhanceBubbleRules.classList.add('is-err');
+      }
+    }
+
+    // 无感切号（信号桥）状态 —— 只看脚本是否注入，不依赖增强开关
+    const enhanceSignalBridge = $('#enhanceSignalBridge');
+    if (enhanceSignalBridge) {
+      enhanceSignalBridge.className = 'enhance-value';
+      if (msg.signalBridgeActive) {
+        enhanceSignalBridge.textContent = '✓ 已就绪';
+        enhanceSignalBridge.classList.add('is-ok');
+      } else {
+        enhanceSignalBridge.textContent = '✗ 未注入';
+        enhanceSignalBridge.classList.add('is-err');
+      }
+    }
+
+    // 功能标签
+    const isActive = injected && enabled;
+    [featLocalization, featBubbles].forEach(el => {
+      if (el) el.className = 'enhance-feat' + (isActive ? ' is-on' : '');
+    });
+    if (featAutoRecovery) {
+      featAutoRecovery.className = 'enhance-feat' + (isActive && autoRecovery ? ' is-on' : '');
+    }
+    if (featSignalBridge) {
+      featSignalBridge.className = 'enhance-feat' + (isActive && autoRecovery ? ' is-on' : '');
+    }
+  }
+
+  // ==================== 增强设置同步 ====================
+  // 从 windsurf-better.js 的 localStorage 读取并同步到侧栏控件
+  function loadEnhanceSettings() {
+    try {
+      const raw = localStorage.getItem('ws-better-settings');
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (enhBubblesEnabled) enhBubblesEnabled.checked = s.bubblesEnabled !== false;
+      if (enhBubblesAutoSend) enhBubblesAutoSend.checked = s.bubblesAutoSend !== false;
+      if (enhBubblesTheme) enhBubblesTheme.value = s.bubblesTheme || 'emerald';
+      if (enhBubblesShape) enhBubblesShape.value = s.bubblesShape || 'rounded';
+      if (enhLocalizationEnabled) enhLocalizationEnabled.checked = s.localizationEnabled !== false;
+      if (enhAutoContinueEnabled) enhAutoContinueEnabled.checked = s.autoContinueEnabled !== false;
+      if (enhDismissCorruptEnabled) enhDismissCorruptEnabled.checked = s.dismissCorruptEnabled !== false;
+      if (enhAutoSwitchOnQuota) enhAutoSwitchOnQuota.checked = s.autoSwitchOnQuota !== false;
+      if (enhAutoSwitchOnRateLimit) enhAutoSwitchOnRateLimit.checked = s.autoSwitchOnRateLimit !== false;
+      if (enhAutoRecoveryEnabled) enhAutoRecoveryEnabled.checked = s.autoRecoveryEnabled !== false;
+      if (enhAutoSendContinue) enhAutoSendContinue.checked = s.autoSendContinue !== false;
+      if (enhContinueAfterSwitch) enhContinueAfterSwitch.checked = s.continueAfterSwitch !== false;
+      if (enhAutoApproveWebRequests) enhAutoApproveWebRequests.checked = s.autoApproveWebRequests === true;
+      if (enhRecoveryMaxRetries) enhRecoveryMaxRetries.value = s.recoveryMaxRetries || 3;
+      if (enhNotifyEnabled) enhNotifyEnabled.checked = s.notifyEnabled !== false;
+      if (enhNotifyTrigger) enhNotifyTrigger.value = s.notifyTrigger || 'always';
+      if (enhNotifySound) enhNotifySound.checked = s.notifySound !== false;
+      if (enhNotifyDesktop) enhNotifyDesktop.checked = s.notifyDesktop !== false;
+      if (enhNotifyTone) enhNotifyTone.value = s.notifyTone || 'funk';
+      if (enhNotifyRepeat) enhNotifyRepeat.value = s.notifyRepeat || 2;
+      if (enhCustomTone && s.customTone) enhCustomTone.value = s.customTone;
+      if (enhAudioFile && s.audioFile) enhAudioFile.value = s.audioFile;
+      if (enhCustomToneRow) enhCustomToneRow.style.display = (s.notifyTone === 'custom') ? 'flex' : 'none';
+      if (enhAudioFileRow) enhAudioFileRow.style.display = (s.notifyTone === 'file') ? 'flex' : 'none';
+    } catch {}
+  }
+
+  // 将侧栏设置写回 localStorage，windsurf-better.js 会自动读取
+  function saveEnhanceSettings() {
+    try {
+      const current = JSON.parse(localStorage.getItem('ws-better-settings') || '{}');
+      const updated = {
+        ...current,
+        bubblesEnabled: enhBubblesEnabled ? enhBubblesEnabled.checked : true,
+        bubblesAutoSend: enhBubblesAutoSend ? enhBubblesAutoSend.checked : true,
+        bubblesTheme: enhBubblesTheme ? enhBubblesTheme.value : 'emerald',
+        bubblesShape: enhBubblesShape ? enhBubblesShape.value : 'rounded',
+        localizationEnabled: enhLocalizationEnabled ? enhLocalizationEnabled.checked : true,
+        autoContinueEnabled: enhAutoContinueEnabled ? enhAutoContinueEnabled.checked : true,
+        dismissCorruptEnabled: enhDismissCorruptEnabled ? enhDismissCorruptEnabled.checked : true,
+        autoSwitchOnQuota: enhAutoSwitchOnQuota ? enhAutoSwitchOnQuota.checked : true,
+        autoSwitchOnRateLimit: enhAutoSwitchOnRateLimit ? enhAutoSwitchOnRateLimit.checked : true,
+        autoRecoveryEnabled: enhAutoRecoveryEnabled ? enhAutoRecoveryEnabled.checked : true,
+        autoSendContinue: enhAutoSendContinue ? enhAutoSendContinue.checked : true,
+        continueAfterSwitch: enhContinueAfterSwitch ? enhContinueAfterSwitch.checked : true,
+        autoApproveWebRequests: enhAutoApproveWebRequests ? enhAutoApproveWebRequests.checked : false,
+        recoveryMaxRetries: enhRecoveryMaxRetries ? parseInt(enhRecoveryMaxRetries.value) || 3 : 3,
+        notifyEnabled: enhNotifyEnabled ? enhNotifyEnabled.checked : true,
+        notifyTrigger: enhNotifyTrigger ? enhNotifyTrigger.value : 'always',
+        notifySound: enhNotifySound ? enhNotifySound.checked : true,
+        notifyDesktop: enhNotifyDesktop ? enhNotifyDesktop.checked : true,
+        notifyTone: enhNotifyTone ? enhNotifyTone.value : 'funk',
+        notifyRepeat: enhNotifyRepeat ? parseInt(enhNotifyRepeat.value) || 2 : 2,
+        customTone: enhCustomTone ? enhCustomTone.value : '',
+        audioFile: enhAudioFile ? enhAudioFile.value : '',
+      };
+      localStorage.setItem('ws-better-settings', JSON.stringify(updated));
+      // 切换自定义行显示
+      if (enhCustomToneRow) enhCustomToneRow.style.display = (updated.notifyTone === 'custom') ? 'flex' : 'none';
+      if (enhAudioFileRow) enhAudioFileRow.style.display = (updated.notifyTone === 'file') ? 'flex' : 'none';
+      updateBubblePreview();
+    } catch {}
+  }
+
+  // 气泡预览：主题和形状数据（与 windsurf-better.js 保持一致）
+  const PREVIEW_THEMES = {
+    emerald: { bg:'linear-gradient(135deg,#22c55e,#06b6d4,#3b82f6)', bgHover:'linear-gradient(135deg,#16a34a,#0891b2,#2563eb)', color:'#fff', shadow:'0 2px 8px rgba(34,197,94,.2)', border:'none' },
+    aurora:  { bg:'linear-gradient(135deg,#a855f7,#ec4899)', bgHover:'linear-gradient(135deg,#9333ea,#db2777)', color:'#fff', shadow:'0 2px 8px rgba(168,85,247,.2)', border:'none' },
+    sunset:  { bg:'linear-gradient(135deg,#f59e0b,#ef4444)', bgHover:'linear-gradient(135deg,#d97706,#dc2626)', color:'#fff', shadow:'0 2px 8px rgba(245,158,11,.2)', border:'none' },
+    ocean:   { bg:'#1e40af', bgHover:'#1e3a8a', color:'#fff', shadow:'0 2px 8px rgba(30,64,175,.25)', border:'none' },
+    glass:   { bg:'rgba(255,255,255,.08)', bgHover:'rgba(255,255,255,.14)', color:'rgba(255,255,255,.8)', shadow:'0 2px 8px rgba(0,0,0,.1)', border:'1px solid rgba(255,255,255,.12)', blur:true },
+    dark:    { bg:'#1f2937', bgHover:'#111827', color:'#e5e7eb', shadow:'0 2px 8px rgba(0,0,0,.3)', border:'1px solid rgba(255,255,255,.08)' },
+  };
+  const PREVIEW_SHAPES = { pill:'20px', rounded:'10px', soft:'6px', sharp:'2px' };
+
+  function updateBubblePreview() {
+    const container = document.getElementById('bubblePreviewContainer');
+    if (!container) return;
+    const themeId = enhBubblesTheme ? enhBubblesTheme.value : 'emerald';
+    const shapeId = enhBubblesShape ? enhBubblesShape.value : 'rounded';
+    const theme = PREVIEW_THEMES[themeId] || PREVIEW_THEMES.emerald;
+    const radius = PREVIEW_SHAPES[shapeId] || '10px';
+    container.querySelectorAll('.bubble-preview-item').forEach(el => {
+      el.style.background = theme.bg;
+      el.style.color = theme.color;
+      el.style.boxShadow = theme.shadow;
+      el.style.border = (theme.border && theme.border !== 'none') ? theme.border : 'none';
+      el.style.borderRadius = radius;
+      el.style.backdropFilter = theme.blur ? 'blur(12px)' : '';
+      el.onmouseenter = () => { el.style.background = theme.bgHover; };
+      el.onmouseleave = () => { el.style.background = theme.bg; };
+    });
+  }
 
   // ==================== 持久化 ====================
   function persistState() {
@@ -1129,6 +1812,7 @@
             ${focusBtn}<span class="inst-card-state">${stateText}</span>
           </div>
           <div class="inst-card-email" title="${escHtml(inst.bindEmail || '')}">${inst.bindEmail ? escHtml(inst.bindEmail) : '<span style="opacity:0.4">未绑定账号</span>'}</div>
+          <div class="inst-card-tag">${inst.assignedTag ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">📌 ' + escHtml(inst.assignedTag) + '</span>' : '<span class="inst-tag-none" data-inst-action="viewTag" style="opacity:0.4;cursor:pointer">未分配标签</span>'}</div>
           <div class="inst-card-actions">
             ${primaryBtn}
             <button class="icon-btn" data-inst-action="edit" title="编辑">
@@ -1168,6 +1852,12 @@
         if (emailEl) {
           emailEl.title = inst.bindEmail || '';
           emailEl.innerHTML = inst.bindEmail ? escHtml(inst.bindEmail) : '<span style="opacity:0.4">未绑定账号</span>';
+        }
+        const tagEl = card.querySelector('.inst-card-tag');
+        if (tagEl) {
+          tagEl.innerHTML = inst.assignedTag
+            ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">📌 ' + escHtml(inst.assignedTag) + '</span>'
+            : '<span class="inst-tag-none" data-inst-action="viewTag" style="opacity:0.4;cursor:pointer">未分配标签</span>';
         }
         const actionsEl = card.querySelector('.inst-card-actions');
         if (actionsEl) {
@@ -1441,14 +2131,29 @@
     });
   }
 
+  function getTagList() {
+    const tags = new Set();
+    accounts.forEach(a => { if (a.tag) tags.add(a.tag); });
+    return [...tags].sort();
+  }
+
+  function populateTagSelect(selectEl, currentTag) {
+    if (!selectEl) return;
+    const tags = getTagList();
+    selectEl.innerHTML = '<option value="">不限（全部账号）</option>' +
+      tags.map(t => `<option value="${escHtml(t)}" ${t === currentTag ? 'selected' : ''}>${escHtml(t)}</option>`).join('');
+  }
+
   function openInstEditModal(inst) {
     const overlay = document.getElementById('instEditOverlay');
     const nameInput = document.getElementById('instEditName');
     const accountEl = document.getElementById('instEditAccount');
+    const tagSelect = document.getElementById('instEditTag');
     const errorEl = document.getElementById('instEditError');
     if (!overlay) return;
 
     renderAccountPicker(accountEl, inst.bindEmail);
+    populateTagSelect(tagSelect, inst.assignedTag || '');
     if (nameInput) nameInput.value = inst.name;
     if (errorEl) errorEl.hidden = true;
     overlay.dataset.instId = inst.id;
@@ -1458,17 +2163,19 @@
   function submitInstEdit() {
     const overlay = document.getElementById('instEditOverlay');
     const nameInput = document.getElementById('instEditName');
+    const tagSelect = document.getElementById('instEditTag');
     const errorEl = document.getElementById('instEditError');
     const id = overlay?.dataset.instId;
     const name = nameInput?.value?.trim();
     const email = getAccountPickerValue('instEditAccount');
+    const assignedTag = tagSelect?.value || '';
     if (!id) return;
     if (!name) {
       if (errorEl) { errorEl.textContent = '请输入实例名称'; errorEl.hidden = false; }
       return;
     }
     if (overlay) overlay.hidden = true;
-    postMsg('instanceUpdate', { instanceId: id, instanceName: name, email });
+    postMsg('instanceUpdate', { instanceId: id, instanceName: name, email, assignedTag });
   }
 
   async function handleInstAction(e) {
@@ -1606,6 +2313,199 @@
   function init() {
     // 卡片点击
     if (accountGrid) accountGrid.addEventListener('click', handleCardAction);
+    // 卡片右键：右键标签 chip 时打开"修改标签"模态
+    if (accountGrid) accountGrid.addEventListener('contextmenu', (e) => {
+      const chip = e.target.closest('.grid-tag-chip');
+      if (!chip) return;
+      const card = chip.closest('.grid-card');
+      const email = card?.dataset.email;
+      if (!email) return;
+      e.preventDefault();
+      openTagEditModal('edit', email);
+    });
+
+    // ── 统一过滤器 ──
+    const filterTrigger = document.getElementById('filterTrigger');
+    const filterDropdown = document.getElementById('filterDropdown');
+    const filterClearBtn = document.getElementById('filterClearBtn');
+    // 恢复持久化
+    try {
+      const st = vscode.getState() || {};
+      if (st._filterPlans) filterPlans = new Set(st._filterPlans);
+      if (st._filterTags) filterTags = new Set(st._filterTags);
+      if (st._filterStatuses) filterStatuses = new Set(st._filterStatuses);
+    } catch {}
+    function persistFilters() {
+      const st = vscode.getState() || {};
+      st._filterPlans = [...filterPlans];
+      st._filterTags = [...filterTags];
+      st._filterStatuses = [...filterStatuses];
+      vscode.setState(st);
+    }
+    if (filterTrigger && filterDropdown) {
+      filterTrigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        filterDropdown.hidden = !filterDropdown.hidden;
+        if (!filterDropdown.hidden) buildFilterDropdown();
+      });
+      filterDropdown.addEventListener('click', (e) => {
+        const option = e.target.closest('.filter-option');
+        if (!option) return;
+        const name = option.dataset.value;
+        if (!name) return;
+        const section = option.closest('.filter-section');
+        if (!section) return;
+        const sectionId = section.id;
+        let targetSet;
+        if (sectionId === 'filterPlanSection') targetSet = filterPlans;
+        else if (sectionId === 'filterTagSection') targetSet = filterTags;
+        else if (sectionId === 'filterStatusSection') targetSet = filterStatuses;
+        else return;
+        if (targetSet.has(name)) targetSet.delete(name); else targetSet.add(name);
+        persistFilters();
+        currentPage = 1;
+        buildFilterDropdown();
+        renderCards();
+      });
+      document.addEventListener('click', (e) => {
+        if (filterDropdown.hidden) return;
+        if (!filterDropdown.contains(e.target) && e.target !== filterTrigger && !filterTrigger.contains(e.target)) {
+          filterDropdown.hidden = true;
+        }
+      });
+    }
+    if (filterClearBtn) {
+      filterClearBtn.addEventListener('click', () => {
+        filterPlans.clear();
+        filterTags.clear();
+        filterStatuses.clear();
+        persistFilters();
+        currentPage = 1;
+        buildFilterDropdown();
+        renderCards();
+      });
+    }
+    updateFilterLabel();
+
+    // 多选模式
+    const selectModeBtn = document.getElementById('selectModeBtn');
+    const batchBar = document.getElementById('batchBar');
+    if (selectModeBtn) {
+      selectModeBtn.addEventListener('click', () => {
+        selectMode = !selectMode;
+        selectModeBtn.classList.toggle('is-active', selectMode);
+        selectModeBtn.textContent = selectMode ? '退出多选' : '多选';
+        if (batchBar) batchBar.hidden = !selectMode;
+        if (!selectMode) selectedEmails.clear();
+        renderCards();
+      });
+    }
+
+    // 全选（只选中当前筛选/搜索后可见的账号）
+    const batchCheckAll = document.getElementById('batchCheckAll');
+    if (batchCheckAll) {
+      batchCheckAll.addEventListener('change', (e) => {
+        const visible = getVisibleAccounts();
+        if (e.target.checked) {
+          visible.forEach(a => selectedEmails.add(a.email));
+        } else {
+          // 取消全选时只取消当前可见的，避免误清掉其他页/筛选外已选项
+          visible.forEach(a => selectedEmails.delete(a.email));
+        }
+        renderCards();
+      });
+    }
+
+    // 分组全选 & 卡片复选框
+    if (accountGrid) {
+      accountGrid.addEventListener('change', (e) => {
+        const input = e.target;
+        if (input.classList.contains('group-check-input')) {
+          const groupKey = input.dataset.group;
+          // 分组全选也只针对当前筛选可见的账号
+          const groupAccounts = getVisibleAccounts().filter(a => getAccountGroup(a) === groupKey);
+          groupAccounts.forEach(a => {
+            if (input.checked) selectedEmails.add(a.email);
+            else selectedEmails.delete(a.email);
+          });
+          renderCards();
+        } else if (input.classList.contains('grid-check-input')) {
+          const email = input.dataset.email;
+          if (input.checked) selectedEmails.add(email);
+          else selectedEmails.delete(email);
+          updateBatchCount();
+          // 更新分组全选状态（基于当前可见集合）
+          const visible = getVisibleAccounts();
+          accountGrid.querySelectorAll('.group-check-input').forEach(gcb => {
+            const gk = gcb.dataset.group;
+            const ga = visible.filter(a => getAccountGroup(a) === gk);
+            gcb.checked = ga.length > 0 && ga.every(a => selectedEmails.has(a.email));
+          });
+        }
+      });
+    }
+
+    // 批量删除
+    const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+    if (batchDeleteBtn) {
+      batchDeleteBtn.addEventListener('click', async () => {
+        if (selectedEmails.size === 0) return;
+        // webview 不支持原生 confirm，必须用自定义 showConfirm
+        const ok = await showConfirm(`确定删除选中的 ${selectedEmails.size} 个账号？`, '批量删除');
+        if (!ok) return;
+        postMsg('batchDelete', { emails: [...selectedEmails] });
+        selectedEmails.clear();
+        if (batchBar) batchBar.hidden = true;
+        selectMode = false;
+        if (selectModeBtn) {
+          selectModeBtn.classList.remove('is-active');
+          selectModeBtn.textContent = '多选';
+        }
+      });
+    }
+
+    // 批量启用
+    const batchEnableBtn = document.getElementById('batchEnableBtn');
+    if (batchEnableBtn) {
+      batchEnableBtn.addEventListener('click', () => {
+        if (selectedEmails.size === 0) return;
+        postMsg('batchEnable', { emails: [...selectedEmails] });
+      });
+    }
+
+    // 批量禁用
+    const batchDisableBtn = document.getElementById('batchDisableBtn');
+    if (batchDisableBtn) {
+      batchDisableBtn.addEventListener('click', () => {
+        if (selectedEmails.size === 0) return;
+        postMsg('batchDisable', { emails: [...selectedEmails] });
+      });
+    }
+
+    // 批量打标签
+    const batchTagBtn = document.getElementById('batchTagBtn');
+    if (batchTagBtn) {
+      batchTagBtn.addEventListener('click', () => {
+        if (selectedEmails.size === 0) return;
+        // webview 不支持原生 prompt，使用自带的标签编辑 modal
+        openTagEditModal('batch', [...selectedEmails]);
+      });
+    }
+
+    // 取消多选
+    const batchCancelBtn = document.getElementById('batchCancelBtn');
+    if (batchCancelBtn) {
+      batchCancelBtn.addEventListener('click', () => {
+        selectMode = false;
+        selectedEmails.clear();
+        if (batchBar) batchBar.hidden = true;
+        if (selectModeBtn) {
+          selectModeBtn.classList.remove('is-active');
+          selectModeBtn.textContent = '多选';
+        }
+        renderCards();
+      });
+    }
 
     // 关闭"添加账号"模态框
     const closeAddAccountModal = () => {
@@ -1654,61 +2554,119 @@
     const batchModalClose = document.getElementById('batchModalClose');
     if (batchModalClose) batchModalClose.addEventListener('click', hideBatchModal);
 
-    // 排序菜单
-    const sortBtn = document.getElementById('sortBtn');
-    const sortMenu = document.getElementById('sortMenu');
-    function markActiveSort() {
-      if (!sortMenu) return;
-      sortMenu.querySelectorAll('.sort-item').forEach(el => {
-        el.classList.toggle('active', el.getAttribute('data-sort') === sortMode);
-      });
-    }
+    // 排序下拉
+    const sortSelect = document.getElementById('sortSelect');
     // 恢复持久化排序
     try {
       const savedState = vscode.getState() || {};
       if (savedState._sortMode) sortMode = savedState._sortMode;
+      if (savedState._sortDirection) sortDirection = savedState._sortDirection;
+      if (savedState._searchQuery) searchQuery = savedState._searchQuery;
+      if (savedState._activeTagFilters) activeTagFilters = savedState._activeTagFilters;
     } catch {}
-    markActiveSort();
-    if (sortBtn && sortMenu) {
-      sortBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        sortMenu.hidden = !sortMenu.hidden;
-        if (!sortMenu.hidden) markActiveSort();
-      });
-      sortMenu.addEventListener('click', (e) => {
-        const item = e.target.closest('.sort-item');
-        if (!item) return;
-        sortMode = item.getAttribute('data-sort') || 'min';
+    if (sortSelect) {
+      sortSelect.value = sortMode;
+      sortSelect.addEventListener('change', () => {
+        sortMode = sortSelect.value || 'default';
         const st = vscode.getState() || {};
         st._sortMode = sortMode;
         vscode.setState(st);
-        sortMenu.hidden = true;
-        markActiveSort();
         renderCards();
       });
-      document.addEventListener('click', (e) => {
-        if (sortMenu.hidden) return;
-        if (!sortMenu.contains(e.target) && e.target !== sortBtn && !sortBtn.contains(e.target)) {
-          sortMenu.hidden = true;
+    }
+    // 恢复排序方向按钮
+    const sortDirectionBtn = document.getElementById('sortDirectionBtn');
+    if (sortDirectionBtn) {
+      const updateSortIcon = () => {
+        const svg = sortDirectionBtn.querySelector('svg');
+        if (svg) {
+          svg.style.transform = sortDirection === 'desc' ? 'rotate(0deg)' : 'rotate(180deg)';
+          svg.style.transition = 'transform 0.2s ease';
         }
+      };
+      updateSortIcon();
+      sortDirectionBtn.addEventListener('click', () => {
+        sortDirection = sortDirection === 'desc' ? 'asc' : 'desc';
+        sortDirectionBtn.title = sortDirection === 'desc' ? '当前：降序，点击切换为升序' : '当前：升序，点击切换为降序';
+        const st = vscode.getState() || {};
+        st._sortDirection = sortDirection;
+        vscode.setState(st);
+        updateSortIcon();
+        renderCards();
+      });
+    }
+    // 搜索栏
+    const searchInput = document.getElementById('searchInput');
+    const searchClear = document.getElementById('searchClear');
+    if (searchInput) {
+      if (searchQuery) { searchInput.value = searchQuery; if (searchClear) searchClear.hidden = false; }
+      let _searchTimer = null;
+      searchInput.addEventListener('input', () => {
+        searchQuery = searchInput.value;
+        if (searchClear) searchClear.hidden = !searchQuery;
+        clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(() => {
+          currentPage = 1;
+          const st = vscode.getState() || {};
+          st._searchQuery = searchQuery;
+          vscode.setState(st);
+          renderCards();
+        }, 250);
+      });
+    }
+    if (searchClear) {
+      searchClear.addEventListener('click', () => {
+        searchQuery = '';
+        if (searchInput) searchInput.value = '';
+        searchClear.hidden = true;
+        currentPage = 1;
+        const st = vscode.getState() || {};
+        st._searchQuery = '';
+        vscode.setState(st);
+        renderCards();
+      });
+    }
+    // (旧标签筛选已合并到统一过滤器)
+
+    // 每页显示切换
+    const pageSizeSelect = document.getElementById('pageSizeSelect');
+    if (pageSizeSelect) {
+      // 恢复之前的选择
+      try {
+        const st = vscode.getState() || {};
+        if (st._pageSize !== undefined) { pageSize = parseInt(st._pageSize) || 0; pageSizeSelect.value = String(pageSize); }
+      } catch {}
+      pageSizeSelect.addEventListener('change', () => {
+        pageSize = parseInt(pageSizeSelect.value) || 0;
+        currentPage = 1;
+        const st = vscode.getState() || {};
+        st._pageSize = pageSize;
+        vscode.setState(st);
+        renderCards();
       });
     }
 
     // 自动切号设置 → 发送到后端
     function sendAutoSwitchSettings() {
+      if (!autoSwitchSynced) return; // 未收到后端同步前不发送，避免覆盖
       postMsg('autoSwitchSettings', {
         enabled: autoSwitchEnabled,
         threshold: autoSwitchThreshold,
         checkSec: autoSwitchCheckSec,
         cooldownSec: autoSwitchCooldownSec,
         scoreMode: autoSwitchScoreMode,
+        switchStrategy: autoSwitchStrategy,
+        minQuota: autoSwitchMinQuota,
+        preferUsedThreshold: autoSwitchPreferUsedThreshold,
+        poolScope: autoSwitchPoolScope,
+        poolTag: autoSwitchPoolTag,
       });
     }
     if (asEnabledEl) {
       asEnabledEl.addEventListener('change', () => {
         autoSwitchEnabled = asEnabledEl.checked;
-        const asBody = document.getElementById('asBody');
-        if (asBody) asBody.style.display = autoSwitchEnabled ? '' : 'none';
+        const asDetailsToggle = document.getElementById('asDetails');
+        if (asDetailsToggle) { if (autoSwitchEnabled) asDetailsToggle.setAttribute('open', ''); else asDetailsToggle.removeAttribute('open'); }
         syncAutoSwitchUI();
         sendAutoSwitchSettings();
       });
@@ -1740,6 +2698,57 @@
       asScoreModeSelectEl.addEventListener('change', () => {
         autoSwitchScoreMode = asScoreModeSelectEl.value || 'min';
         updateScoreModeHint();
+        sendAutoSwitchSettings();
+      });
+    }
+
+    // 切号范围
+    const asPoolScopeSelectEl = document.getElementById('asPoolScope');
+    const asPoolTagSelectEl = document.getElementById('asPoolTag');
+    if (asPoolScopeSelectEl) {
+      asPoolScopeSelectEl.addEventListener('change', () => {
+        autoSwitchPoolScope = asPoolScopeSelectEl.value || 'all';
+        if (asPoolTagSelectEl) {
+          asPoolTagSelectEl.style.display = autoSwitchPoolScope === 'tag' ? '' : 'none';
+          if (autoSwitchPoolScope === 'tag') populateTagSelect(asPoolTagSelectEl, autoSwitchPoolTag);
+        }
+        sendAutoSwitchSettings();
+      });
+    }
+    if (asPoolTagSelectEl) {
+      asPoolTagSelectEl.addEventListener('change', () => {
+        autoSwitchPoolTag = asPoolTagSelectEl.value || '';
+        sendAutoSwitchSettings();
+      });
+    }
+
+    // 切号策略配置
+    function syncStrategyUI() {
+      const radios = document.querySelectorAll('input[name="asSwitchStrategy"]');
+      radios.forEach(r => { r.checked = r.value === autoSwitchStrategy; });
+      const minQuotaEl = document.getElementById('asMinQuota');
+      const prefUsedEl = document.getElementById('asPreferUsedThreshold');
+      if (minQuotaEl) minQuotaEl.value = autoSwitchMinQuota;
+      if (prefUsedEl) prefUsedEl.value = autoSwitchPreferUsedThreshold;
+    }
+    const strategyRadios = document.querySelectorAll('input[name="asSwitchStrategy"]');
+    strategyRadios.forEach(r => {
+      r.addEventListener('change', () => {
+        autoSwitchStrategy = r.value;
+        sendAutoSwitchSettings();
+      });
+    });
+    const asMinQuotaEl = document.getElementById('asMinQuota');
+    if (asMinQuotaEl) {
+      asMinQuotaEl.addEventListener('change', () => {
+        autoSwitchMinQuota = parseInt(asMinQuotaEl.value) || 10;
+        sendAutoSwitchSettings();
+      });
+    }
+    const asPreferUsedEl = document.getElementById('asPreferUsedThreshold');
+    if (asPreferUsedEl) {
+      asPreferUsedEl.addEventListener('change', () => {
+        autoSwitchPreferUsedThreshold = parseInt(asPreferUsedEl.value) || 50;
         sendAutoSwitchSettings();
       });
     }
@@ -1788,40 +2797,6 @@
       });
     }
 
-    // 设置按钮
-    if (settingsBtn) {
-      settingsBtn.addEventListener('click', () => {
-        const existing = document.querySelector('.settings-popup');
-        if (existing) {
-          existing.remove();
-          return;
-        }
-        const popup = document.createElement('div');
-        popup.className = 'settings-popup';
-        popup.innerHTML = `
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-            <span style="font-size:12px;font-weight:600">设置</span>
-            <button class="icon-btn" id="closeSettingsBtn" style="width:20px;height:20px">
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
-                <line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/>
-              </svg>
-            </button>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <div style="font-size:11px;opacity:0.7">后端每 5 分钟自动刷新全部账号额度，额度耗尽的账号自动跳过直到重置。</div>
-            <button class="primary" id="forceRefreshBtn" style="margin-top:4px">立即刷新全部</button>
-          </div>
-        `;
-        settingsBtn.parentElement.appendChild(popup);
-        const closeBtn = popup.querySelector('#closeSettingsBtn');
-        const forceBtn = popup.querySelector('#forceRefreshBtn');
-        closeBtn.addEventListener('click', () => popup.remove());
-        forceBtn.addEventListener('click', () => {
-          refreshAll();
-          popup.remove();
-        });
-      });
-    }
 
     // 多实例面板事件
     const instImportBtn = document.getElementById('instImportBtn');
@@ -1863,6 +2838,24 @@
     const cockpitFormSubmit = document.getElementById('cockpitFormSubmit');
     if (cockpitFormSubmit) cockpitFormSubmit.addEventListener('click', submitCockpitImport);
 
+    // 标签管理事件
+    const tagAddBtn = document.getElementById('tagAddBtn');
+    if (tagAddBtn) tagAddBtn.addEventListener('click', () => openTagEditModal('add'));
+
+    const tagEditClose = document.getElementById('tagEditClose');
+    const tagEditCancel = document.getElementById('tagEditCancel');
+    const tagEditSave = document.getElementById('tagEditSave');
+    const tagEditOverlay = document.getElementById('tagEditOverlay');
+
+    if (tagEditClose) tagEditClose.addEventListener('click', closeTagEditModal);
+    if (tagEditCancel) tagEditCancel.addEventListener('click', closeTagEditModal);
+    if (tagEditSave) tagEditSave.addEventListener('click', saveTagEdit);
+    if (tagEditOverlay) {
+      tagEditOverlay.addEventListener('click', (e) => {
+        if (e.target === tagEditOverlay) closeTagEditModal();
+      });
+    }
+
     // 实例编辑模态框
     const instEditClose = document.getElementById('instEditClose');
     const instEditOverlay = document.getElementById('instEditOverlay');
@@ -1872,8 +2865,171 @@
     const instEditSubmit = document.getElementById('instEditSubmit');
     if (instEditSubmit) instEditSubmit.addEventListener('click', submitInstEdit);
 
+    // Windsurf 增强开关按钮（直接绑定到按钮，避免 summary 冒泡和子元素点击失效）
+    if (enhanceToggleBtn) {
+      enhanceToggleBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        postMsg('toggleEnhancement', {});
+      });
+    }
+
+    // Windsurf 增强按钮事件
+    if (enhanceReinjectBtn) {
+      enhanceReinjectBtn.addEventListener('click', () => {
+        postMsg('runCommand', { command: 'windsurfPool.reinjectEnhancement' });
+      });
+    }
+    if (enhanceInjectRulesBtn) {
+      enhanceInjectRulesBtn.addEventListener('click', () => {
+        postMsg('runCommand', { command: 'windsurfPool.injectBubbleRules' });
+      });
+    }
+    if (enhanceRestoreBtn) {
+      enhanceRestoreBtn.addEventListener('click', () => {
+        postMsg('runCommand', { command: 'windsurfPool.restoreWorkbench' });
+      });
+    }
+
+    // 增强设置控件事件
+    loadEnhanceSettings();
+    updateBubblePreview();
+    const enhSettingsEls = [enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled, enhAutoContinueEnabled, enhDismissCorruptEnabled, enhAutoSwitchOnQuota, enhAutoSwitchOnRateLimit, enhAutoRecoveryEnabled, enhAutoSendContinue, enhContinueAfterSwitch, enhAutoApproveWebRequests, enhRecoveryMaxRetries, enhNotifyEnabled, enhNotifyTrigger, enhNotifySound, enhNotifyDesktop, enhNotifyTone, enhNotifyRepeat, enhCustomTone, enhAudioFile];
+    enhSettingsEls.forEach(el => {
+      if (el) el.addEventListener('change', saveEnhanceSettings);
+    });
+    // 浏览音频文件按钮
+    if (enhAudioFileBrowse) {
+      enhAudioFileBrowse.addEventListener('click', () => {
+        postMsg('browseAudioFile', {});
+      });
+    }
+
+    // ==================== AutoRecovery 日志面板 ====================
+    const recoveryLogList = document.getElementById('recoveryLogList');
+    const recoveryLogCount = document.getElementById('recoveryLogCount');
+    const recoveryLogFilter = document.getElementById('recoveryLogFilter');
+    const recoveryLogRefresh = document.getElementById('recoveryLogRefresh');
+    const recoveryLogClear = document.getElementById('recoveryLogClear');
+
+    function fmtRecoveryTime(ts) {
+      const d = new Date(ts);
+      const pad = (n) => String(n).padStart(2, '0');
+      const today = new Date();
+      const sameDay = d.toDateString() === today.toDateString();
+      const time = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      return sameDay ? time : (pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + time);
+    }
+
+    function renderRecoveryLog() {
+      if (!recoveryLogList) return;
+      let list = [];
+      try {
+        const raw = localStorage.getItem('ws-recovery-log');
+        if (raw) list = JSON.parse(raw) || [];
+      } catch {}
+      const filter = recoveryLogFilter ? recoveryLogFilter.value : '';
+      const filtered = filter ? list.filter(e => e.category === filter) : list;
+      if (recoveryLogCount) recoveryLogCount.textContent = String(filtered.length);
+      if (filtered.length === 0) {
+        recoveryLogList.innerHTML = '<div class="recovery-log-empty">暂无恢复记录</div>';
+        return;
+      }
+      // 倒序展示（最新在上）
+      const html = filtered.slice().reverse().map(entry => {
+        const cat = entry.category || '?';
+        const time = fmtRecoveryTime(entry.ts || Date.now());
+        const isFailed = String(entry.result || '').startsWith('failed') || entry.result === 'gave-up';
+        const errSnippet = entry.error ? escHtml(String(entry.error).slice(0, 200)) : '';
+        const action = escHtml(entry.action || '');
+        const result = escHtml(entry.result || '');
+        const extra = entry.attempt ? ` · 第 ${entry.attempt} 次` : (entry.delay ? ` · ${Math.round(entry.delay/1000)}s` : '');
+        return `
+          <div class="recovery-log-entry">
+            <span class="recovery-log-cat cat-${cat}">${cat}</span>
+            <div class="recovery-log-body">
+              <div class="recovery-log-meta">
+                <span>${time}</span>
+                <span class="recovery-log-action">${action}${extra}</span>
+                <span class="recovery-log-result${isFailed ? ' is-failed' : ''}">${result}</span>
+              </div>
+              ${errSnippet ? `<div class="recovery-log-error">${errSnippet}</div>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+      recoveryLogList.innerHTML = html;
+    }
+
+    if (recoveryLogRefresh) recoveryLogRefresh.addEventListener('click', renderRecoveryLog);
+    if (recoveryLogFilter) recoveryLogFilter.addEventListener('change', renderRecoveryLog);
+    if (recoveryLogClear) {
+      recoveryLogClear.addEventListener('click', () => {
+        try { localStorage.removeItem('ws-recovery-log'); } catch {}
+        renderRecoveryLog();
+      });
+    }
+    // 首次渲染 + 当面板展开时定时刷新
+    renderRecoveryLog();
+    setInterval(() => {
+      const details = document.querySelector('.enhance-recovery-log-details');
+      if (details && details.open) renderRecoveryLog();
+    }, 3000);
+
+    // 试听按钮：在 webview 中使用 Web Audio API 播放
+    let _testAudioCtx = null;
+    if (enhNotifyTest) {
+      enhNotifyTest.addEventListener('click', () => {
+        const TONE_PRESETS = {
+          funk: [{freq:587.33,dur:0.12},{freq:783.99,dur:0.12},{freq:880,dur:0.18}],
+          ding: [{freq:880,dur:0.25}],
+          chime: [{freq:659.25,dur:0.1},{freq:783.99,dur:0.1},{freq:987.77,dur:0.2}],
+          beep: [{freq:1000,dur:0.15},{freq:0,dur:0.05},{freq:1000,dur:0.15}],
+        };
+        const tone = enhNotifyTone ? enhNotifyTone.value : 'funk';
+        const repeat = enhNotifyRepeat ? parseInt(enhNotifyRepeat.value) || 2 : 2;
+        let notes;
+        if (tone === 'custom' && enhCustomTone && enhCustomTone.value.trim()) {
+          notes = enhCustomTone.value.split(',').map(p => {
+            const [f, d] = p.trim().split(':');
+            return { freq: parseFloat(f) || 0, dur: (parseFloat(d) || 150) / 1000 };
+          }).filter(n => n.dur > 0);
+          if (notes.length === 0) notes = TONE_PRESETS.funk;
+        } else {
+          notes = TONE_PRESETS[tone] || TONE_PRESETS.funk;
+        }
+        const duration = notes.reduce((s, n) => s + n.dur, 0);
+        if (!_testAudioCtx) _testAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const ctx = _testAudioCtx;
+        if (ctx.state === 'suspended' && typeof ctx.resume === 'function') ctx.resume().catch(() => {});
+        function playOnce(startOffset) {
+          let t = ctx.currentTime + startOffset;
+          notes.forEach(n => {
+            if (n.freq > 0) {
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.type = 'sine';
+              osc.frequency.value = n.freq;
+              gain.gain.setValueAtTime(0.3, t);
+              gain.gain.exponentialRampToValueAtTime(0.01, t + n.dur);
+              osc.connect(gain);
+              gain.connect(ctx.destination);
+              osc.start(t);
+              osc.stop(t + n.dur);
+            }
+            t += n.dur;
+          });
+        }
+        for (let i = 0; i < repeat; i++) {
+          playOnce(i * (duration + 0.6));
+        }
+      });
+    }
+
     // 初始加载实例列表
     postMsg('instanceList', {});
+    // 主动请求增强状态
+    postMsg('getEnhancementStatus', {});
 
     // 实例状态自动轮询（8s）—— 检测实例启停变化
     setInterval(() => {
@@ -1882,6 +3038,7 @@
       }
     }, 8000);
 
+    syncAutoSwitchUI();
     restoreState();
     startAutoRefresh();
     checkBatchResume();

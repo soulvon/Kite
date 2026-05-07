@@ -6,6 +6,8 @@ export interface StoredAccount {
   apiKey: string;
   apiServerUrl: string;
   name?: string;
+  tag?: string;
+  disabled?: boolean;
 }
 
 /**
@@ -59,7 +61,18 @@ export type WebviewMessageType =
   | 'cockpitImport'
   | 'autoSwitchSettings'
   | 'refreshAllUsage'
-  | 'batchTokenImport';
+  | 'batchTokenImport'
+  | 'poolSignal'
+  | 'batchDelete'
+  | 'batchEnable'
+  | 'batchDisable'
+  | 'batchTag'
+  | 'toggleDisabled'
+  | 'updateTag'
+  | 'getEnhancementStatus'
+  | 'toggleEnhancement'
+  | 'playNotifySound'
+  | 'browseAudioFile';
 
 /**
  * Webview 消息
@@ -86,6 +99,9 @@ export interface WebviewMessage {
   cockpitInstanceId?: string;
   id?: string;
   action?: string | null;
+  emails?: string[];
+  tag?: string;
+  assignedTag?: string;
 }
 
 /**
@@ -101,7 +117,8 @@ export type BackendMessageType =
   | 'cockpitListResult'
   | 'showAlert'
   | 'autoSwitchEvent'
-  | 'autoSwitchSettingsSync';
+  | 'autoSwitchSettingsSync'
+  | 'audioFileSelected';
 
 export interface UsageMessage {
   type: 'usage';

@@ -47,6 +47,14 @@ function saveAccountsToFile(accounts: StoredAccount[]): void {
   _accountsCacheTs = Date.now();
 }
 
+// ─── 写入队列（串行化 read-modify-write，避免并发丢数据） ────
+let _writeQueue: Promise<void> = Promise.resolve();
+function enqueueWrite<T>(task: () => Promise<T>): Promise<T> {
+  const next = _writeQueue.then(task, task);
+  _writeQueue = next.then(() => undefined, () => undefined);
+  return next;
+}
+
 // ─── 文件监听（多实例同步）──────────────────────────────
 
 let fileWatcher: fs.FSWatcher | null = null;
@@ -103,6 +111,13 @@ function isValidAccount(account: any): account is StoredAccount {
 }
 
 /**
+ * 同步读取账号列表（仅从文件缓存，用于不能 await 的场景）
+ */
+export function readAccountsSync(_context: vscode.ExtensionContext): StoredAccount[] {
+  return readAccountsFromFile();
+}
+
+/**
  * 读取账号列表（从共享文件）
  */
 export async function readAccounts(context: vscode.ExtensionContext): Promise<StoredAccount[]> {
@@ -139,25 +154,123 @@ export async function saveAccounts(context: vscode.ExtensionContext, accounts: S
  * 新增或更新账号
  */
 export async function upsertAccount(context: vscode.ExtensionContext, account: StoredAccount): Promise<void> {
-  const accounts = await readAccounts(context);
-  const idx = accounts.findIndex(a => a.email === account.email);
-  if (idx >= 0) {
-    accounts[idx] = account;
-  } else {
-    accounts.push(account);
-  }
-  await saveAccounts(context, accounts);
+  return enqueueWrite(async () => {
+    invalidateAccountsCache(); // 强制重读，避免用过期缓存
+    const accounts = await readAccounts(context);
+    const idx = accounts.findIndex(a => a.email === account.email);
+    if (idx >= 0) {
+      accounts[idx] = account;
+    } else {
+      accounts.push(account);
+    }
+    await saveAccounts(context, accounts);
+  });
 }
 
 /**
  * 删除账号
  */
 export async function removeAccount(context: vscode.ExtensionContext, email: string): Promise<boolean> {
-  const accounts = await readAccounts(context);
-  const filtered = accounts.filter(a => a.email !== email);
-  if (filtered.length === accounts.length) return false;
-  await saveAccounts(context, filtered);
-  return true;
+  return enqueueWrite(async () => {
+    invalidateAccountsCache();
+    const accounts = await readAccounts(context);
+    const filtered = accounts.filter(a => a.email !== email);
+    if (filtered.length === accounts.length) return false;
+    await saveAccounts(context, filtered);
+    return true;
+  });
+}
+
+/**
+ * 批量删除账号
+ */
+export async function batchRemove(context: vscode.ExtensionContext, emails: string[]): Promise<number> {
+  return enqueueWrite(async () => {
+    invalidateAccountsCache();
+    const accounts = await readAccounts(context);
+    const emailSet = new Set(emails);
+    const filtered = accounts.filter(a => !emailSet.has(a.email));
+    const removed = accounts.length - filtered.length;
+    if (removed > 0) {
+      await saveAccounts(context, filtered);
+    }
+    return removed;
+  });
+}
+
+/**
+ * 更新账号标签
+ */
+export async function updateTag(context: vscode.ExtensionContext, email: string, tag: string): Promise<void> {
+  return enqueueWrite(async () => {
+    invalidateAccountsCache();
+    const accounts = await readAccounts(context);
+    const acct = accounts.find(a => a.email === email);
+    if (acct) {
+      acct.tag = tag || undefined;
+      await saveAccounts(context, accounts);
+    }
+  });
+}
+
+/**
+ * 切换账号启用/禁用状态
+ */
+export async function toggleDisabled(context: vscode.ExtensionContext, email: string): Promise<void> {
+  return enqueueWrite(async () => {
+    invalidateAccountsCache();
+    const accounts = await readAccounts(context);
+    const acct = accounts.find(a => a.email === email);
+    if (acct) {
+      acct.disabled = !acct.disabled;
+      if (!acct.disabled) delete (acct as any).disabled;
+      await saveAccounts(context, accounts);
+    }
+  });
+}
+
+/**
+ * 批量设置启用/禁用
+ */
+export async function batchSetDisabled(context: vscode.ExtensionContext, emails: string[], disabled: boolean): Promise<number> {
+  return enqueueWrite(async () => {
+    invalidateAccountsCache();
+    const accounts = await readAccounts(context);
+    let count = 0;
+    const emailSet = new Set(emails);
+    for (const acct of accounts) {
+      if (emailSet.has(acct.email)) {
+        if (disabled) {
+          acct.disabled = true;
+        } else {
+          delete (acct as any).disabled;
+        }
+        count++;
+      }
+    }
+    if (count > 0) await saveAccounts(context, accounts);
+    return count;
+  });
+}
+
+/**
+ * 批量更新标签
+ */
+export async function batchUpdateTag(context: vscode.ExtensionContext, emails: string[], tag: string): Promise<number> {
+  return enqueueWrite(async () => {
+    invalidateAccountsCache();
+    const accounts = await readAccounts(context);
+    let count = 0;
+    const emailSet = new Set(emails);
+    for (const acct of accounts) {
+      if (emailSet.has(acct.email)) {
+        acct.tag = tag || undefined;
+        count++;
+      }
+    }
+    if (count > 0) await saveAccounts(context, accounts);
+    return count;
+  });
 }
 
 /**

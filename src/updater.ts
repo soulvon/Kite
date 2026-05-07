@@ -143,16 +143,35 @@ function downloadFile(url: string, token: string, destPath: string, maxRedirects
 
 /**
  * 比较版本号 (返回 >0 如果 a>b, <0 如果 a<b, =0 如果相等)
+ * 支持 SemVer 预发布后缀：1.0.0 > 1.0.0-rc1 > 1.0.0-beta > 1.0.0-alpha
  */
 function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
+  // 拆分主版本和预发布后缀
+  const splitVer = (v: string) => {
+    const dashIdx = v.indexOf('-');
+    return {
+      core: dashIdx >= 0 ? v.slice(0, dashIdx) : v,
+      pre: dashIdx >= 0 ? v.slice(dashIdx + 1) : '',
+    };
+  };
+  const { core: coreA, pre: preA } = splitVer(a);
+  const { core: coreB, pre: preB } = splitVer(b);
+
+  // 主版本号数值比较
+  const pa = coreA.split('.').map(s => parseInt(s, 10) || 0);
+  const pb = coreB.split('.').map(s => parseInt(s, 10) || 0);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const na = pa[i] || 0;
     const nb = pb[i] || 0;
     if (na !== nb) return na - nb;
   }
-  return 0;
+
+  // 主版本相同：无预发布版 > 有预发布版
+  if (preA === '' && preB === '') return 0;
+  if (preA === '') return 1;  // a 是 release，b 是 pre → a 更新
+  if (preB === '') return -1; // a 是 pre，b 是 release → b 更新
+  // 都是预发布：字符串比较
+  return preA < preB ? -1 : (preA > preB ? 1 : 0);
 }
 
 /**
