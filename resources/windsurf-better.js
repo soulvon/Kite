@@ -4,9 +4,43 @@
  */
 (function () {
 	'use strict';
-	const VERSION = '1.1.0';
+	const VERSION = '1.3.0';
 	const LOG_PREFIX = '[WS-Better]';
-	
+
+	// ========== Trusted Types 兼容（Windsurf 新版启用了 require-trusted-types-for 'script'） ==========
+	// CSP 里已由扩展的 enhancementInjector.ts 注入 'abBubbles' policy 名
+	const _ttPolicy = (() => {
+		try {
+			if (typeof trustedTypes !== 'undefined' && trustedTypes.createPolicy) {
+				return trustedTypes.createPolicy('abBubbles', {
+					createHTML: (s) => s,
+					createScript: (s) => s,
+					createScriptURL: (s) => s,
+				});
+			}
+		} catch (e) { console.warn(LOG_PREFIX + ' TT policy 创建失败:', e); }
+		return null;
+	})();
+	function clearEl(el) {
+		try { el.replaceChildren(); }
+		catch { try { el.textContent = ''; } catch {} }
+	}
+	function setSafeHTML(el, html) {
+		try {
+			el.innerHTML = _ttPolicy ? _ttPolicy.createHTML(html) : html;
+		} catch (e) {
+			// Trusted Types 拒绝时退化：解析为 DOM 后追加
+			try {
+				clearEl(el);
+				const tpl = document.createElement('template');
+				tpl.innerHTML = _ttPolicy ? _ttPolicy.createHTML(html) : html;
+				el.appendChild(tpl.content);
+			} catch {
+				try { el.textContent = String(html).replace(/<[^>]+>/g, ''); } catch {}
+			}
+		}
+	}
+
 	// ========== 统一配置 ==========
 	const DEFAULT_SETTINGS = {
 		// 回复建议提示设置
@@ -17,14 +51,19 @@
 		// 汉化设置
 		localizationEnabled: true,
 		// 自动操作
-		autoContinueEnabled: true,
+		continueMode: 'smart',  // 'smart' | 'brainless' | 'off'
+		continueText: 'continue',  // 自动发送的文本（两种模式共享）
 		dismissCorruptEnabled: true,
 		autoSwitchOnQuota: true,
 		autoSwitchOnRateLimit: true,
+		// 无脑模式参数
+		brainlessModeEnabled: false,  // 兼容旧设置
+		brainlessIdleSeconds: 8,
+		brainlessMaxConsecutive: 3,
+		brainlessSkipPermission: true,
 		// 自动恢复
 		autoRecoveryEnabled: true,
 		autoApproveWebRequests: false,
-		autoSendContinue: true,
 		continueAfterSwitch: true,  // 切号后自动发送"继续"而非重发原消息
 		recoveryMaxRetries: 3,
 		recoveryBaseDelay: 5000,
@@ -55,7 +94,14 @@
 		try {
 			const r = localStorage.getItem(STORAGE_KEY);
 			const local = r ? JSON.parse(r) : {};
-			return { ...DEFAULT_SETTINGS, ...local, ...(injected || {}) };
+			const merged = { ...DEFAULT_SETTINGS, ...local, ...(injected || {}) };
+			// 迁移旧设置：autoContinueEnabled / brainlessModeEnabled → continueMode
+			if (!merged.continueMode || merged.continueMode === 'smart') {
+				if (merged.brainlessModeEnabled) merged.continueMode = 'brainless';
+				else if (merged.autoContinueEnabled === false) merged.continueMode = 'off';
+				else merged.continueMode = 'smart';
+			}
+			return merged;
 		} catch {
 			return { ...DEFAULT_SETTINGS, ...(injected || {}) };
 		}
@@ -100,9 +146,13 @@
 	const ICON_BUBBLES = 'M20,2H4C2.9,2,2,2.9,2,4v18l4-4h14c1.1,0,2-0.9,2-2V4C22,2.9,21.1,2,20,2z M6,14v-2h8v2H6z M14,11H6V9h8V11z M18,8H6V6h12V8z';
 	
 	function injectBubblesStyles() {
-		if (document.getElementById('ws-bubbles-css')) return;
-		const style = document.createElement('style');
-		style.id = 'ws-bubbles-css';
+		// 幂等：已存在则复用同一 <style> 元素更新内容（避免重复创建）
+		let style = document.getElementById('ws-bubbles-css');
+		if (!style) {
+			style = document.createElement('style');
+			style.id = 'ws-bubbles-css';
+			(document.head || document.documentElement).appendChild(style);
+		}
 		style.textContent = `
 .ws-bubbles{margin:16px 0 12px;padding:0;background:none;border:none;border-radius:0;animation:wsBubbleFadeIn .35s ease}
 @keyframes wsBubbleFadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
@@ -127,7 +177,6 @@
 .ws-bubble-custom-send{padding:5px 12px;border-radius:6px;border:none;background:linear-gradient(135deg,#7c3aed,#667eea);color:#fff;font-size:12px;cursor:pointer;font-family:inherit}
 .ws-bubble-custom-send:hover{filter:brightness(1.15)}
 `;
-		document.head.appendChild(style);
 	}
 	
 	function logBubbles(...args) { console.log(LOG_PREFIX + '[Bubbles]', ...args); }
@@ -170,50 +219,91 @@
 		return null;
 	}
 	
-	function setInputText(text) {
+	async function setInputText(text) {
 		const inputEl = findInputEl();
-		if (!inputEl) { logBubbles('找不到输入框'); return false; }
+		if (!inputEl) { console.log(LOG_PREFIX, '[setInputText] 找不到输入框'); return false; }
+		console.log(LOG_PREFIX, '[setInputText] 找到输入框:', inputEl.tagName, 'lexical:', inputEl.getAttribute('data-lexical-editor'), 'ce:', inputEl.contentEditable);
 		inputEl.focus();
 
-		// 方案1: Lexical editor — execCommand (最常见)
 		if (inputEl.getAttribute('data-lexical-editor') === 'true' || inputEl.contentEditable === 'true') {
-			const sel = window.getSelection();
-			if (sel) {
+			// 探测 Lexical editor 实例
+			const lexKeys = Object.keys(inputEl).filter(k => k.startsWith('__'));
+			console.log(LOG_PREFIX, '[setInputText] DOM 内部属性:', lexKeys);
+
+			// === 方法A: 通过 Lexical editor 实例直接 dispatch 命令 ===
+			try {
+				const editorKey = Object.keys(inputEl).find(k => k.startsWith('__lexicalEditor'));
+				const editor = editorKey ? inputEl[editorKey] : null;
+				if (editor && typeof editor.update === 'function') {
+					console.log(LOG_PREFIX, '[setInputText] ✅ 找到 Lexical editor 实例, 方法:', Object.keys(editor).filter(k => typeof editor[k] === 'function').join(','));
+					// 使用 editor.update() 清空并插入文本
+					await new Promise((resolve, reject) => {
+						try {
+							editor.update(() => {
+								try {
+									// 获取 root node
+									const editorState = editor.getEditorState();
+									const root = editorState._nodeMap.get('root');
+									console.log(LOG_PREFIX, '[setInputText] root node:', root ? root.__type : 'null');
+									// 清空所有子节点
+									if (root && root.clear) root.clear();
+									// 利用 Lexical 的内部方法创建段落和文本
+									// 通过 editor._nodes 查找 ParagraphNode 和 TextNode 的类
+									const nodeTypes = editor._nodes;
+									console.log(LOG_PREFIX, '[setInputText] 注册的节点类型:', nodeTypes ? Array.from(nodeTypes.keys()) : 'null');
+									let ParagraphKlass = null, TextKlass = null;
+									if (nodeTypes) {
+										for (const [type, entry] of nodeTypes) {
+											const klass = entry.klass || entry;
+											if (type === 'paragraph' && klass) ParagraphKlass = klass;
+											if (type === 'text' && klass) TextKlass = klass;
+										}
+									}
+									if (ParagraphKlass && TextKlass) {
+										const p = new ParagraphKlass();
+										const t = new TextKlass(text);
+										p.append(t);
+										root.append(p);
+										console.log(LOG_PREFIX, '[setInputText] ✅ Lexical API 插入成功');
+									} else {
+										console.log(LOG_PREFIX, '[setInputText] 未找到 Paragraph/Text 节点类, P:', !!ParagraphKlass, 'T:', !!TextKlass);
+									}
+								} catch (innerErr) {
+									console.error(LOG_PREFIX, '[setInputText] update 内部错误:', innerErr);
+								}
+							}, { onUpdate: () => resolve(true) });
+						} catch (e) { reject(e); }
+					});
+					await new Promise(r => setTimeout(r, 50));
+					if ((inputEl.textContent || '').trim().length > 0) {
+						console.log(LOG_PREFIX, '[setInputText] Lexical API 写入后 textContent:', inputEl.textContent);
+						return true;
+					}
+				} else {
+					console.log(LOG_PREFIX, '[setInputText] 未找到 Lexical editor 实例 (key:', editorKey, ')');
+				}
+			} catch (e) {
+				console.warn(LOG_PREFIX, '[setInputText] Lexical API 方案异常:', e);
+			}
+
+			// === 方法B: execCommand insertText (fallback) ===
+			try {
+				const sel = window.getSelection();
 				const range = document.createRange();
 				range.selectNodeContents(inputEl);
 				sel.removeAllRanges(); sel.addRange(range);
-				sel.deleteFromDocument();
-			}
-			const ok = document.execCommand('insertText', false, text);
-			if (ok && (inputEl.textContent || '').trim().length > 0) {
-				inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-				logBubbles('已写入(execCommand)');
-				return true;
-			}
-
-			// 方案2: 合成 paste 事件
-			try {
-				if (sel) { const r = document.createRange(); r.selectNodeContents(inputEl); sel.removeAllRanges(); sel.addRange(r); }
-				const dt = new DataTransfer();
-				dt.setData('text/plain', text);
-				const pasteEvent = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
-				inputEl.dispatchEvent(pasteEvent);
-				if ((inputEl.textContent || '').trim().length > 0) {
-					logBubbles('已写入(合成paste)');
+				const ok = document.execCommand('insertText', false, text);
+				console.log(LOG_PREFIX, '[setInputText] execCommand insertText 返回:', ok, 'textContent:', inputEl.textContent);
+				await new Promise(r => setTimeout(r, 50));
+				if (ok && (inputEl.textContent || '').trim().length > 0) {
 					return true;
 				}
-			} catch (e) { /* paste 失败，继续下一方案 */ }
+			} catch (e) {
+				console.warn(LOG_PREFIX, '[setInputText] execCommand 异常:', e);
+			}
 
-			// 方案3: DOM 直接操作 (fallback)
-			inputEl.innerHTML = '';
-			text.split('\n').forEach(line => {
-				const p = document.createElement('p');
-				p.textContent = line || '\u200B';
-				inputEl.appendChild(p);
-			});
-			inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-			logBubbles('已写入(DOM fallback)');
-			return true;
+			console.log(LOG_PREFIX, '[setInputText] 所有方法均失败');
+			return false;
 		}
 
 		// textarea / input
@@ -227,7 +317,7 @@
 		}
 
 		// 最终兜底
-		inputEl.innerHTML = '';
+		clearEl(inputEl);
 		text.split('\n').forEach(line => {
 			const p = document.createElement('p');
 			p.textContent = line || '\u200B';
@@ -238,12 +328,63 @@
 		return true;
 	}
 	
+	// 统一发送策略：标准按钮 → 最右边按钮 → Enter键
+	function trySendMessage() {
+		const inputEl = findInputEl();
+		if (!inputEl) return null;
+
+		// 策略1: 标准选择器找发送按钮
+		const sendBtn = findSendBtnAdvanced();
+		if (sendBtn && !sendBtn.disabled) {
+			sendBtn.click();
+			console.log(LOG_PREFIX, '[trySend] ✅ 策略1: 标准选择器');
+			return 'button';
+		}
+
+		// 策略2: 输入区域最右边的按钮（Windsurf 的发送按钮 ⬆ 固定在工具栏最右边）
+		const inputRect = inputEl.getBoundingClientRect();
+		let rightmostBtn = null, rightmostX = -Infinity;
+		let c = inputEl.parentElement;
+		for (let d = 0; d < 6 && c; d++) {
+			const btns = c.querySelectorAll('button');
+			for (const btn of btns) {
+				if (btn.disabled) continue;
+				const r = btn.getBoundingClientRect();
+				if (r.width === 0 || r.height === 0) continue;
+				// 只考虑和输入框垂直方向接近的按钮（同一工具栏区域）
+				if (Math.abs(r.top - inputRect.bottom) < 60 || Math.abs(r.bottom - inputRect.bottom) < 60) {
+					if (r.right > rightmostX) {
+						rightmostX = r.right;
+						rightmostBtn = btn;
+					}
+				}
+			}
+			if (rightmostBtn) break;
+			c = c.parentElement;
+		}
+		if (rightmostBtn) {
+			rightmostBtn.click();
+			console.log(LOG_PREFIX, '[trySend] ✅ 策略2: 最右边按钮, x:', Math.round(rightmostX));
+			return 'rightmost';
+		}
+
+		// 策略3: Enter 键（Lexical state 通过原生 API 同步后 Enter 应触发提交）
+		inputEl.focus();
+		inputEl.dispatchEvent(new KeyboardEvent('keydown', {
+			key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+			bubbles: true, cancelable: true, composed: true
+		}));
+		console.log(LOG_PREFIX, '[trySend] ✅ 策略3: Enter键');
+		return 'enter';
+	}
+
 	function findSendBtnAdvanced() {
 		const root = findChatRoot();
 		const scope = root || document;
+		console.log(LOG_PREFIX, '[findSendBtn] chatRoot:', root ? root.tagName + '.' + root.className.substring(0, 40) : 'null', '→ scope:', scope === document ? 'document' : 'element');
 		for (const sel of SEND_BTN_CANDIDATES) {
 			const el = scope.querySelector(sel);
-			if (el) return el;
+			if (el) { console.log(LOG_PREFIX, '[findSendBtn] 命中选择器:', sel); return el; }
 		}
 		const btns = scope.querySelectorAll('button');
 		for (const btn of btns) {
@@ -272,25 +413,10 @@
 	
 	function submitBubbleText(text) {
 		if (!text) return;
-		setInputText(text);
-		if (!settings.bubblesAutoSend) return;
-		setTimeout(() => {
-			const inputEl = findInputEl();
-			if (!inputEl) return;
-			inputEl.focus();
-			try { inputEl.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertLineBreak', bubbles: true, cancelable: true, composed: true })); } catch {}
-			const targets = new Set([inputEl, inputEl.parentElement, inputEl.closest('[role="textbox"]'), document.activeElement].filter(Boolean));
-			for (const t of targets) { t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true })); }
-			setTimeout(() => {
-				const btn = findSendBtnAdvanced();
-				if (btn && !btn.disabled) { btn.click(); return; }
-				const scope = findChatRoot() || document;
-				for (const b of scope.querySelectorAll('button')) {
-					const r = b.getBoundingClientRect();
-					if (r.width > 0 && r.height > 0 && !b.disabled && r.bottom > window.innerHeight * 0.7) { b.click(); return; }
-				}
-			}, 200);
-		}, 200);
+		setInputText(text).then(ok => {
+			if (!ok || !settings.bubblesAutoSend) return;
+			setTimeout(() => trySendMessage(), 400);
+		});
 	}
 	
 	function renderBubblesCard(data, container) {
@@ -419,37 +545,79 @@
 		}
 		
 		container.appendChild(wrapper);
-		
+		applyBubbleStyle(wrapper);
+	}
+
+	/**
+	 * 对单个 bubble wrapper 应用当前 settings 中的主题/形状
+	 * 抽离后可在主题/形状切换时对所有现存 .ws-bubbles 容器重新调用，实现实时换肤
+	 */
+	function applyBubbleStyle(wrapper) {
+		if (!wrapper) return;
 		const themeId = settings.bubblesTheme || 'emerald';
 		const theme = BUBBLE_THEMES.find(t => t.id === themeId);
-		if (theme && themeId !== 'emerald') {
-			const S = (el, p, v) => el.style.setProperty(p, v, 'important');
-			wrapper.querySelectorAll('.ws-bubble-option,.ws-bubble-chip,.ws-bubble-related').forEach(btn => {
-				S(btn, 'background', theme.bg);
-				S(btn, 'color', theme.color);
-				S(btn, 'box-shadow', theme.shadow);
-				if (theme.border && theme.border !== 'none') S(btn, 'border', theme.border); else S(btn, 'border', 'none');
-				if (theme.blur) btn.style.backdropFilter = 'blur(12px)';
-				btn.addEventListener('mouseenter', () => S(btn, 'background', theme.bgHover));
-				btn.addEventListener('mouseleave', () => S(btn, 'background', theme.bg));
-			});
-			wrapper.querySelectorAll('.ws-bubble-option-letter').forEach(el => {
-				S(el, 'background', theme.letterBg);
-				S(el, 'color', theme.letterColor);
-			});
-			wrapper.querySelectorAll('.ws-bubble-option-text').forEach(el => S(el, 'color', theme.color));
-			wrapper.querySelectorAll('.ws-bubbles-mode-tag').forEach(el => S(el, 'background', theme.tagBg || theme.bg));
-		}
-		
+		const S = (el, p, v) => el.style.setProperty(p, v, 'important');
+
+		// 主题：emerald 走 CSS 默认值（清掉 inline override）；其他主题用 inline style 覆盖
+		const isDefault = themeId === 'emerald';
+		wrapper.querySelectorAll('.ws-bubble-option,.ws-bubble-chip,.ws-bubble-related').forEach(btn => {
+			if (isDefault || !theme) {
+				// 清掉 inline override，让 CSS 默认生效
+				['background', 'color', 'box-shadow', 'border', 'backdrop-filter'].forEach(p => btn.style.removeProperty(p));
+				return;
+			}
+			S(btn, 'background', theme.bg);
+			S(btn, 'color', theme.color);
+			S(btn, 'box-shadow', theme.shadow);
+			if (theme.border && theme.border !== 'none') S(btn, 'border', theme.border); else S(btn, 'border', 'none');
+			if (theme.blur) btn.style.backdropFilter = 'blur(12px)'; else btn.style.removeProperty('backdrop-filter');
+			// hover 行为：用 dataset 标记避免重复绑定
+			if (!btn.dataset.wsThemeBound) {
+				btn.dataset.wsThemeBound = '1';
+				btn.addEventListener('mouseenter', () => {
+					const t = BUBBLE_THEMES.find(x => x.id === (settings.bubblesTheme || 'emerald'));
+					if (t && (settings.bubblesTheme || 'emerald') !== 'emerald') S(btn, 'background', t.bgHover);
+				});
+				btn.addEventListener('mouseleave', () => {
+					const t = BUBBLE_THEMES.find(x => x.id === (settings.bubblesTheme || 'emerald'));
+					if (t && (settings.bubblesTheme || 'emerald') !== 'emerald') S(btn, 'background', t.bg);
+				});
+			}
+		});
+		wrapper.querySelectorAll('.ws-bubble-option-letter').forEach(el => {
+			if (isDefault || !theme) {
+				['background', 'color'].forEach(p => el.style.removeProperty(p));
+				return;
+			}
+			S(el, 'background', theme.letterBg);
+			S(el, 'color', theme.letterColor);
+		});
+		wrapper.querySelectorAll('.ws-bubble-option-text').forEach(el => {
+			if (isDefault || !theme) el.style.removeProperty('color');
+			else S(el, 'color', theme.color);
+		});
+		wrapper.querySelectorAll('.ws-bubbles-mode-tag').forEach(el => {
+			if (isDefault || !theme) el.style.removeProperty('background');
+			else S(el, 'background', theme.tagBg || theme.bg);
+		});
+
+		// 形状
 		const shapeId = settings.bubblesShape || 'rounded';
 		const shape = BUBBLE_SHAPES.find(s => s.id === shapeId);
 		if (shape) {
-			wrapper.querySelectorAll('.ws-bubble-option,.ws-bubble-chip,.ws-bubble-related').forEach(btn => btn.style.setProperty('border-radius', shape.radius, 'important'));
+			wrapper.querySelectorAll('.ws-bubble-option,.ws-bubble-chip,.ws-bubble-related').forEach(btn => {
+				btn.style.setProperty('border-radius', shape.radius, 'important');
+			});
 			wrapper.querySelectorAll('.ws-bubble-option-letter').forEach(el => {
 				const lr = Math.max(2, parseInt(shape.radius) - 2) + 'px';
 				el.style.setProperty('border-radius', lr, 'important');
 			});
 		}
+	}
+
+	/** 对所有现存 .ws-bubbles 容器重新应用当前主题/形状（实时换肤用） */
+	function restyleAllBubbles() {
+		document.querySelectorAll('.ws-bubbles').forEach(applyBubbleStyle);
 	}
 	
 	function parseBubbleMetaFromText(text, data) {
@@ -514,18 +682,31 @@
 		}
 		
 		if (items.length === 0) {
-			const txt = range.toString();
-			const metaRe = /^\s*(type|title|question|mode|items)\s*:/i;
-			let inItems = false;
-			txt.split(/\r?\n/).forEach(line => {
-				if (/^\s*items\s*:/i.test(line)) { inItems = true; return; }
-				if (!inItems) return;
-				let t = line.trim();
-				t = t.replace(/^[-*•·]\s*/, '');
+			// 兜底：构造净化后的载荷字符串，再按行解析
+			let txt = range.toString();
+			// 去掉首部 :::bubbles 标记
+			txt = txt.replace(/^\s*:{3}bubbles\b/i, '');
+			// 去掉尾部 ::: 标记
+			txt = txt.replace(/:{3}\s*$/, '');
+
+			// 定位 items: 关键字（任意位置，不限行首）
+			const itemsMatch = txt.match(/\bitems\s*:/i);
+			let payload;
+			if (itemsMatch) {
+				payload = txt.substring(itemsMatch.index + itemsMatch[0].length);
+			} else {
+				// 无 items: 关键字时，剥离已知元数据键值
+				payload = txt.replace(/\b(type|title|question|mode)\s*:\s*[^\n]*?(?=\s+\b(type|title|question|mode|items)\s*:|\n|$)/gi, '');
+			}
+
+			const metaRe = /^(type|title|question|mode|items)\s*:/i;
+			const lines = payload.split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
+			for (const line of lines) {
+				let t = line.replace(/^[-*•·+]\s*/, '');
 				t = t.replace(/\s*:{3}\s*$/, '');
-				t = t.replace(/^:{3}bubbles\s*/i, '');
-				if (t && !metaRe.test(t)) items.push(t);
-			});
+				if (!t || metaRe.test(t)) continue;
+				items.push(t);
+			}
 		}
 		return items;
 	}
@@ -627,7 +808,11 @@
 	}
 	
 	// ========== 汉化功能 ==========
-	const EXCLUDE_SELECTOR = '.monaco-editor, pre, code, textarea, input, [contenteditable="true"], .xterm, .terminal, .debug-console, .ws-bubbles, .ws-better-panel';
+	const EXCLUDE_SELECTOR = '.monaco-editor, .monaco-diff-editor, [class*="diffEditor"], [class*="diff-editor"], [class*="codeBlock"], [class*="code-block"], .hljs, pre, code, textarea, input, [contenteditable="true"], .xterm, .terminal, .debug-console, .ws-bubbles, .ws-better-panel, #ws-recovery-toast, [aria-label*="Model Selector"], [aria-label*="\u6a21\u578b\u9009\u62e9"], [class*="model-selector"], [class*="modelSelector"]';
+	// 模型名标识正则：文本包含已知模型/智能体名称时跳过翻译（避免翻译模型限定词如 Thinking/Fast/Medium）
+	const MODEL_LABEL_SKIP_RE = /\b(claude|gpt-?\d|gpt-?o|o\d-|gemini|llama|qwen|deepseek|mistral|mixtral|swe-?\d|grok|haiku|sonnet|opus|codestral|devstral|devin)\b/i;
+	// 描述性词汇指示符：含这些词时认为是描述/说明文字而非模型标签，不跳过翻译
+	const MODEL_DESC_RE = /\b(for|via|using|with|agent|coding|powered|based|built|available|supported|requires?|enables?|provides?|settings|apply|saved|balance|draw|from|describe|task)\b/i;
 	const ATTRS_TO_TRANSLATE = ['aria-label', 'title', 'placeholder', 'data-tooltip'];
 	
 	const TRANSLATIONS = new Map([
@@ -725,11 +910,11 @@
 		['Reset to defaults', '重置为默认'],
 		
 		// ========== 选项值 ==========
-		['Low', '低'],
+		// ['Low', '低'],     // 移除：保留原文（模型推理强度等上下文使用）
 		['Conservative suggestions with higher confidence', '保守的建议，置信度更高'],
-		['Medium', '中等'],
+		// ['Medium', '中等'],  // 移除：保留原文
 		['Balanced suggestions', '平衡的建议'],
-		['High', '高'],
+		// ['High', '高'],    // 移除：保留原文
 		['More frequent and ambitious suggestions', '更频繁、更大胆的建议'],
 		['Supercomplete', '超级补全'],
 		['Intelligent edit suggestions near your cursor', '光标附近的智能编辑建议'],
@@ -771,7 +956,7 @@
 		['Thought', '思考'],
 		['Created Todo List', '已创建任务列表'],
 		['Analyzed content', '已分析内容'],
-		['tasks done', '任务完成'],
+		// 'tasks done' 由正则 "N tasks done" 处理；单独出现见下方 1235 行
 		// 'chunks' 不做静态翻译，避免误翻文件夹名
 		['Failed to fetch document content at', '无法获取文档内容：'],
 		['Markdown', 'Markdown'],
@@ -873,7 +1058,6 @@
 		['Configuration', '配置'],
 		['When enabled, Windsurf will allow Cascade to run in the background. When disabled, switching conversations will stop Cascade. Terminal commands may run in the background depending on your Terminal Auto Execution setting.', '启用后，Windsurf 允许 Cascade 在后台运行。禁用后，切换对话将停止 Cascade。终端命令可能根据你的终端自动执行设置在后台运行。'],
 		['When enabled, Arena mode sessions will automatically open in the editor tab for a side-by-side view.', '启用后，Arena 模式会话将自动在编辑器标签页中打开以进行并排视图。'],
-		['Show Allow/Deny list', '显示 允许/拒绝 列表'],
 		['Show Allowlist', '显示允许列表'],
 		['Disabled - All terminal commands require manual approval.', '已禁用 - 所有终端命令需要手动批准。'],
 		['Allowlist - Only allowlisted terminal commands are auto-executed.', '允许列表 - 仅允许列表中的终端命令会自动执行。'],
@@ -887,6 +1071,14 @@
 		['Auto-Open Edited Files', '自动打开编辑的文件'],
 		['Open files in the background if Cascade creates or edits them', '如果 Cascade 创建或编辑了文件，则在后台打开它们'],
 		['When enabled, Cascade is given awareness of lint errors created by its edits and may fix them without explicit user prompting. Note that this may increase Cascade\'s tool usage.', '启用后，Cascade 会感知自身编辑引发的 lint 错误，并可能自动修复。注意：这可能会增加工具调用次数。'],
+
+		// ========== Enable Cascade ==========
+		['Enable Cascade', '启用 Cascade'],
+		['When disabled, Cascade is not available and only ACP agents can be used.', '禁用后，Cascade 将不可用，只能使用 ACP 智能体。'],
+
+		// ========== Agent Diff Zones ==========
+		['Agent Diff Zones', '智能体 Diff 区域'],
+		['Show interactive diff zones with accept/reject controls for agent file edits', '显示带有接受/拒绝控件的交互式 diff 区域，用于智能体文件编辑'],
 
 		// ========== 截图4: Enable Cascade Web Tools 等 ==========
 		['Enable Cascade Web Tools', '启用 Cascade Web 工具'],
@@ -952,9 +1144,9 @@
 		['Automatically balances quality and cost', '自动平衡质量和成本'],
 		['Recently Used', '最近使用'],
 		['Recommended', '推荐'],
-		['New', '新'],
+		// ['New', '新'],  // 移除：模型徒章/徒章上下文保留原文
 		// 'context' 不做静态翻译，避免误翻文件夹名；"NK context" 和 "context used" 已由正则/长短语覆盖
-		['Thinking', '思考'],
+		// ['Thinking', '思考'],  // 移除：避免误翻模型限定词（带标点的 Thinking.. / Thinking. 仍正常翻译）
 		['Cost', '成本'],
 		['Higher effort consumes more tokens', '越高越消耗 tokens'],
 		['Input', '输入'],
@@ -1083,7 +1275,9 @@
 		['Weekly quota usage:', '每周配额使用:'],
 		['Extra usage balance:', '额外使用余额:'],
 		['Resets', '重置于'],
-		['Plan ends in', '套餐将在'],
+		['Plan', '套餐'],
+		['Plan ends in', '套餐剩余'],
+		['daily/weekly', '每日/每周'],
 		// 'days' 不做静态翻译，避免误翻文件夹名；"Plan ends in N days" 已由正则覆盖
 
 		// ========== Devin Terminal 描述（截图2） ==========
@@ -1111,7 +1305,6 @@
 		['Reject all', '全部拒绝'],
 		['Accept all', '全部接受'],
 		['Windsurf - Settings', 'Windsurf - 设置'],
-		['Ask anything', '询问任何问题'],
 
 		// ========== Cascade 状态文本 ==========
 		['Surfing..', '驰骋中..'],
@@ -1129,7 +1322,6 @@
 
 		// ========== 输入框/模式切换 ==========
 		['Switch mode', '切换模式'],
-		['Search settings', '搜索设置'],
 		['+ Add', '+ 添加'],
 
 		// ========== Skills 页面 ==========
@@ -1212,6 +1404,9 @@
 		['Moves this terminal session to the Terminal tab in your IDE. Cascade will still be able to use it.', '将此终端会话移至 IDE 的终端标签页。Cascade 仍可使用它。'],
 		['Review', '审查'],
 
+		// ========== 欢迎页描述 ==========
+		['Kick off a new project. Make changes across your entire codebase.', '启动一个新项目。在整个代码库中进行更改。'],
+
 		// ========== 欢迎页快捷键 ==========
 		['Cascade in new tab', '在新标签页中打开 Cascade'],
 
@@ -1237,7 +1432,7 @@
 		['Quota resets', '配额重置于'],
 		['Promo pricing is active for a limited time', '限时促销价生效中'],
 		['tokens', 'tokens'],
-		['Fast', '快速'],
+		// ['Fast', '快速'],  // 移除：模型限定词，保留原文
 		['Connecting to server...', '正在连接服务器...'],
 		['Your included daily usage quota is exhausted.', '您的每日配额已用完。'],
 		['Your included usage quota is exhausted.', '您的配额已用完。'],
@@ -1304,7 +1499,7 @@
 
 		// ========== 超时/重试 ==========
 		['This is taking a long time. Click to retry if it seems stuck.', '响应时间较长。如果卡住了，点击重试。'],
-		['Surfing.', '冲浪中…'],
+		// 'Surfing.' 已在上方 Cascade 状态文本区定义为 '驰骋中.'
 
 		// ========== 允许/禁止列表 ==========
 		['Hide Allow/Deny list', '隐藏允许/禁止列表'],
@@ -1320,7 +1515,8 @@
 		// ========== 智能体/模型切换 ==========
 		['Send the task to a single model', '发送任务到单个模型'],
 		['Select multiple models to compare', '选择多个模型进行对比'],
-		['Devin Local', 'Devin 本地'],
+		// 智能体/模型名称不翻译，保留原始标识
+		// ['Devin Local', 'Devin 本地'],  // 移除
 		['Describe your task to Devin', '向 Devin 描述你的任务'],
 		['Switch agent location', '切换智能体位置'],
 		['Switch agent', '切换智能体'],
@@ -1330,7 +1526,7 @@
 		['Your included weekly usage quota is exhausted.', '您的每周配额已用完。'],
 		['Your included weekly usage quota is exhausted', '您的每周配额已用完'],
 		['Devin AI coding agent via Devin for Terminal', 'Devin AI 编程智能体，通过 Devin for Terminal'],
-		['Devin Cloud', 'Devin 云端'],
+		// ['Devin Cloud', 'Devin 云端'],  // 移除：保留原始模型名
 		['Cannot switch agents during an active session', '无法在活动会话期间切换智能体'],
 		['Cannot switch modes after cascade has started', '无法在 Cascade 开始后切换模式'],
 		['Reasoning Effort', '推理强度'],
@@ -1342,6 +1538,7 @@
 		['Your modified files:', '你修改的文件：'],
 		['Your modified files', '你修改的文件'],
 		['Auto-fix', '自动修复'],
+		['Auto-continued', '自动继续'],
 
 		['DeepWiki', 'DeepWiki'],
 		['Welcome to DeepWiki', '欢迎使用 DeepWiki'],
@@ -1355,14 +1552,13 @@
 		[/^(\d+)\s+tasks$/i, '$1 个任务'],
 		[/^(\d+)\s+chunks$/i, '$1 个分片'],
 		[/^Failed to fetch document content at$/i, '无法获取文档内容：'],
-		[/^Quota resets daily\/weekly\.\s*Plan ends in (\d+) days$/i, '配额每日/每周重置。套餐将在 $1 天后到期'],
+		[/^Quota resets daily\/weekly\.\s*Plan ends in (\d+) days$/i, '配额每日/每周重置。套餐剩余 $1 天'],
 		[/^Quota resets daily\/weekly$/i, '配额每日/每周重置'],
-		[/^Plan ends in (\d+) days\s*\((.+)\)$/i, '套餐将在 $1 天后到期 ($2)'],
+		[/^Plan ends in (\d+) days\s*\((.+)\)$/i, '套餐剩余 $1 天 ($2)'],
 		[/^These settings only apply to Devin for Terminal and are saved to\s*(.+)$/i, '这些设置仅适用于 Devin 终端，并保存到 $1'],
 		[/^Resets\s+(.+)$/i, '重置于 $1'],
 		[/^(\d+)K context$/i, '$1K 上下文'],
 		[/^\$([0-9.]+)\s*\/\s*1M tokens$/i, '$$$1 / 百万 tokens'],
-		[/^Plan ends in (\d+) days$/i, '套餐将在 $1 天后到期'],
 		[/^(\d+)\s+tools$/i, '$1 个工具'],
 		[/^(\d+)\s*\/\s*(\d+)\s+tools$/i, '$1 / $2 个工具'],
 		[/^Switch mode\s*\((.+)\)$/i, '切换模式 ($1)'],
@@ -1390,7 +1586,6 @@
 		[/^(\d+)%\s*quota used$/i, '配额已用 $1%'],
 		[/^(\d+)\s+files with changes$/i, '$1 个文件有变更'],
 		[/^(\d+)\s+files?\s+(\+\d+)\s+(-\d+)$/i, '$1 个文件 $2 $3'],
-		[/^(\d+)%\s*\(([^)]+)\)\s*context used$/i, '$1% ($2) 上下文已用'],
 		[/^Prompt cache expires in\s+(.+)$/i, '提示缓存 $1 后过期'],
 		[/^Send\s*\((.+)\)$/i, '发送 ($1)'],
 		[/^(\d+)\s+messages?\s+queued$/i, '$1 条消息排队中'],
@@ -1440,29 +1635,195 @@
 		[/^Invalid argument:\s*The third-party model provider is experiencing issues and is currently not available\.\s*Please try this model again later\.\s*\(trace ID:\s*([^)]+?)\)?\.?$/i, '参数无效：第三方模型提供商出现问题，当前不可用。请稍后重试此模型。（跟踪 ID：$1）'],
 		[/^Invalid argument:\s*The third-party model provider is experiencing issues and is currently not available\.\s*Please try this model again later\.?$/i, '参数无效：第三方模型提供商出现问题，当前不可用。请稍后重试此模型。'],
 		[/^Model provider unreachable$/i, '模型提供商不可达'],
+		[/^Reached message rate limit for this model\.\s*Please try again later\.\s*Resets in:\s*(.+?)\s*$/i, '此模型已达到消息速率限制。请稍后再试。重置时间：$1'],
+		[/^Reached message rate limit for this model\.\s*Please try again later\.?$/i, '此模型已达到消息速率限制，请稍后再试。'],
 		[/^Purchase extra usage to continue using premium models\s*\u2192?$/i, '购买额外用量以继续使用高级模型 →'],
 		[/^Cannot switch agents during an active session\s*\((.+)\)$/i, '无法在活动会话期间切换智能体 ($1)'],
-		[/^Plan ends in (\d+) days?$/i, '套餐将在 $1 天后到期'],
+		[/^Plan ends in (\d+) days?$/i, '套餐剩余 $1 天'],
 		[/^(\d+)%\s*\(([^)]+)\)\s*context used$/i, '$1% ($2) 上下文已用'],
+		[/^\(([^)]+)\)\s*context used$/i, '($1) 上下文已用'],
+		[/^([\d.]+[KMB]?)\s*\/\s*([\d.]+[KMB]?)\s*context used$/i, '$1 / $2 上下文已用'],
+		[/^([\d.]+[KMB]?)\s*context used$/i, '$1 上下文已用'],
 	];
+
+	// ========== 软翻译（子串替换）==========
+	// 用于 DOM 文本节点被拆分（多个 <span>）导致整条锚定正则失败时的兜底
+	// 仅替换关键短语，不依赖整文本匹配。注意：不要包含过短/过通用的英文词，避免误伤代码、文件名等
+	const SOFT_TRANSLATIONS = [
+		// 上下文使用量
+		[/\bcontext used\b/gi, '上下文已用'],
+		[/\bcontext window used\b/gi, '上下文窗口已用'],
+		[/\bof context used\b/gi, '上下文已用'],
+		[/\bquota used\b/gi, '配额已用'],
+		[/\bquota remaining\b/gi, '剩余配额'],
+		[/\bquota exhausted\b/gi, '配额已耗尽'],
+		[/\bdaily quota\b/gi, '每日配额'],
+		[/\bweekly quota\b/gi, '每周配额'],
+		[/\busage limit\b/gi, '使用上限'],
+		[/\busage exceeded\b/gi, '使用量已超限'],
+		// 完整短语优先（更具体的放前面）
+		[/\bYour included weekly usage quota is exhausted\.?/gi, '你的每周用量配额已耗尽。'],
+		[/\bYour included daily usage quota is exhausted\.?/gi, '你的每日用量配额已耗尽。'],
+		[/\bYour included usage quota is exhausted\.?/gi, '你的包含用量配额已耗尽。'],
+		[/\bweekly usage quota is exhausted\b/gi, '每周用量配额已耗尽'],
+		[/\bdaily usage quota is exhausted\b/gi, '每日用量配额已耗尽'],
+		[/\busage quota is exhausted\b/gi, '用量配额已耗尽'],
+		[/\bincluded usage\b/gi, '包含用量'],
+		// 配额提示（与额度耗尽相关，常被拆分）
+		[/\bof your quota\b/gi, '你的配额'],
+		// 注意：更具体的 "Quota resets daily/weekly" 整体短语优先于裸 "Quota resets"
+		[/\bQuota resets daily\/weekly\b/gi, '配额每日/每周重置'],
+		[/\bQuota resets daily\b/gi, '配额每日重置'],
+		[/\bQuota resets weekly\b/gi, '配额每周重置'],
+		[/\bQuota will reset (?:in|at|on)\b/gi, '配额重置于'],
+		[/\bQuota resets (?:in|at|on)\b/gi, '配额重置于'],
+		[/\bResets in:\s*/gi, '重置时间：'],
+		[/\bResets at\b/gi, '重置于'],
+		// Plan 到期（拆分场景，无锚定）
+		[/\bPlan ends in (\d+) days?\b/gi, '套餐剩余 $1 天'],
+		[/\bdaily\/weekly\b/gi, '每日/每周'],
+		[/\bdaily\b/gi, '每日'],
+		[/\bweekly\b/gi, '每周'],
+		[/\b(\d+)\s*days?\b/gi, '$1 天'],
+		// 速率限制相关
+		[/\bPlease try again later\.?/gi, '请稍后再试。'],
+		[/\bPlease try again\.?/gi, '请重试。'],
+		[/\bRate limit exceeded\b/gi, '速率限制超出'],
+		// 用量预警
+		[/\bUsage is high\b/gi, '使用量较高'],
+		[/\bUsage warning\b/gi, '用量预警'],
+		[/\ball providers? (?:are )?(?:exhausted|over capacity)\b/gi, '所有提供商均已耗尽'],
+		// 状态/动作短语
+		[/\bGenerating\b/gi, '生成中'],
+		// [/\bThinking\b/gi, '思考中'],  // 移除：避免误翻模型限定词
+		[/\bSearching\b/gi, '搜索中'],
+		[/\bLoading\b/gi, '加载中'],
+		[/\bConnecting\b/gi, '连接中'],
+		[/\bRetrying\b/gi, '重试中'],
+		[/\bWaiting\b/gi, '等待中'],
+	];
+
+	function applySoftReplacement(s) {
+		let out = s;
+		let changed = false;
+		for (const [re, rep] of SOFT_TRANSLATIONS) {
+			if (re.test(out)) {
+				re.lastIndex = 0; // 重置 g 标志位
+				out = out.replace(re, rep);
+				changed = true;
+			}
+			re.lastIndex = 0;
+		}
+		return changed ? out : null;
+	}
 	
 	function logLocalization(...args) { console.log(LOG_PREFIX + '[Localization]', ...args); }
 	
+	// 大小写不敏感的查找索引（小写键 -> 原始键），按需懒构建
+	let _translationsLowerIndex = null;
+	function getTranslationsLowerIndex() {
+		if (_translationsLowerIndex) return _translationsLowerIndex;
+		_translationsLowerIndex = new Map();
+		for (const k of TRANSLATIONS.keys()) {
+			const lk = k.toLowerCase();
+			if (!_translationsLowerIndex.has(lk)) _translationsLowerIndex.set(lk, k);
+		}
+		return _translationsLowerIndex;
+	}
+
+	// 拆分尾部标点：返回 [核心, 尾部标点]
+	// 尾部包含: . … ... : ; ! ? 。 ， ： ； ！ ？ 以及尖括号箭头 → ▸ ▾ 等装饰符（连同前置空白）
+	const TRAILING_PUNCT_RE = /[\s\u00A0]*([.\u2026:;!?\u3002\uFF1A\uFF1B\uFF01\uFF1F]+|\.\.\.|[\u2192\u25B8\u25BE\u25BC])$/;
+	function splitTrailingPunct(s) {
+		const m = s.match(TRAILING_PUNCT_RE);
+		if (!m) return [s, ''];
+		return [s.slice(0, m.index), m[0]];
+	}
+
+	// 归一化内部空白（多空格、NBSP、零宽空格）
+	function normalizeWhitespace(s) {
+		return s
+			.replace(/[\u200B\u200C\u200D\uFEFF]/g, '')
+			.replace(/\u00A0/g, ' ')
+			.replace(/\s+/g, ' ');
+	}
+
+	// 标点尾部的中文化映射
+	const PUNCT_CN_MAP = { '.': '。', ':': '：', ';': '；', '!': '！', '?': '？' };
+	function localizePunct(p) {
+		// 仅当尾部为单个 ASCII 标点时本地化；多字符（如 ... → 和组合符）原样返回
+		if (p && p.length === 1 && PUNCT_CN_MAP[p]) return PUNCT_CN_MAP[p];
+		// 处理 "..." -> "…"
+		if (/^\.{3,}$/.test(p.trim())) return '…';
+		return p;
+	}
+
+	function lookupTranslation(core) {
+		// 1) 精确
+		if (TRANSLATIONS.has(core)) return TRANSLATIONS.get(core);
+		// 2) 大小写不敏感
+		const idx = getTranslationsLowerIndex();
+		const orig = idx.get(core.toLowerCase());
+		if (orig) return TRANSLATIONS.get(orig);
+		return null;
+	}
+
+	function applyRegex(core) {
+		for (const [pattern, replacement] of REGEX_TRANSLATIONS) {
+			if (pattern.test(core)) return core.replace(pattern, replacement);
+		}
+		return null;
+	}
+
 	function translateText(text) {
 		if (!text || !text.trim()) return text;
 		const leading = text.match(/^\s*/)?.[0] ?? '';
 		const trailing = text.match(/\s*$/)?.[0] ?? '';
-		const core = text.trim();
-		
-		if (TRANSLATIONS.has(core)) {
-			return `${leading}${TRANSLATIONS.get(core)}${trailing}`;
+		let core = text.trim();
+
+		// 跳过模型名标签（如 "Claude Opus 4.6 Thinking", "SWE-1.6 Fast"）
+		// 短于 80 字符且包含已知模型标识 → 认为是模型标签，不翻译
+		// 但含描述性词汇（for/via/agent 等）时例外，视为描述文字继续翻译
+		if (core.length < 80 && MODEL_LABEL_SKIP_RE.test(core) && !MODEL_DESC_RE.test(core)) return text;
+
+		// 第 1 轮：原文精确/大小写不敏感
+		let hit = lookupTranslation(core);
+		if (hit) return `${leading}${hit}${trailing}`;
+
+		// 第 2 轮：归一化空白后查找
+		const normalized = normalizeWhitespace(core);
+		if (normalized !== core) {
+			hit = lookupTranslation(normalized);
+			if (hit) return `${leading}${hit}${trailing}`;
 		}
-		
-		for (const [pattern, replacement] of REGEX_TRANSLATIONS) {
-			if (pattern.test(core)) {
-				return `${leading}${core.replace(pattern, replacement)}${trailing}`;
-			}
+
+		// 第 3 轮：剥离尾部标点后再查
+		const [stripped, tail] = splitTrailingPunct(normalized);
+		if (tail && stripped) {
+			hit = lookupTranslation(stripped);
+			if (hit) return `${leading}${hit}${localizePunct(tail)}${trailing}`;
 		}
+
+		// 第 4 轮：正则匹配（原文）
+		let regHit = applyRegex(core);
+		if (regHit) return `${leading}${regHit}${trailing}`;
+
+		// 第 5 轮：正则匹配（归一化后）
+		if (normalized !== core) {
+			regHit = applyRegex(normalized);
+			if (regHit) return `${leading}${regHit}${trailing}`;
+		}
+
+		// 第 6 轮：正则匹配（剥离尾部标点后）
+		if (tail && stripped) {
+			regHit = applyRegex(stripped);
+			if (regHit) return `${leading}${regHit}${localizePunct(tail)}${trailing}`;
+		}
+
+		// 第 7 轮：软翻译子串替换（兜底，处理 DOM 拆分文本节点导致的半汉化）
+		const softHit = applySoftReplacement(core);
+		if (softHit) return `${leading}${softHit}${trailing}`;
+
 		return text;
 	}
 	
@@ -1480,31 +1841,92 @@
 		for (const attr of ATTRS_TO_TRANSLATE) {
 			const value = el.getAttribute(attr);
 			if (!value) continue;
+			// 已翻译过的 attribute 不再处理（避免重复翻译破坏原值）
+			if (el.hasAttribute('data-ws-orig-' + attr)) continue;
 			const translated = translateText(value);
 			if (translated !== value) {
+				// 先存原值，再写翻译值，便于关闭汉化时还原
+				el.setAttribute('data-ws-orig-' + attr, value);
 				el.setAttribute(attr, translated);
 			}
 		}
 	}
 	
+	// 翻译过的 textNode → 原文映射（用于关闭汉化时实时还原）
+	// WeakMap 不阻止 GC，textNode 被移除后自动回收
+	const _translatedTextNodes = new WeakMap();
+	// 翻译过的 attribute → 原值（attr key: el + ':' + attr，存到 dataset）
+	// 简化：每个被翻译的 attribute 在元素上记录 data-ws-orig-<attr>="<原值>"
+
 	function translateTextNode(node) {
 		if (!node || shouldSkip(node)) return;
 		const original = node.nodeValue;
 		const translated = translateText(original);
 		if (translated !== original) {
 			node.nodeValue = translated;
+			// 1) 单 textNode 原文存 WeakMap，关闭汉化时精确还原
+			_translatedTextNodes.set(node, original);
+			// 2) 同时把原文写到父元素 data-ws-orig（供错误检测等模块用）
+			try {
+				const parent = node.parentElement;
+				if (parent && original && original.trim()) {
+					const prev = parent.getAttribute('data-ws-orig') || '';
+					if (!prev.includes(original)) {
+						parent.setAttribute('data-ws-orig', prev ? prev + '\n' + original : original);
+					}
+				}
+			} catch {}
 		}
+	}
+
+	/** 还原汉化：遍历整个 document 找回所有翻译过的 textNode 还原回原文 */
+	function revertLocalization() {
+		// 1) 还原 textNode
+		const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+		let cur = walker.nextNode();
+		let count = 0;
+		while (cur) {
+			const orig = _translatedTextNodes.get(cur);
+			if (orig != null && orig !== cur.nodeValue) {
+				cur.nodeValue = orig;
+				count++;
+			}
+			cur = walker.nextNode();
+		}
+		// 2) 还原 attributes（从 data-ws-orig-<attr> 取回原值）
+		document.querySelectorAll('*').forEach(el => {
+			for (const attr of ATTRS_TO_TRANSLATE) {
+				const stored = el.getAttribute('data-ws-orig-' + attr);
+				if (stored != null) {
+					el.setAttribute(attr, stored);
+					el.removeAttribute('data-ws-orig-' + attr);
+				}
+			}
+		});
+		// 3) 还原彩虹文本元素
+		document.querySelectorAll('[data-ws-rainbow]').forEach(el => {
+			setSafeHTML(el, el.getAttribute('data-ws-rainbow'));
+			el.removeAttribute('data-ws-rainbow');
+			count++;
+		});
+		// 4) 清理 data-ws-orig 标记（错误检测改读 textContent）
+		document.querySelectorAll('[data-ws-orig]').forEach(el => el.removeAttribute('data-ws-orig'));
+		console.log(LOG_PREFIX + '[Localization] 已还原 ' + count + ' 个 textNode');
 	}
 	
 	function scanAndTranslate(root) {
 		if (!root || !settings.localizationEnabled) return;
 		if (root.nodeType === Node.TEXT_NODE) {
+			// 节点已脱离 DOM 则跳过
+			if (!root.parentNode || !root.parentNode.isConnected) return;
 			translateTextNode(root);
 			return;
 		}
 		
 		const elementRoot = root.nodeType === Node.ELEMENT_NODE ? root : document.body;
-		if (!elementRoot) return;
+		if (!elementRoot || !elementRoot.isConnected) return;
+		// 整个 root 在排除区域内（如 Monaco 编辑器）→ 跳过整棵子树
+		if (elementRoot.closest && elementRoot.closest(EXCLUDE_SELECTOR)) return;
 		
 		translateAttributes(elementRoot);
 		const elementList = elementRoot.querySelectorAll ? elementRoot.querySelectorAll('*') : [];
@@ -1518,31 +1940,90 @@
 			translateTextNode(current);
 			current = walker.nextNode();
 		}
+
+		// ========== 彩虹文本合并翻译 ==========
+		// 处理每个字符被单独 <span> 包裹（渐变/彩虹色）的情况：
+		// 单个 textNode 只含 1-2 个字符，无法匹配完整翻译键。
+		// 策略：找到 childNodes 全为内联元素且各含极短文本的父元素，
+		// 拼合 textContent 后查翻译表，命中则整体替换。
+		translateRainbowElements(elementRoot);
+	}
+
+	/** 检测并翻译"彩虹文本"（字符被拆分到多个 span 的元素） */
+	function translateRainbowElements(root) {
+		if (!root || !root.querySelectorAll) return;
+		// 候选：含多个子元素、textContent 长度适中的元素
+		const candidates = root.querySelectorAll('span, p, h1, h2, h3, h4, h5, h6, div, label, a, button');
+		for (const el of candidates) {
+			if (shouldSkip(el)) continue;
+			// 已处理过则跳过
+			if (el.hasAttribute('data-ws-rainbow')) continue;
+			const children = el.childNodes;
+			// 至少 3 个子节点且大部分是 element（span）
+			if (children.length < 3) continue;
+			let spanCount = 0;
+			let totalTextLen = 0;
+			for (const ch of children) {
+				if (ch.nodeType === Node.ELEMENT_NODE && ch.tagName === 'SPAN') {
+					spanCount++;
+					totalTextLen += (ch.textContent || '').length;
+				} else if (ch.nodeType === Node.TEXT_NODE) {
+					totalTextLen += (ch.nodeValue || '').length;
+				}
+			}
+			// 判定为彩虹文本：大部分子节点是 span 且平均每个 span 文本很短
+			if (spanCount < 3 || spanCount / children.length < 0.6) continue;
+			if (totalTextLen / spanCount > 3) continue; // 平均每 span 超过 3 字符则不是逐字拆分
+
+			const combined = el.textContent.trim();
+			if (!combined || combined.length > 200) continue;
+			const translated = translateText(combined);
+			if (translated && translated !== combined) {
+				// 记录原始 HTML 用于还原
+				el.setAttribute('data-ws-rainbow', el.innerHTML);
+				el.textContent = translated;
+			}
+		}
 	}
 	
 	let pendingRoots = new Set();
-	let rafId = 0;
+	let _locFlushTimer = 0;
+	let _isTranslating = false;
 	let localizationObserver = null;
+	// 短 debounce：让快速连续 DOM 变更（切换聊天）合并为一次翻译
+	// 60ms 足够让 React reconciliation 完成，又不会产生明显闪烁
+	const LOC_DEBOUNCE_MS = 60;
 	
 	function flushQueue() {
-		rafId = 0;
+		_locFlushTimer = 0;
 		if (!settings.localizationEnabled) return;
-		for (const root of pendingRoots) {
-			scanAndTranslate(root);
+		_isTranslating = true;
+		try {
+			for (const root of pendingRoots) {
+				// 跳过已从 DOM 中移除的节点（切换聊天时旧节点被卸载）
+				if (root && root.nodeType === Node.ELEMENT_NODE && !root.isConnected) continue;
+				if (root && root.nodeType === Node.TEXT_NODE && (!root.parentNode || !root.parentNode.isConnected)) continue;
+				scanAndTranslate(root);
+			}
+		} finally {
+			_isTranslating = false;
+			// 消耗掉由翻译自身产生的 mutations，断掉反馈环
+			if (localizationObserver) localizationObserver.takeRecords();
 		}
 		pendingRoots.clear();
 	}
 	
 	function enqueue(root) {
 		pendingRoots.add(root || document.body);
-		if (!rafId) {
-			rafId = requestAnimationFrame(flushQueue);
-		}
+		if (_locFlushTimer) clearTimeout(_locFlushTimer);
+		_locFlushTimer = setTimeout(flushQueue, LOC_DEBOUNCE_MS);
 	}
 	
 	function startLocalizationObserver() {
 		if (localizationObserver) localizationObserver.disconnect();
 		localizationObserver = new MutationObserver((mutations) => {
+			// 忽略自身翻译产生的 mutations（断掉 translate→observe→translate 反馈环）
+			if (_isTranslating) return;
 			for (const mutation of mutations) {
 				if (mutation.type === 'characterData') {
 					enqueue(mutation.target);
@@ -1567,233 +2048,42 @@
 		});
 	}
 	
-	// ========== 统一设置面板 ==========
-	function injectPanelStyles() {
-		if (document.getElementById('ws-better-panel-css')) return;
-		const style = document.createElement('style');
-		style.id = 'ws-better-panel-css';
-		style.textContent = `
-.ws-better-toggle{position:fixed;top:30%;right:20px;width:32px;height:32px;border-radius:50%;background:rgba(128,128,128,.15);color:rgba(150,150,150,.6);border:1px solid rgba(128,128,128,.2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 1px 4px rgba(0,0,0,.3);z-index:9999;transition:all .2s}
-.ws-better-toggle:hover{background:rgba(128,128,128,.25);color:rgba(180,180,180,.9);transform:scale(1.05);box-shadow:0 2px 8px rgba(0,0,0,.4)}
-.ws-better-panel{position:fixed;top:calc(30% + 40px);right:20px;width:300px;background:#1e1e2e;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:16px;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.4);color:#e5e7eb;font-size:13px;display:none;overflow:visible}
-.ws-better-panel.open{display:block}
-.ws-better-panel h3{margin:0 0 12px;font-size:14px;color:#0ea5e9;display:flex;align-items:center;justify-content:space-between}
-.ws-better-close{background:none;border:none;color:#9ca3af;font-size:18px;cursor:pointer;padding:0 2px;line-height:1}
-.ws-better-close:hover{color:#e5e7eb}
-.ws-better-section{margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.08)}
-.ws-better-section:last-child{margin-bottom:0;padding-bottom:0;border-bottom:none}
-.ws-better-section-title{font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px}
-.ws-better-panel label{display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer}
-.ws-dd{position:relative;width:100%;margin-bottom:8px;box-sizing:border-box}
-.ws-dd-btn{width:100%;padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:#2a2a3e;color:#e5e7eb;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;text-align:left;box-sizing:border-box}
-.ws-dd-btn:hover{border-color:rgba(255,255,255,.35)}
-.ws-dd-btn::after{content:'\\u25BE';font-size:10px;color:#9ca3af}
-.ws-dd-list{display:none;position:absolute;top:100%;left:0;width:100%;box-sizing:border-box;background:#2a2a3e;border:1px solid rgba(255,255,255,.15);border-radius:6px;margin-top:4px;max-height:200px;overflow-y:auto;z-index:10001;box-shadow:0 4px 16px rgba(0,0,0,.4);scrollbar-width:thin;scrollbar-color:#555 transparent}
-.ws-dd-list::-webkit-scrollbar{width:6px}
-.ws-dd-list::-webkit-scrollbar-track{background:transparent;border-radius:3px}
-.ws-dd-list::-webkit-scrollbar-thumb{background:#555;border-radius:3px}
-.ws-dd-list::-webkit-scrollbar-thumb:hover{background:#777}
-.ws-dd.open .ws-dd-list{display:block}
-.ws-dd-item{padding:6px 10px;color:#e5e7eb;cursor:pointer;font-size:13px}
-.ws-dd-item:hover{background:rgba(255,255,255,.1)}
-.ws-dd-item.active{background:rgba(14,165,233,.25);color:#0ea5e9}
-.monaco-list-row .label-name,.tab .label-name,.action-label,.monaco-button,.pane-header h3,.title-label span,.composite.title .title-label a,.tabs-container .tab .tab-label a{white-space:nowrap!important}
-`;
-		document.head.appendChild(style);
-	}
-	
-	function createSettingsUI() {
-		if (document.getElementById('ws-better-toggle')) return;
-		
-		injectPanelStyles();
-		injectBubblesStyles();
-		
-		const toggle = document.createElement('button');
-		toggle.id = 'ws-better-toggle';
-		toggle.className = 'ws-better-toggle';
-		toggle.textContent = '⚙️';
-		toggle.title = 'Windsurf Better Settings';
-		
-		const panel = document.createElement('div');
-		panel.className = 'ws-better-panel';
-		panel.id = 'ws-better-panel';
-		
-		const title = document.createElement('h3');
-		const titleTxt = document.createElement('span');
-		titleTxt.textContent = '⚙️ Windsurf Better v' + VERSION;
-		title.appendChild(titleTxt);
-		const closeBtn = document.createElement('button');
-		closeBtn.className = 'ws-better-close';
-		closeBtn.textContent = '×';
-		closeBtn.addEventListener('click', () => panel.classList.remove('open'));
-		title.appendChild(closeBtn);
-		panel.appendChild(title);
-		
-		// 回复建议提示设置区块
-		const bubblesSection = document.createElement('div');
-		bubblesSection.className = 'ws-better-section';
-		const bubblesTitle = document.createElement('div');
-		bubblesTitle.className = 'ws-better-section-title';
-		bubblesTitle.textContent = '回复建议提示';
-		bubblesSection.appendChild(bubblesTitle);
-		
-		const bubblesEnable = document.createElement('label');
-		const bubblesCheck = document.createElement('input');
-		bubblesCheck.type = 'checkbox';
-		bubblesCheck.checked = settings.bubblesEnabled;
-		bubblesCheck.addEventListener('change', () => {
-			settings.bubblesEnabled = bubblesCheck.checked;
-			saveSettings(settings);
-			if (settings.bubblesEnabled) startBubblesObserving();
-			else if (bubblesObserver) { bubblesObserver.disconnect(); bubblesObserver = null; }
-		});
-		bubblesEnable.appendChild(bubblesCheck);
-		bubblesEnable.appendChild(document.createTextNode(' 启用回复建议'));
-		bubblesSection.appendChild(bubblesEnable);
-		
-		const bubblesAutoSend = document.createElement('label');
-		const bubblesAutoCheck = document.createElement('input');
-		bubblesAutoCheck.type = 'checkbox';
-		bubblesAutoCheck.checked = settings.bubblesAutoSend;
-		bubblesAutoCheck.addEventListener('change', () => {
-			settings.bubblesAutoSend = bubblesAutoCheck.checked;
-			saveSettings(settings);
-		});
-		bubblesAutoSend.appendChild(bubblesAutoCheck);
-		bubblesAutoSend.appendChild(document.createTextNode(' 点击自动发送'));
-		bubblesSection.appendChild(bubblesAutoSend);
-		
-		function mkDropdown(label, items, current, onChange) {
-			const wrap = document.createElement('div');
-			wrap.style.marginTop = '8px';
-			const lbl = document.createElement('div');
-			lbl.textContent = label;
-			wrap.appendChild(lbl);
-			const dd = document.createElement('div');
-			dd.className = 'ws-dd';
-			const btn = document.createElement('div');
-			btn.className = 'ws-dd-btn';
-			btn.textContent = (items.find(i => i.value === current) || items[0]).label;
-			const list = document.createElement('div');
-			list.className = 'ws-dd-list';
-			items.forEach(item => {
-				const d = document.createElement('div');
-				d.className = 'ws-dd-item' + (item.value === current ? ' active' : '');
-				d.textContent = item.label;
-				d.dataset.val = item.value;
-				d.addEventListener('click', e => {
-					e.stopPropagation();
-					btn.textContent = item.label;
-					list.querySelectorAll('.ws-dd-item').forEach(x => x.classList.remove('active'));
-					d.classList.add('active');
-					dd.classList.remove('open');
-					onChange(item.value);
-				});
-				list.appendChild(d);
-			});
-			btn.addEventListener('click', e => { e.stopPropagation(); dd.classList.toggle('open'); });
-			document.addEventListener('click', () => dd.classList.remove('open'));
-			dd.appendChild(btn);
-			dd.appendChild(list);
-			wrap.appendChild(dd);
-			return wrap;
-		}
-		
-		const themeDd = mkDropdown('主题:', BUBBLE_THEMES.map(t => ({ value: t.id, label: t.name })), settings.bubblesTheme, v => {
-			settings.bubblesTheme = v;
-			saveSettings(settings);
-		});
-		bubblesSection.appendChild(themeDd);
-		
-		const shapeNames = { pill: '胶囊', rounded: '圆角', soft: '柔和', sharp: '直角' };
-		const shapeDd = mkDropdown('形状:', BUBBLE_SHAPES.map(s => ({ value: s.id, label: shapeNames[s.id] || s.id })), settings.bubblesShape, v => {
-			settings.bubblesShape = v;
-			saveSettings(settings);
-		});
-		bubblesSection.appendChild(shapeDd);
-		
-		panel.appendChild(bubblesSection);
-		
-		// 汉化设置区块
-		const locSection = document.createElement('div');
-		locSection.className = 'ws-better-section';
-		const locTitle = document.createElement('div');
-		locTitle.className = 'ws-better-section-title';
-		locTitle.textContent = '界面汉化';
-		locSection.appendChild(locTitle);
-		
-		const locEnable = document.createElement('label');
-		const locCheck = document.createElement('input');
-		locCheck.type = 'checkbox';
-		locCheck.checked = settings.localizationEnabled;
-		locCheck.addEventListener('change', () => {
-			settings.localizationEnabled = locCheck.checked;
-			saveSettings(settings);
-			if (settings.localizationEnabled) {
-				startLocalizationObserver();
-				enqueue(document.body);
-			} else if (localizationObserver) {
-				localizationObserver.disconnect();
-				localizationObserver = null;
-			}
-		});
-		locEnable.appendChild(locCheck);
-		locEnable.appendChild(document.createTextNode(' 启用汉化'));
-		locSection.appendChild(locEnable);
-		
-		panel.appendChild(locSection);
-		
-		// 自动继续区块
-		const acSection = document.createElement('div');
-		acSection.className = 'ws-better-section';
-		const acTitle = document.createElement('div');
-		acTitle.className = 'ws-better-section-title';
-		acTitle.textContent = '自动操作';
-		acSection.appendChild(acTitle);
-		
-		const acEnable = document.createElement('label');
-		const acCheck = document.createElement('input');
-		acCheck.type = 'checkbox';
-		acCheck.checked = settings.autoContinueEnabled;
-		acCheck.addEventListener('change', () => {
-			settings.autoContinueEnabled = acCheck.checked;
-			saveSettings(settings);
-			if (settings.autoContinueEnabled) startAutoContinue();
-			else if (autoContinueObserver) { autoContinueObserver.disconnect(); autoContinueObserver = null; }
-		});
-		acEnable.appendChild(acCheck);
-		acEnable.appendChild(document.createTextNode(' 回复截断时自动继续'));
-		acSection.appendChild(acEnable);
-		
-		panel.appendChild(acSection);
-		
-		toggle.addEventListener('click', () => panel.classList.toggle('open'));
-		document.body.appendChild(toggle);
-		document.body.appendChild(panel);
-	}
+	// (Settings UI removed — moved to sidebar panel)
 	
 	// ========== 自动继续 ==========
 	let autoContinueObserver = null;
+	let _autoContinueDebounceTimer = null;
+	let _autoContinueLastFireTs = 0;
 	function startAutoContinue() {
 		if (autoContinueObserver) { autoContinueObserver.disconnect(); autoContinueObserver = null; }
-		if (!settings.autoContinueEnabled) return;
+		if (settings.continueMode !== 'smart') return;
 		const tryClick = () => {
-			if (!settings.autoContinueEnabled) return;
+			if (settings.continueMode !== 'smart') return;
+			// 与 recovery 模块共用冷却，避免重复点击同一按钮
+			if (typeof isInCooldown === 'function' && isInCooldown()) return;
+			// 自身 5s 冷却，避免短时间内被 MutationObserver 反复触发
+			if (Date.now() - _autoContinueLastFireTs < 5000) return;
 			const btns = document.querySelectorAll('button, [role="button"]');
 			for (const btn of btns) {
 				const txt = (btn.textContent || '').trim();
 				if (txt === 'Continue response' || txt === '继续回复') {
+					if (typeof isVisibleAndClickable === 'function' && !isVisibleAndClickable(btn)) continue;
+					_autoContinueLastFireTs = Date.now();
+					if (typeof markActionClick === 'function') markActionClick();
 					console.log(LOG_PREFIX + '[AutoContinue] 检测到截断，自动继续...');
 					setTimeout(() => btn.click(), 800);
 					return;
 				}
 			}
 		};
+		// 200ms 防抖：AI 边生成边变 DOM，每次都 querySelectorAll 太耗性能
 		autoContinueObserver = new MutationObserver(() => {
-			if (settings.autoContinueEnabled) tryClick();
+			if (settings.continueMode !== 'smart') return;
+			if (_autoContinueDebounceTimer) clearTimeout(_autoContinueDebounceTimer);
+			_autoContinueDebounceTimer = setTimeout(tryClick, 200);
 		});
 		autoContinueObserver.observe(document.body, { childList: true, subtree: true });
-		console.log(LOG_PREFIX + '[AutoContinue] ✅已启用');
+		console.log(LOG_PREFIX + '[AutoContinue] ✅已启用（防抖 200ms）');
 	}
 
 	let dismissCorruptObserver = null;
@@ -1846,7 +2136,10 @@
 
 		// ── 配额耗尽 / 速率限制 ──
 		{ pattern: /daily usage quota has been exhausted/i,                    category: 'quotaErrors', signal: 'quota-daily-exhausted' },
-		{ pattern: /usage quota is exhausted/i,                                category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /usage quota.*exhausted/i,                                  category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /monthly acu limit reached/i,                              category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /you have reached your.*limit/i,                           category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /reached your usage limit/i,                               category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /resource_exhausted/i,                                      category: 'quotaErrors', signal: 'rate-limited' },
 		{ pattern: /all API providers are over capacity/i,                     category: 'quotaErrors', signal: 'provider-overloaded' },
 		{ pattern: /Failed precondition.*quota/i,                              category: 'quotaErrors', signal: 'quota-exhausted' },
@@ -1854,6 +2147,10 @@
 		{ pattern: /rate limit exceeded/i,                                     category: 'quotaErrors', signal: 'rate-limited' },
 		{ pattern: /upgrade to a Pro account for higher limits/i,              category: 'quotaErrors', signal: 'rate-limited' },
 		{ pattern: /权限拒绝.*rate limit/i,                                    category: 'quotaErrors', signal: 'rate-limited' },
+		{ pattern: /Reached.*(?:message|rate) limit/i,                         category: 'quotaErrors', signal: 'rate-limited' },
+		{ pattern: /此模型已达到消息速率限制/i,                                category: 'quotaErrors', signal: 'rate-limited' },
+		{ pattern: /已达到.*(?:配额|限制|额度)/,                               category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /额度.*(?:耗尽|用完|不足)/,                                 category: 'quotaErrors', signal: 'quota-exhausted' },
 
 		// ── 模型不可用（第三方提供商故障） ──
 		{ pattern: /third-party model provider is experiencing issues/i,       category: 'modelErrors', signal: 'provider-unavailable' },
@@ -1878,16 +2175,97 @@
 	// 按钮触发（继续回复 / Continue response）
 	const CONTINUE_BUTTON_TEXTS = ['Continue response', '继续回复'];
 
+	// ========== 通用选择器常量（避免字面量重复） ==========
+	const MODEL_SELECTOR_BTN_SEL = 'button[aria-label*="Model Selector"], button[aria-label*="模型选择"]';
+	const MODEL_PANEL_SEL = '[class*="model-selector"], [class*="modelSelector"], [class*="dropdown"], [role="listbox"], [role="menu"]';
+	const MODEL_OPTION_SEL = '[role="option"], [role="menuitem"], [class*="option"], [class*="item"], [class*="row"]';
+	const ASSISTANT_MSG_SEL = '[data-role="assistant"], .assistant-message, [class*="assistantMessage"]';
+	const USER_MSG_SEL = '[data-role="user"], .user-message, [class*="userMessage"]';
+	const ERROR_BUBBLE_SEL = [
+		'.error-message',
+		'[data-testid="error-message"]',
+		'[role="alert"]',
+		'.status-message[class*="error"]',
+	];
+	const CONT_MSG_SEL = [
+		'.error-message',
+		'[data-testid="error-message"]',
+		'[role="alert"]', '[role="status"]',
+		'.status-message',
+		'[class*="error-bubble"]', '[class*="errorBubble"]',
+	];
+
+	// 获取扫描根：优先 chat root，回退到 body
+	function getScanRoot() {
+		return findChatRoot() || document.body;
+	}
+
 	// ── 切换模型 ──
 	// Windsurf 模型选择器通过 aria-label="Model Selector" 的按钮触发
 	let _modelSwitchInProgress = false;
 
+	// 已知的模型名前缀正则（用于 fallback 识别按钮）
+	const MODEL_NAME_RE = /^(claude[-\s]|gpt[-\s]?|gpt\d|o\d[-\s]|gemini|llama|qwen|deepseek|mistral|mixtral|sonnet|haiku|opus|grok|swe-)/i;
+
+	// 找到当前模型选择器按钮（多层 fallback）
+	function findModelSelectorBtn() {
+		// 1. aria-label 精确匹配
+		let btn = document.querySelector(MODEL_SELECTOR_BTN_SEL);
+		if (btn) return btn;
+		// 2. data-testid / data-test 含 model
+		btn = document.querySelector('[data-testid*="model" i], [data-test*="model" i]');
+		if (btn) return btn;
+		// 3. 类名含 "model" + 是个按钮 / 可点击元素
+		const candidates = document.querySelectorAll(
+			'[class*="model" i][class*="select" i], [class*="modelSelector" i], [class*="model-selector" i]'
+		);
+		for (const c of candidates) {
+			const text = (c.textContent || '').trim();
+			if (text && text.length < 80) return c;
+		}
+		// 4. 全文档扫描所有可点击元素，挑文本是已知模型名前缀的最短匹配
+		const clickables = document.querySelectorAll(
+			'button, [role="button"], [role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="menu"], [aria-haspopup="true"]'
+		);
+		let best = null;
+		let bestLen = Infinity;
+		for (const c of clickables) {
+			const t = (c.textContent || '').trim();
+			if (!t || t.length > 80) continue;
+			if (MODEL_NAME_RE.test(t) && t.length < bestLen) {
+				best = c;
+				bestLen = t.length;
+			}
+		}
+		return best;
+	}
+
+	// 全文档扫描所有按钮 / 选项 / 列表项的文本，挑出符合模型名前缀的
+	// 用作"找不到模型选择器"或"面板没出现"时的兜底
+	function scanPageForModelNames() {
+		const found = new Set();
+		const all = document.querySelectorAll(
+			'button, [role="button"], [role="menuitem"], [role="option"], [data-value], [class*="option"], [class*="item"]'
+		);
+		for (const el of all) {
+			const t = (el.textContent || '').trim();
+			if (!t || t.length > 60) continue;
+			const firstLine = t.split('\n')[0].trim();
+			if (!firstLine || firstLine.length > 50) continue;
+			if (MODEL_NAME_RE.test(firstLine)) found.add(firstLine);
+		}
+		return Array.from(found);
+	}
+
 	function getCurrentModelName() {
-		// 模型选择器按钮通常显示当前模型名
-		const btn = document.querySelector('button[aria-label*="Model Selector"], button[aria-label*="模型选择"]');
+		const btn = findModelSelectorBtn();
 		if (btn) {
 			const text = (btn.textContent || '').trim();
 			if (text) return text;
+			// 没文本时尝试 aria-label
+			const aria = btn.getAttribute('aria-label') || '';
+			const m = aria.match(/[:：]\s*(.+)$/);
+			if (m) return m[1].trim();
 		}
 		return null;
 	}
@@ -1901,8 +2279,8 @@
 		try {
 			console.log(LOG_PREFIX + '[ModelSwitch] 尝试切换到: ' + targetModel);
 
-			// 1. 找到并点击模型选择器按钮
-			const selectorBtn = document.querySelector('button[aria-label*="Model Selector"], button[aria-label*="模型选择"]');
+			// 1. 找到并点击模型选择器按钮（用多层 fallback）
+			const selectorBtn = findModelSelectorBtn();
 			if (!selectorBtn) {
 				console.log(LOG_PREFIX + '[ModelSwitch] 找不到模型选择器按钮');
 				return false;
@@ -1911,11 +2289,10 @@
 			await sleep(500);
 
 			// 2. 等待下拉面板出现
-			const panel = await waitForElement('[class*="model-selector"], [class*="modelSelector"], [class*="dropdown"], [role="listbox"], [role="menu"]', 2000);
+			const panel = await waitForElement(MODEL_PANEL_SEL, 2000);
 			if (!panel) {
 				console.log(LOG_PREFIX + '[ModelSwitch] 模型下拉面板未出现');
-				// 尝试按 Escape 关闭可能弹出的东西
-				document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+				dismissModelDropdown(selectorBtn);
 				return false;
 			}
 
@@ -1932,7 +2309,7 @@
 			}
 
 			// 4. 查找匹配的模型选项并点击
-			const options = panel.querySelectorAll('[role="option"], [role="menuitem"], [class*="option"], [class*="item"], [class*="row"]');
+			const options = panel.querySelectorAll(MODEL_OPTION_SEL);
 			let matched = null;
 			const target = targetModel.toLowerCase();
 			for (const opt of options) {
@@ -1962,8 +2339,7 @@
 				return true;
 			} else {
 				console.log(LOG_PREFIX + '[ModelSwitch] 未找到模型: ' + targetModel);
-				// 关闭面板
-				document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+				dismissModelDropdown(selectorBtn);
 				return false;
 			}
 		} catch (err) {
@@ -1975,40 +2351,72 @@
 	}
 
 	// ── 获取所有可用模型 ──
-	async function getAvailableModels() {
-		const selectorBtn = document.querySelector('button[aria-label*="Model Selector"], button[aria-label*="模型选择"]');
-		if (!selectorBtn) {
-			console.log(LOG_PREFIX + '[ModelSwitch] 找不到模型选择器按钮');
-			return [];
-		}
-		selectorBtn.click();
-		await sleep(600);
+	// 安全关闭下拉面板（不在 document 级别派发 Escape，避免崩溃聊天窗口）
+	function dismissModelDropdown(selectorBtn) {
+		try {
+			// 优先：再次点击按钮以 toggle 关闭
+			if (selectorBtn && selectorBtn.isConnected) { selectorBtn.click(); return; }
+			// 备选：点击 body 空白处触发 blur 关闭
+			document.body.click();
+		} catch {}
+	}
 
-		const panel = await waitForElement('[class*="model-selector"], [class*="modelSelector"], [class*="dropdown"], [role="listbox"], [role="menu"]', 2000);
-		if (!panel) {
-			console.log(LOG_PREFIX + '[ModelSwitch] 模型下拉面板未出现');
-			document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-			return [];
+	async function getAvailableModels(panelOpened) {
+		const debug = (msg) => console.log(LOG_PREFIX + '[ModelSwitch] ' + msg);
+
+		// 纯被动扫描（不点击任何按钮，避免崩溃聊天窗口）
+
+		// 1) 如果扩展宿主已通过官方命令打开了面板，等它渲染
+		if (panelOpened) {
+			const panel = await waitForElement(MODEL_PANEL_SEL, 2000);
+			if (panel) {
+				const models = readModelsFromPanel(panel);
+				if (models.length > 0) {
+					debug('从官方命令打开的面板抓到 ' + models.length + ' 个模型');
+					return models;
+				}
+			}
 		}
 
-		const options = panel.querySelectorAll('[role="option"], [role="menuitem"], [class*="option"], [class*="item"], [class*="row"]');
+		// 2) 检查面板是否恰好已打开
+		const existingPanel = document.querySelector(MODEL_PANEL_SEL);
+		if (existingPanel) {
+			const models = readModelsFromPanel(existingPanel);
+			if (models.length > 0) {
+				debug('从已打开的面板抓到 ' + models.length + ' 个模型');
+				return models;
+			}
+		}
+
+		// 3) 全页面被动扫描（不触发 click，只读已渲染的 DOM 文本）
+		const found = scanPageForModelNames();
+		debug('被动扫描得到 ' + found.length + ' 个模型');
+		if (found.length > 0) return found;
+
+		// 4) 最终兜底：读取当前选择器按钮文本作为已知模型
+		const btn = findModelSelectorBtn();
+		if (btn) {
+			const current = (btn.textContent || '').trim();
+			if (current && MODEL_NAME_RE.test(current)) {
+				debug('仅检测到当前模型: ' + current);
+				return [current];
+			}
+		}
+		debug('未检测到可用模型（面板未打开或无可见模型元素）');
+		return [];
+	}
+
+	function readModelsFromPanel(panel) {
+		const options = panel.querySelectorAll(MODEL_OPTION_SEL);
 		const models = [];
 		for (const opt of options) {
 			const text = (opt.textContent || '').trim();
-			// 过滤掉搜索框文字、空文本、过长文本
 			if (text && text.length > 1 && text.length < 60 && !text.includes('Search') && !text.includes('搜索')) {
-				// 提取主要模型名（去掉描述信息）
 				const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 				const name = lines[0] || text;
 				if (name && !models.includes(name)) models.push(name);
 			}
 		}
-
-		// 关闭面板
-		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-		await sleep(200);
-
-		console.log(LOG_PREFIX + '[ModelSwitch] 检测到可用模型: ' + models.join(', '));
 		return models;
 	}
 
@@ -2046,6 +2454,9 @@
 	let lastRecoveryTs = 0;
 	let lastPoolResultTs = 0;
 	let _lastErrorFingerprint = '';
+	let _lastSwitchFingerprint = '';  // 上次触发切号的错误指纹
+	let _lastSwitchTs = 0;
+	let _recoveryCooldownMs = 10000;  // 默认 10s，切号后临时拉长到 30s
 
 	// 生成错误指纹（去除时间戳/数字，仅保留语义）
 	function makeErrorFingerprint(text) {
@@ -2089,8 +2500,8 @@
 	}
 
 	function trackLastUserMessage() {
-		// 从 DOM 中提取最后一条用户消息
-		const userMsgs = document.querySelectorAll('[data-role="user"], .user-message, [class*="userMessage"]');
+		// 从 DOM 中提取最后一条用户消息（限定 chat root 内）
+		const userMsgs = getScanRoot().querySelectorAll(USER_MSG_SEL);
 		if (userMsgs.length > 0) {
 			const last = userMsgs[userMsgs.length - 1];
 			const text = (last.textContent || '').trim();
@@ -2098,41 +2509,80 @@
 		}
 	}
 
+	// 提取元素文本：拼接 data-ws-orig（汉化前原文）+ textContent（当前可见文本）
+	// 这样英文 ERROR_PATTERNS 即便在汉化开启时也能匹配到原文
+	function getElementErrorText(el) {
+		if (!el) return '';
+		const visible = (el.textContent || '').trim();
+		// 收集自身和所有后代的 data-ws-orig 原文（汉化模块写入）
+		const origs = [];
+		const selfOrig = el.getAttribute && el.getAttribute('data-ws-orig');
+		if (selfOrig) origs.push(selfOrig);
+		try {
+			el.querySelectorAll && el.querySelectorAll('[data-ws-orig]').forEach(n => {
+				const v = n.getAttribute('data-ws-orig');
+				if (v) origs.push(v);
+			});
+		} catch {}
+		// 拼接成一段文本，让英文正则在原文上匹配
+		const origText = origs.join('\n').trim();
+		return origText ? (visible + '\n' + origText) : visible;
+	}
+
 	function getLatestErrorText() {
-		// 扫描聊天区域最近的错误/状态消息
-		const errorSelectors = [
-			'.error-message',
-			'[class*="error"]',
-			'[class*="Error"]',
-			'[class*="warning"]',
-			'[class*="Warning"]',
-			'.status-message',
-			'[data-testid="error-message"]',
-		];
+		// 扫描聊天区域最近的错误/状态消息（限定 chat root 内，避免全文档扫描）
+		const scanRoot = getScanRoot();
 		let latestError = '';
 		let latestErrorEl = null;
-		
+
 		// 优先查找 .error-message 类的元素
-		for (const sel of errorSelectors) {
-			const els = document.querySelectorAll(sel);
+		for (const sel of ERROR_BUBBLE_SEL) {
+			const els = scanRoot.querySelectorAll(sel);
 			if (els.length > 0) {
 				const last = els[els.length - 1];
-				const text = (last.textContent || '').trim();
-				if (text && text.length > 5 && text.length < 500) {
+				const text = getElementErrorText(last);
+				if (text && text.length > 5 && text.length < 1000) {
 					latestError = text;
 					latestErrorEl = last;
 					break;
 				}
 			}
 		}
-		
-		// 备选：扫描最近的聊天气泡内容
+
+		// Windsurf Tailwind 样式检测：查找含 red 图标的错误容器
+		// Windsurf 用 <svg class="...fill-red-200 stroke-red-600"/> + <span>错误文本</span>
 		if (!latestError) {
-			const msgs = document.querySelectorAll('[data-role="assistant"], .assistant-message, [class*="assistantMessage"]');
-			if (msgs.length > 0) {
-				const last = msgs[msgs.length - 1];
-				const text = (last.textContent || '').trim();
-				if (text.length < 500) latestError = text;
+			const redIcons = scanRoot.querySelectorAll('svg[class*="red"], svg[class*="stroke-red"]');
+			for (let i = redIcons.length - 1; i >= 0; i--) {
+				const parent = redIcons[i].closest('div');
+				if (parent) {
+					const text = (parent.textContent || '').trim();
+					if (text.length > 5 && text.length < 500) {
+						latestError = text;
+						latestErrorEl = parent;
+						break;
+					}
+				}
+			}
+		}
+		
+		// 注意：不再扫描正常 AI 回复（之前的"备选"逻辑会把正常回复误判为错误，导致死循环）
+
+		// 最终兜底：扫描整个 document.body 查找额度关键词（banner 可能在 chat root 之外）
+		if (!latestError) {
+			const QUOTA_KW_RE = /quota.*exhausted|usage.*limit.*reached|额度.*耗尽|monthly acu limit/i;
+			const allText = document.body.querySelectorAll('span, p, div');
+			for (let i = allText.length - 1; i >= 0; i--) {
+				const el = allText[i];
+				if (el.children.length > 2) continue; // 跳过容器元素，只看叶子
+				if (el.dataset && el.dataset._wsRecoveryHandled) continue; // 已处理过，跳过
+				const t = (el.textContent || '').trim();
+				if (t.length > 10 && t.length < 300 && QUOTA_KW_RE.test(t)) {
+					latestError = t;
+					latestErrorEl = el;
+					try { el.dataset._wsRecoveryHandled = '1'; } catch {}
+					break;
+				}
 			}
 		}
 		
@@ -2141,20 +2591,37 @@
 
 	function sendPoolSignal(type, lastMessage) {
 		const signal = { type, ts: Date.now(), lastMessage: lastMessage || lastUserMessage };
-		localStorage.setItem('ws-pool-signal', JSON.stringify(signal));
 		console.log(LOG_PREFIX + '[Recovery] 发送切号信号: ' + type);
 		showRecoveryNotification('正在请求切换账号...');
+		// 优先走 HTTP 桥（跨 origin 唯一可靠通道）
+		// localStorage 路径是 vscode-file:// origin，sidebar webview (vscode-webview://) 收不到
+		let sentViaBridge = false;
+		try {
+			if (typeof bridgePostResult === 'function' && typeof getBridgeUrl === 'function' && getBridgeUrl()) {
+				bridgePostResult({ type: 'pool-signal', signal });
+				sentViaBridge = true;
+			}
+		} catch (e) {
+			console.warn(LOG_PREFIX + '[Recovery] bridge 发送失败，回退 localStorage:', e);
+		}
+		if (!sentViaBridge) {
+			// 兜底：本地 localStorage（极少数情况下增强未启用桥时使用）
+			localStorage.setItem('ws-pool-signal', JSON.stringify(signal));
+		}
 		setTimeout(() => checkPoolTimeout(signal.ts), 8000);
 	}
 
 	function checkPoolTimeout(signalTs) {
+		// 检查 localStorage（非 bridge 场景）
 		const raw = localStorage.getItem('ws-pool-result');
 		if (raw) {
 			try {
 				const result = JSON.parse(raw);
-				if (result.ts >= signalTs) return; // 已收到结果
+				if (result.ts >= signalTs) return;
 			} catch {}
 		}
+		// 检查 bridge 结果（已经通过 checkForPoolResult 处理过的结果 ts）
+		if (lastPoolResultTs >= signalTs) return;
 		console.log(LOG_PREFIX + '[Recovery] 切号超时');
 		showRecoveryNotification('切号超时，扩展可能未响应');
 	}
@@ -2171,11 +2638,12 @@
 			if (result.type === 'switched') {
 				console.log(LOG_PREFIX + '[Recovery] 切号成功，等待 session 生效后重试...');
 				showRecoveryNotification('切号成功，正在重试...');
-				// 切号成功后清理状态，保证切号后是全新的重试计数
 				recoveryRetryCount = 0;
-				_lastErrorFingerprint = '';
+				// 不清除 _lastSwitchFingerprint，保留它防止 DOM 残留错误反复触发切号
+				lastRecoveryTs = Date.now();  // 重置冷却起点
 				recordRecoveryLog({ category: 'B', error: '', action: 'switch-result', result: 'switched:' + (result.email || '?') });
 				setTimeout(() => {
+					_recoveryCooldownMs = 10000;  // 恢复正常冷却
 					retryLastMessage({ afterSwitch: true });
 					localStorage.removeItem('ws-pool-result');
 					localStorage.removeItem('ws-pool-signal');
@@ -2183,6 +2651,7 @@
 			} else if (result.type === 'switch-failed') {
 				console.log(LOG_PREFIX + '[Recovery] 切号失败: ' + (result.error || ''));
 				showRecoveryNotification(result.error || '切换失败，所有账号可能均无额度');
+				_recoveryCooldownMs = 10000;  // 恢复正常冷却
 				recordRecoveryLog({ category: 'B', error: '', action: 'switch-result', result: 'failed:' + (result.error || 'unknown') });
 				localStorage.removeItem('ws-pool-result');
 				localStorage.removeItem('ws-pool-signal');
@@ -2202,17 +2671,14 @@
 		_lastActionClickTs = Date.now();
 	}
 
-	function sendInputAndClick(text) {
+	async function sendInputAndClick(text) {
 		if (isInCooldown()) {
 			console.log(LOG_PREFIX + '[Recovery] 冷却中，跳过');
 			return false;
 		}
-		if (!setInputText(text)) return false;
+		if (!await setInputText(text)) return false;
 		markActionClick();
-		setTimeout(() => {
-			const sendBtn = findSendBtnAdvanced();
-			if (sendBtn && isVisibleAndClickable(sendBtn)) sendBtn.click();
-		}, 500);
+		setTimeout(() => trySendMessage(), 400);
 		return true;
 	}
 
@@ -2243,18 +2709,71 @@
 		}
 	}
 
-	function showRecoveryNotification(message) {
-		// 使用简单的 toast 样式通知
+	function showRecoveryNotification(message, type) {
+		if (!message) return;
+		// 自动判类型（未显式指定时）
+		if (!type) {
+			const m = String(message);
+			if (/超时|失败|错误|无可用|无备选|耗尽|未响应|gave-up/i.test(m)) type = 'error';
+			else if (/成功|已切换|已启用|完成|已就绪/i.test(m)) type = 'success';
+			else type = 'info';
+		}
+		const palette = {
+			info:    { bg: 'linear-gradient(135deg,#1e3a5f 0%,#1a2d4a 100%)', icon: '🔄' },
+			success: { bg: 'linear-gradient(135deg,#1a3d2e 0%,#162d25 100%)', icon: '✅' },
+			error:   { bg: 'linear-gradient(135deg,#3d1a1a 0%,#2d1616 100%)', icon: '⚠️' },
+		};
+		const c = palette[type] || palette.info;
+
 		let toast = document.getElementById('ws-recovery-toast');
 		if (!toast) {
 			toast = document.createElement('div');
 			toast.id = 'ws-recovery-toast';
-			toast.style.cssText = 'position:fixed;bottom:60px;right:20px;background:#1a1a2e;color:#e0e0e0;padding:8px 16px;border-radius:8px;font-size:12px;z-index:999999;border:1px solid #333;box-shadow:0 4px 12px rgba(0,0,0,0.3);transition:opacity 0.3s;';
 			document.body.appendChild(toast);
 		}
-		toast.textContent = '🔄 ' + message;
-		toast.style.opacity = '1';
-		setTimeout(() => { if (toast) toast.style.opacity = '0'; }, 5000);
+		// 重置样式
+		toast.style.cssText = [
+			'position:fixed', 'top:48px', 'right:20px',
+			'max-width:360px', 'min-width:180px',
+			'background:' + c.bg,
+			'color:#e6edf3',
+			'padding:10px 32px 10px 14px',
+			'border-radius:8px',
+			'font-size:12.5px', 'font-weight:500', 'line-height:1.4',
+			'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+			'z-index:2147483647',
+			'border:1px solid rgba(100,160,255,0.15)',
+			'box-shadow:0 4px 16px rgba(0,0,0,0.4)',
+			'transition:opacity 0.3s ease,transform 0.3s ease',
+			'display:flex', 'align-items:center', 'gap:8px',
+			'pointer-events:auto',
+			'opacity:0', 'transform:translateX(16px)',
+		].join(';');
+		setSafeHTML(toast, '<span style="font-size:14px;flex-shrink:0">' + c.icon + '</span>'
+			+ '<span style="word-break:break-word">' + String(message).replace(/[<>&]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch])) + '</span>'
+			+ '<span id="ws-toast-close" style="position:absolute;top:6px;right:8px;cursor:pointer;color:rgba(200,220,255,0.5);font-size:13px;line-height:1;padding:2px 4px;user-select:none">✕</span>');
+
+		// 滑入动画
+		requestAnimationFrame(() => {
+			toast.style.opacity = '1';
+			toast.style.transform = 'translateX(0)';
+		});
+
+		// 隐藏函数（动画结束后彻底隐藏）
+		function hideToast() {
+			if (!toast) return;
+			toast.style.opacity = '0';
+			toast.style.transform = 'translateX(16px)';
+			setTimeout(() => { if (toast) toast.style.display = 'none'; }, 350);
+		}
+
+		// 关闭按钮
+		const closeBtn = toast.querySelector('#ws-toast-close');
+		if (closeBtn) closeBtn.onclick = hideToast;
+
+		// 自动隐藏（4s）
+		clearTimeout(toast._hideTimer);
+		toast._hideTimer = setTimeout(hideToast, 4000);
 	}
 
 	// ========== 恢复日志 ==========
@@ -2296,7 +2815,7 @@
 		if (action === 'none') return;
 		if (action === 'send-continue') {
 			console.log(LOG_PREFIX + '[Recovery] 执行后续动作: 发送继续');
-			sendInputAndClick('继续');
+			sendContinueMessage();
 			return;
 		}
 		if (action === 'retry-message') {
@@ -2312,7 +2831,7 @@
 			retryBtn.click();
 		} else {
 			console.log(LOG_PREFIX + '[Recovery] auto: 发送继续');
-			sendInputAndClick('继续');
+			sendContinueMessage();
 		}
 	}
 
@@ -2320,12 +2839,22 @@
 	function checkForErrors() {
 		if (!settings.autoRecoveryEnabled) return;
 
-		const { text: errorText } = getLatestErrorText();
+		const { text: errorText, el: errorEl } = getLatestErrorText();
 		if (!errorText) return;
 
-		// 防抖：同一错误 10 秒内不重复处理
+		// 标记已处理的错误元素，防止同一 DOM 元素反复触发
+		if (errorEl) {
+			if (errorEl.dataset && errorEl.dataset._wsRecoveryHandled) return;
+			try { errorEl.dataset._wsRecoveryHandled = '1'; } catch {}
+		}
+
+		// 防抖：同一错误冷却期内不重复处理
 		const now = Date.now();
-		if (now - lastRecoveryTs < 10000) return;
+		if (now - lastRecoveryTs < _recoveryCooldownMs) return;
+
+		// 指纹去重：如果当前错误和上次触发切号的错误一样，跳过（避免 DOM 残留反复触发）
+		const fp = makeErrorFingerprint(errorText);
+		if (fp && fp === _lastSwitchFingerprint && now - _lastSwitchTs < 60000) return;
 
 		// 优先匹配自定义规则
 		const customRule = matchCustomRule(errorText);
@@ -2399,7 +2928,7 @@
 			console.log(LOG_PREFIX + '[Recovery] 达到最大重试 (' + maxRetries + ')');
 			showRecoveryNotification('已达最大重试次数 (' + maxRetries + ')');
 			recoveryRetryCount = 0;
-			_lastErrorFingerprint = '';
+			// 不清除 _lastErrorFingerprint，保留指纹防止 DOM 残留反复进入 retry 循环
 			recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'retry', result: 'gave-up' });
 			return;
 		}
@@ -2420,7 +2949,10 @@
 	function handleSwitchAccountAction(rule, ep, errorText, now, category) {
 		lastRecoveryTs = now;
 		recoveryRetryCount = 0;
-		_lastErrorFingerprint = '';
+		// 记住触发切号的错误指纹，防止 DOM 残留反复触发
+		_lastSwitchFingerprint = makeErrorFingerprint(errorText);
+		_lastSwitchTs = now;
+		_recoveryCooldownMs = 30000;  // 切号后冷却 30s
 		const signal = ep.signal || 'quota-exhausted';
 		console.log(LOG_PREFIX + '[Recovery] 切换账号，信号=' + signal);
 		recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'switch-account:' + signal, result: 'signal-sent' });
@@ -2431,7 +2963,10 @@
 	function handleSwitchModelAction(rule, ep, errorText, now, category) {
 		lastRecoveryTs = now;
 		recoveryRetryCount = 0;
-		_lastErrorFingerprint = '';
+		// 记住触发指纹，防止 DOM 残留反复触发（包括降级切号场景）
+		_lastSwitchFingerprint = makeErrorFingerprint(errorText);
+		_lastSwitchTs = now;
+		_recoveryCooldownMs = 30000;
 		const modelPriority = rule.modelPriority || settings.recoveryRules.modelErrors.modelPriority || [];
 		const afterAction = rule.afterAction || 'send-continue';
 		if (modelPriority.length === 0) {
@@ -2462,23 +2997,45 @@
 		})();
 	}
 
+	// ── 统一发送 continue 辅助函数（防重复 + 按钮提交） ──
+	async function sendContinueMessage() {
+		if (Date.now() - _lastContinueTs < 10000) return false;
+		const text = (settings.continueText && String(settings.continueText).trim()) || 'continue';
+		if (!await setInputText(text)) return false;
+		_lastContinueTs = Date.now();
+		markActionClick();
+		// 等 Lexical 状态稳定后尝试发送
+		await new Promise(r => setTimeout(r, 400));
+		const method = trySendMessage();
+		console.log(LOG_PREFIX, '[sendContinue] 尝试发送:', method);
+		// 验证：等 1.5s 检查输入框是否被清空（真正发送成功 Windsurf 会自动清空输入框）
+		await new Promise(r => setTimeout(r, 1500));
+		const el = findInputEl();
+		const remaining = (el?.textContent || '').trim();
+		if (remaining.length > 0) {
+			console.log(LOG_PREFIX, '[sendContinue] ⚠ 发送未生效（输入框仍有"' + remaining.substring(0, 20) + '"），清空残留');
+			try { if (el) { el.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } } catch {}
+			return false;
+		}
+		console.log(LOG_PREFIX, '[sendContinue] ✅ 发送成功（输入框已清空）');
+		return true;
+	}
+
 	// ── 动作: 发送继续 ──
 	function handleSendContinueAction(errorText, now, category) {
 		lastRecoveryTs = now;
-		console.log(LOG_PREFIX + '[Recovery] 自动发送 continue');
+		const text = (settings.continueText && String(settings.continueText).trim()) || 'continue';
+		console.log(LOG_PREFIX + '[Recovery] 自动发送 ' + text);
 		recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'send-continue', result: 'sent' });
-		if (setInputText('continue')) {
-			setTimeout(() => {
-				const sendBtn = findSendBtnAdvanced();
-				if (sendBtn) sendBtn.click();
-			}, 500);
-		}
+		sendContinueMessage();
 	}
 
 	let _lastContinueTs = 0;
 	function checkForContinuePrompts() {
-		if (!settings.autoSendContinue) return;
+		if (settings.continueMode !== 'smart') return;
 		if (Date.now() - _lastContinueTs < 15000) return;
+		// 避免和 checkForErrors 在同一轮双重触发
+		if (Date.now() - lastRecoveryTs < _recoveryCooldownMs) return;
 
 		// 1) 按钮文字匹配：Continue response / 继续回复（已由 autoContinue 模块处理）
 		const btns = document.querySelectorAll('button, [role="button"]');
@@ -2491,18 +3048,11 @@
 		const contPatterns = ERROR_PATTERNS.filter(p => p.category === 'continuationErrors');
 		if (contPatterns.length === 0) return;
 
-		const messageSelectors = [
-			'[class*="message"]', '[class*="Message"]',
-			'[class*="error"]', '[class*="Error"]',
-			'[class*="warning"]', '[class*="Warning"]',
-			'[class*="status"]', '[class*="notice"]',
-			'[role="alert"]', '[role="status"]',
-			'.markdown-body', '.chat-message-content',
-		];
+		const scanRoot = getScanRoot();
 		const seen = new Set();
 		const candidates = [];
-		for (const sel of messageSelectors) {
-			document.querySelectorAll(sel).forEach(el => {
+		for (const sel of CONT_MSG_SEL) {
+			scanRoot.querySelectorAll(sel).forEach(el => {
 				if (seen.has(el)) return;
 				seen.add(el);
 				candidates.push(el);
@@ -2510,28 +3060,30 @@
 		}
 		const recent = candidates.slice(-30);
 		for (const el of recent) {
-			const txt = (el.textContent || '').trim();
-			if (!txt || txt.length > 600) continue;
+			// 跳过已处理的元素
+			if (el.dataset && el.dataset._wsContHandled) continue;
+			// 用 getElementErrorText 拿原文 + 可见文，让英文 pattern 在汉化后仍生效
+			const txt = getElementErrorText(el);
+			if (!txt || txt.length > 1000) continue;
 			for (const cp of contPatterns) {
 				if (cp.pattern.test(txt)) {
-					console.log(LOG_PREFIX + '[Recovery] 工具上限/截断，自动发送 continue');
+					try { el.dataset._wsContHandled = '1'; } catch {}
+					const sendText = (settings.continueText && String(settings.continueText).trim()) || 'continue';
+					console.log(LOG_PREFIX + '[Recovery] 工具上限/截断，自动发送 ' + sendText);
 					recordRecoveryLog({ category: 'continuationErrors', error: txt.substring(0, 200), action: 'send-continue', result: 'sent' });
-					_lastContinueTs = Date.now();
-					if (setInputText('continue')) {
-						setTimeout(() => {
-							const sendBtn = findSendBtnAdvanced();
-							if (sendBtn) sendBtn.click();
-						}, 500);
-					}
+					sendContinueMessage();
 					return;
 				}
 			}
 		}
 	}
 
+	let _lastPermApprovalTs = 0;
 	function checkForPermissionApproval() {
 		const rule = getRuleForCategory('permissionRequests');
 		if (!rule || rule.action !== 'auto-allow') return;
+		// 3s 冷却，避免重复点击
+		if (Date.now() - _lastPermApprovalTs < 3000) return;
 		const scopes = rule.scope || ['web-request'];
 
 		const btns = document.querySelectorAll('button, [role="button"]');
@@ -2553,6 +3105,7 @@
 			if (scopes.includes('file-write') && (ctx.includes('file') || ctx.includes('write') || ctx.includes('create') || ctx.includes('edit') || ctx.includes('modify'))) matched = true;
 
 			if (matched) {
+				_lastPermApprovalTs = Date.now();
 				console.log(LOG_PREFIX + '[Recovery] 自动批准权限请求: ' + txt);
 				recordRecoveryLog({ category: 'permissionRequests', error: '', action: 'auto-allow', result: txt });
 				btn.click();
@@ -2669,6 +3222,126 @@
 		} catch {}
 	}
 
+	// ========== 无脑模式：AI 停止 N 秒后自动发"继续" ==========
+	let brainlessTimer = null;
+	let _brainlessLastLen = 0;
+	let _brainlessLastChangeTs = 0;
+	let _brainlessConsecutive = 0;
+	let _brainlessLastFireTs = 0;
+
+	function getLastAssistantText() {
+		// 抓最后一条 assistant 消息的文本长度作为 idle 判定依据（复用统一常量）
+		const candidates = getScanRoot().querySelectorAll(ASSISTANT_MSG_SEL);
+		const last = candidates[candidates.length - 1];
+		return last ? (last.textContent || '') : '';
+	}
+
+	// 权限按钮关键词（中英双语；汉化模式下按钮文本会被改成中文，要同时匹配两边）
+	const PERMISSION_KEYWORDS_EN = ['accept all', 'always allow', 'allow this conversation', 'approve', 'reject all', 'reject'];
+	const PERMISSION_KEYWORDS_ZH = ['全部接受', '全部拒绝', '始终允许', '允许此对话', '授权', '允许', '批准', '拒绝'];
+
+	function hasPermissionPrompt() {
+		const btns = document.querySelectorAll('button, [role="button"]');
+		for (const b of btns) {
+			// 1) 可见文本（汉化后是中文）
+			const visible = (b.textContent || '').trim();
+			const lower = visible.toLowerCase();
+			for (const kw of PERMISSION_KEYWORDS_EN) {
+				if (lower.includes(kw)) return true;
+			}
+			for (const kw of PERMISSION_KEYWORDS_ZH) {
+				if (visible.includes(kw)) return true;
+			}
+			// 2) data-ws-orig 原文（汉化前的英文，自身或子元素）
+			const selfOrig = b.getAttribute && b.getAttribute('data-ws-orig');
+			if (selfOrig) {
+				const lo = selfOrig.toLowerCase();
+				for (const kw of PERMISSION_KEYWORDS_EN) if (lo.includes(kw)) return true;
+			}
+		}
+		return false;
+	}
+
+	// AI 生成中按钮的关键词集合（精确等于匹配，避免误判）
+	const GENERATING_KEYWORDS = new Set([
+		'stop', 'cancel', 'abort',
+		'停止', '取消', '终止', '中止', '中断',
+	]);
+
+	function isAIGenerating() {
+		const btns = document.querySelectorAll('button, [role="button"]');
+		for (const b of btns) {
+			// 可见文本
+			const t = (b.textContent || '').trim().toLowerCase();
+			if (GENERATING_KEYWORDS.has(t)) return true;
+			// data-ws-orig 原文（汉化场景）
+			const orig = b.getAttribute && b.getAttribute('data-ws-orig');
+			if (orig && GENERATING_KEYWORDS.has(orig.trim().toLowerCase())) return true;
+		}
+		return false;
+	}
+
+	function fireBrainlessContinue() {
+		const now = Date.now();
+		// 全局冷却 5s，避免和其他自动操作打架
+		if (now - _brainlessLastFireTs < 5000) return;
+		if (typeof isInCooldown === 'function' && isInCooldown()) return;
+		// 防止无限循环：如果输入框已有文本（上次发送失败残留），先清空再说
+		const existingInput = findInputEl();
+		if (existingInput && (existingInput.textContent || '').trim().length > 0) {
+			console.log(LOG_PREFIX + '[Brainless] 输入框已有文本"' + existingInput.textContent.trim().substring(0, 20) + '"，跳过（上次可能发送失败）');
+			// 清空残留
+			try { existingInput.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch {}
+			return;
+		}
+		if (settings.brainlessSkipPermission && hasPermissionPrompt()) {
+			console.log(LOG_PREFIX + '[Brainless] 检测到权限提示，跳过');
+			return;
+		}
+		if (_brainlessConsecutive >= (settings.brainlessMaxConsecutive || 3)) {
+			console.log(LOG_PREFIX + '[Brainless] 已达连续触发上限 ' + _brainlessConsecutive + '，停止');
+			return;
+		}
+		_brainlessLastFireTs = now;
+		_brainlessConsecutive++;
+		const text = (settings.continueText && String(settings.continueText).trim()) || 'continue';
+		console.log(LOG_PREFIX + '[Brainless] 🤖 自动发送"' + text + '" (#' + _brainlessConsecutive + ')');
+		try {
+			sendContinueMessage();
+		} catch (e) {
+			console.warn(LOG_PREFIX + '[Brainless] 发送失败:', e);
+		}
+	}
+
+	function startBrainlessMode() {
+		if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }
+		if (settings.continueMode !== 'brainless') return;
+		console.log(LOG_PREFIX + '[Brainless] ✅已启用，idle=' + (settings.brainlessIdleSeconds || 8) + 's');
+		_brainlessLastLen = (getLastAssistantText() || '').length;
+		_brainlessLastChangeTs = Date.now();
+		brainlessTimer = setInterval(() => {
+			if (settings.continueMode !== 'brainless') return;
+			// AI 正在生成 → 重置计时器
+			if (isAIGenerating()) {
+				_brainlessLastChangeTs = Date.now();
+				_brainlessConsecutive = 0;  // 用户/AI 有动作 → 重置连续计数
+				return;
+			}
+			const text = getLastAssistantText();
+			if (text.length !== _brainlessLastLen) {
+				_brainlessLastLen = text.length;
+				_brainlessLastChangeTs = Date.now();
+				return;
+			}
+			// 内容不变 + 不在生成 → 检查 idle 时长
+			const idleMs = (settings.brainlessIdleSeconds || 8) * 1000;
+			if (Date.now() - _brainlessLastChangeTs >= idleMs) {
+				fireBrainlessContinue();
+				_brainlessLastChangeTs = Date.now();  // 触发后重置，避免连续狂发
+			}
+		}, 2000);
+	}
+
 	let notifyObserver = null;
 	let _lastAssistantCount = 0;
 	let _wasGenerating = false;
@@ -2678,7 +3351,7 @@
 		if (!settings.notifyEnabled) return;
 
 		// 初始计数
-		_lastAssistantCount = document.querySelectorAll('[data-role="assistant"], .assistant-message, [class*="assistantMessage"]').length;
+		_lastAssistantCount = getScanRoot().querySelectorAll(ASSISTANT_MSG_SEL).length;
 		_wasGenerating = false;
 
 		let debounceTimer = null;
@@ -2742,7 +3415,7 @@
 		
 		_wasGenerating = generating;
 		// 更新助手消息计数
-		_lastAssistantCount = document.querySelectorAll('[data-role="assistant"], .assistant-message, [class*="assistantMessage"]').length;
+		_lastAssistantCount = getScanRoot().querySelectorAll(ASSISTANT_MSG_SEL).length;
 	}
 
 	function shouldTriggerNotify() {
@@ -2764,29 +3437,150 @@
 		}
 	}
 	
+	// ========== 桥（Bridge HTTP Client）==========
+	// 替代旧的 localStorage 跨 origin 通信（不工作）。扩展宿主起 localhost HTTP server
+	// 端口和 token 通过 __WS_BETTER_INJECTED_SETTINGS__.__bridgePort/__bridgeToken 传入
+	function getBridgeUrl() {
+		const port = settings.__bridgePort;
+		if (!port) return null;
+		return 'http://127.0.0.1:' + port;
+	}
+	function getBridgeHeaders() {
+		return {
+			'Content-Type': 'application/json',
+			'X-Bridge-Token': settings.__bridgeToken || '',
+		};
+	}
+	async function bridgePostResult(payload) {
+		const base = getBridgeUrl();
+		if (!base) return;
+		try {
+			const ctrl = new AbortController();
+			const tid = setTimeout(() => ctrl.abort(), 5000);
+			await fetch(base + '/result', {
+				method: 'POST',
+				headers: getBridgeHeaders(),
+				body: JSON.stringify(payload),
+				signal: ctrl.signal,
+			});
+			clearTimeout(tid);
+		} catch (e) {
+			if (e.name !== 'AbortError') console.warn(LOG_PREFIX + '[bridge] POST /result failed:', e);
+		}
+	}
+	async function bridgePoll() {
+		const base = getBridgeUrl();
+		if (!base) return [];
+		try {
+			const ctrl = new AbortController();
+			const tid = setTimeout(() => ctrl.abort(), 5000);
+			const res = await fetch(base + '/pending', { method: 'GET', headers: getBridgeHeaders(), signal: ctrl.signal });
+			clearTimeout(tid);
+			if (!res.ok) return [];
+			return await res.json();
+		} catch (e) {
+			return [];
+		}
+	}
+	let _bridgePollTimer = null;
+	async function _waitBridgeReady() {
+		const base = getBridgeUrl();
+		if (!base) return false;
+		// 间隔 1s 探测，最多 30 次（30s）。fetch 失败浏览器会打 ERR_CONNECTION_REFUSED，
+		// 但相比每 500ms 失败一次，频率减半且更短促。
+		for (let i = 0; i < 30; i++) {
+			try {
+				const res = await fetch(base + '/ping', { method: 'GET', headers: getBridgeHeaders() });
+				if (res.ok) return true;
+			} catch {}
+			await new Promise(r => setTimeout(r, 1000));
+		}
+		return false;
+	}
+	async function startBridgePolling() {
+		if (_bridgePollTimer) return;
+		if (!getBridgeUrl()) {
+			console.log(LOG_PREFIX + '[bridge] 未配置端口，跳过轮询');
+			return;
+		}
+		const ready = await _waitBridgeReady();
+		if (!ready) {
+			console.warn(LOG_PREFIX + '[bridge] 等待 bridge 超时，仍开始轮询');
+		} else {
+			console.log(LOG_PREFIX + '[bridge] ✅就绪，启动命令轮询');
+		}
+		const tick = async () => {
+			const pending = await bridgePoll();
+			for (const cmd of pending) {
+				try { await handleSidebarCommand(cmd); } catch (e) { console.warn(LOG_PREFIX + '[bridge] handle err:', e); }
+			}
+		};
+		_bridgePollTimer = setInterval(tick, 500);
+		tick();
+	}
+
 	// ========== 侧栏命令处理 ==========
 	async function handleSidebarCommand(cmd) {
+		// webview 通过 sendCommand(action, extra) 发命令时把参数包在 payload 里
+		// 为了兼容历史代码（直接读 cmd.model / cmd.text 等），统一在入口平铺到顶层
+		if (cmd && cmd.payload && typeof cmd.payload === 'object') {
+			for (const k in cmd.payload) {
+				if (!(k in cmd)) cmd[k] = cmd.payload[k];
+			}
+		}
+		console.log(LOG_PREFIX + '[cmd] 收到 action=' + cmd.action + ' id=' + cmd.id);
 		const respond = (result) => {
-			localStorage.setItem('ws-better-command-result', JSON.stringify({
+			console.log(LOG_PREFIX + '[cmd] 响应 action=' + cmd.action + ' id=' + cmd.id + ' status=' + result.status);
+			bridgePostResult({
 				id: cmd.id, action: cmd.action, ts: Date.now(), ...result
-			}));
+			});
 		};
 
 		switch (cmd.action) {
+			case 'pool-result': {
+				// 反向命令：扩展宿主切号结果回传 → 写 localStorage 让 checkForPoolResult 处理
+				try {
+					if (cmd.payload) {
+						localStorage.setItem('ws-pool-result', JSON.stringify(cmd.payload));
+						console.log(LOG_PREFIX + '[Recovery] 收到 bridge 切号结果: ' + cmd.payload.type);
+					}
+				} catch {}
+				break;
+			}
+			case 'apply-settings': {
+				// 反向命令：侧栏 webview 改设置后实时推送过来，避免 reload
+				try {
+					if (cmd.payload && typeof cmd.payload === 'object') {
+						applySettingsChange(cmd.payload, '[bridge apply-settings]');
+					}
+				} catch (err) {
+					console.warn(LOG_PREFIX + '[apply-settings] 失败:', err);
+				}
+				break;
+			}
 			case 'fetch-models': {
 				respond({ status: 'running' });
-				const models = await getAvailableModels();
-				const current = getCurrentModelName();
-				respond({ status: 'done', models, currentModel: current });
+				try {
+					const panelOpened = cmd.payload && cmd.payload._panelOpened;
+					const models = await getAvailableModels(panelOpened);
+					const current = getCurrentModelName();
+					respond({ status: 'done', models, currentModel: current });
+				} catch (err) {
+					respond({ status: 'error', message: '获取模型失败: ' + (err.message || err) });
+				}
 				break;
 			}
 			case 'test-switch-model': {
 				const target = cmd.model;
 				if (!target) { respond({ status: 'error', message: '未指定模型' }); return; }
 				respond({ status: 'running', message: '正在切换到 ' + target + '...' });
-				const ok = await switchModel(target);
-				const newModel = getCurrentModelName();
-				respond({ status: ok ? 'done' : 'error', message: ok ? '已切换到 ' + (newModel || target) : '切换失败: ' + target, newModel });
+				try {
+					const ok = await switchModel(target);
+					const newModel = getCurrentModelName();
+					respond({ status: ok ? 'done' : 'error', message: ok ? '已切换到 ' + (newModel || target) : '切换失败: ' + target, newModel });
+				} catch (err) {
+					respond({ status: 'error', message: '切换异常: ' + (err.message || err) });
+				}
 				break;
 			}
 			case 'test-retry': {
@@ -2800,14 +3594,26 @@
 				break;
 			}
 			case 'test-send-continue': {
-				if (setInputText('continue')) {
-					setTimeout(() => {
-						const sendBtn = findSendBtnAdvanced();
-						if (sendBtn) sendBtn.click();
-					}, 500);
-					respond({ status: 'done', message: '已发送 continue' });
-				} else {
+				const text = (cmd.text && String(cmd.text).trim()) || (settings.continueText && String(settings.continueText).trim()) || 'continue';
+				console.log(LOG_PREFIX, '[test-send] 开始, text:', text);
+				if (!await setInputText(text)) {
 					respond({ status: 'error', message: '未找到输入框' });
+					break;
+				}
+				console.log(LOG_PREFIX, '[test-send] setInputText 成功, 内容:', (findInputEl()?.textContent || '').substring(0, 50));
+				markActionClick();
+				await new Promise(r => setTimeout(r, 200));
+				const method = trySendMessage();
+				console.log(LOG_PREFIX, '[test-send] 发送方式:', method);
+				if (method) {
+					respond({ status: 'done', message: '已发送(' + method + '): ' + text });
+				} else {
+					// 发送失败，清空输入框防止残留
+					try {
+						const el = findInputEl();
+						if (el) { el.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); }
+					} catch {}
+					respond({ status: 'error', message: '所有发送方式均失败' });
 				}
 				break;
 			}
@@ -2838,9 +3644,18 @@
 		// Settings UI moved to sidebar panel; only inject styles for bubbles
 		injectBubblesStyles();
 		dismissCorruptWarning();
-		if (settings.autoContinueEnabled) startAutoContinue();
+		startBridgePolling();
+		if (settings.continueMode === 'smart') startAutoContinue();
 		if (settings.autoRecoveryEnabled) startAutoRecovery();
 		if (settings.notifyEnabled) startNotifyObserver();
+		// brainless 模式不在 init 自动启动——必须由用户显式点击「开始运行」触发
+		// 重启后 continueMode 应为 'smart'，不会走到 brainless 分支
+		if (settings.continueMode === 'brainless') {
+			console.log(LOG_PREFIX + '[Brainless] 检测到残留 brainless 状态，重置为 smart（需手动启动长任务）');
+			settings.continueMode = 'smart';
+			saveSettings(settings);
+			startAutoContinue();
+		}
 		
 		// 启动回复建议提示
 		if (settings.bubblesEnabled) {
@@ -2873,58 +3688,90 @@
 			logLocalization('✅汉化已启用');
 		}
 
-		// 监听命令（从侧栏发来的测试/操作命令）
+		// 统一 storage 事件监听（合并命令分发 + 设置同步，减少调度开销）
 		window.addEventListener('storage', (e) => {
-			if (e.key !== 'ws-better-command') return;
-			try {
-				const cmd = JSON.parse(e.newValue);
-				if (!cmd || !cmd.action) return;
-				console.log(LOG_PREFIX + '[Command] 收到命令: ' + cmd.action);
-				handleSidebarCommand(cmd);
-			} catch {}
-		});
-
-		// 监听 localStorage 变化（侧栏设置面板同步）
-		window.addEventListener('storage', (e) => {
+			// 1) 来自侧栏的命令
+			if (e.key === 'ws-better-command') {
+				try {
+					const cmd = JSON.parse(e.newValue);
+					if (!cmd || !cmd.action) return;
+					console.log(LOG_PREFIX + '[Command] 收到命令: ' + cmd.action);
+					handleSidebarCommand(cmd);
+				} catch {}
+				return;
+			}
+			// 2) 设置面板同步（storage event 路径，跨 origin 不可达；保留作为同源 fallback）
 			if (e.key !== STORAGE_KEY) return;
 			const newSettings = loadSettings();
-			const old = { ...settings };
-			Object.assign(settings, newSettings);
-			// 响应回复建议开关变化
-			if (old.bubblesEnabled !== settings.bubblesEnabled) {
-				if (settings.bubblesEnabled) startBubblesObserving();
-				else if (bubblesObserver) { bubblesObserver.disconnect(); bubblesObserver = null; }
-			}
-			// 响应汉化开关变化
-			if (old.localizationEnabled !== settings.localizationEnabled) {
-				if (settings.localizationEnabled) { startLocalizationObserver(); enqueue(document.body); }
-				else if (localizationObserver) { localizationObserver.disconnect(); localizationObserver = null; }
-			}
-			// 响应自动继续开关变化
-			if (old.autoContinueEnabled !== settings.autoContinueEnabled) {
-				if (settings.autoContinueEnabled) startAutoContinue();
-				else if (autoContinueObserver) { autoContinueObserver.disconnect(); autoContinueObserver = null; }
-			}
-			// 响应关闭损坏通知开关变化
-			if (old.dismissCorruptEnabled !== settings.dismissCorruptEnabled) {
-				if (settings.dismissCorruptEnabled) dismissCorruptWarning();
-				else if (dismissCorruptObserver) { dismissCorruptObserver.disconnect(); dismissCorruptObserver = null; }
-			}
-			// 响应自动恢复开关变化
-			if (old.autoRecoveryEnabled !== settings.autoRecoveryEnabled) {
-				if (settings.autoRecoveryEnabled) startAutoRecovery();
-				else {
-					if (recoveryObserver) { recoveryObserver.disconnect(); recoveryObserver = null; }
-					if (recoveryPollTimer) { clearInterval(recoveryPollTimer); recoveryPollTimer = null; }
-				}
-			}
-			// 响应完成提醒开关变化
-			if (old.notifyEnabled !== settings.notifyEnabled) {
-				if (settings.notifyEnabled) startNotifyObserver();
-				else if (notifyObserver) { notifyObserver.disconnect(); notifyObserver = null; }
-			}
-			console.log(LOG_PREFIX + ' 设置已从侧栏同步');
+			applySettingsChange(newSettings, '[storage event]');
 		});
+	}
+
+	/**
+	 * 实时应用设置变更：合并新设置 + 启停各模块的 observer
+	 * 调用源：
+	 *   1) storage event（同源 fallback）
+	 *   2) bridge 'apply-settings' 命令（侧栏 webview 改设置 → 跨 origin 推送）
+	 */
+	function applySettingsChange(newSettings, source) {
+		if (!newSettings || typeof newSettings !== 'object') return;
+		const old = { ...settings };
+		Object.assign(settings, newSettings);
+		// 持久化到本地 localStorage（保证下次加载快速读到）
+		try { saveSettings(settings); } catch {}
+
+		// 响应回复建议开关变化
+		if (old.bubblesEnabled !== settings.bubblesEnabled) {
+			if (settings.bubblesEnabled) startBubblesObserving();
+			else if (bubblesObserver) { bubblesObserver.disconnect(); bubblesObserver = null; }
+		}
+		// 响应回复建议主题/形状变化：对所有现存 bubbles 重应用 inline style（CSS 是静态的，无需重注入）
+		if (old.bubblesTheme !== settings.bubblesTheme || old.bubblesShape !== settings.bubblesShape) {
+			try { restyleAllBubbles(); } catch (err) { console.warn(LOG_PREFIX + '[Bubbles] restyle 失败:', err); }
+		}
+		// 响应汉化开关变化（实时还原 / 重新翻译）
+		if (old.localizationEnabled !== settings.localizationEnabled) {
+			if (settings.localizationEnabled) {
+				startLocalizationObserver();
+				enqueue(document.body);
+			} else {
+				if (localizationObserver) { localizationObserver.disconnect(); localizationObserver = null; }
+				try { revertLocalization(); } catch (err) { console.warn(LOG_PREFIX + '[Localization] 还原失败:', err); }
+			}
+		}
+		// 响应自动继续模式变化
+		if (old.continueMode !== settings.continueMode) {
+			// 停止旧模式
+			if (autoContinueObserver) { autoContinueObserver.disconnect(); autoContinueObserver = null; }
+			if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }
+			// 启动新模式
+			if (settings.continueMode === 'smart') startAutoContinue();
+			else if (settings.continueMode === 'brainless') startBrainlessMode();
+		}
+		// 响应关闭损坏通知开关变化
+		if (old.dismissCorruptEnabled !== settings.dismissCorruptEnabled) {
+			if (settings.dismissCorruptEnabled) dismissCorruptWarning();
+			else if (dismissCorruptObserver) { dismissCorruptObserver.disconnect(); dismissCorruptObserver = null; }
+		}
+		// 响应自动恢复开关变化
+		if (old.autoRecoveryEnabled !== settings.autoRecoveryEnabled) {
+			if (settings.autoRecoveryEnabled) startAutoRecovery();
+			else {
+				if (recoveryObserver) { recoveryObserver.disconnect(); recoveryObserver = null; }
+				if (recoveryPollTimer) { clearInterval(recoveryPollTimer); recoveryPollTimer = null; }
+			}
+		}
+		// 响应完成提醒开关变化
+		if (old.notifyEnabled !== settings.notifyEnabled) {
+			if (settings.notifyEnabled) startNotifyObserver();
+			else if (notifyObserver) { notifyObserver.disconnect(); notifyObserver = null; }
+		}
+		// 响应无脑模式参数变化（模式切换已在上方处理）
+		if (settings.continueMode === 'brainless' && old.brainlessIdleSeconds !== settings.brainlessIdleSeconds) {
+			startBrainlessMode();
+		}
+		// recoveryRules / customRecoveryRules / 其他纯数据字段：直接 Object.assign 后即生效，无需启停
+		console.log(LOG_PREFIX + ' 设置已实时应用 ' + (source || ''));
 	}
 	
 	if (document.readyState === 'loading') {

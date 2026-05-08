@@ -6,7 +6,7 @@ Windsurf 无感换号：在编辑器侧栏内集中管理多个账号，一键�
 
 ## 功能特性
 
-- **多账号管理**：邮箱密码登录、批量导入（文本 / JSON）、从当前已登录账户一键导入（依赖补丁注入命令，无需密码）。
+- **多账号管理**：邮箱密码登录、批量导入（文本 / JSON / Devin Token）、从当前已登录账户一键导入（依赖补丁注入命令，无需密码）。
 - **实时配额显示**：每日 / 每周配额百分比、重置倒计时、Flex 余额、会员计划与到期日。
 - **号池汇总**：总账号数、本日 / 本周配额总量与百分比一目了然；无数据时显示占位，不隐藏面板。
 - **一键切换**：保留当前会话的前提下注入目标账号 Session，无需重启 Windsurf。
@@ -111,6 +111,145 @@ npm run package      # 生成 vsix
 按 `F5` 启动扩展开发宿主进行调试。
 
 ## 更新日志
+
+### v5.0.0
+- **Devin Token 批量导入**：新增「Devin Token」导入格式，支持粘贴 `devin-session-token$` 或纯 JWT（自动补前缀），自动去重、标签分组。
+- **自动继续面板 UI 统一**：「自动继续」与「自动切号」面板头部样式统一（图标颜色、折叠箭头位置、开关样式），使用 `as-top-*` 系列 class，移除冗余的 `ac-summary` / `ac-icon-box` 等旧样式。
+- **🔴 修复重启自动发「继续」**：插件重启后不再自动进入长任务（brainless）模式发送继续消息。根因是 `collectEnhSettings()` 在长任务 tab 选中时总返回 `continueMode: 'brainless'`，持久化后重启即触发。
+  - `collectEnhSettings()` 现在只在长任务实际运行时（`_ltRunning === true`）才返回 `brainless`，否则始终为 `smart`。
+  - 长任务控制按钮改为通过 `saveLtMode()` 直接推送 `continueMode` 变更，走 `enhSave` → bridge `apply-settings` 正规链路（原 `bridgeCommand` 消息类型在后端未处理，从未生效）。
+  - `init()` 增加安全检查：检测到残留 `brainless` 状态时自动重置为 `smart` 并保存。
+  - 显式写入 `brainlessModeEnabled: false` 清除旧字段，防止 `loadSettings` 迁移逻辑重新激活。
+- **修复暂停后设置变更意外恢复 brainless**：暂停时未重置 `_ltRunning` 标志，导致修改其他设置时 `collectEnhSettings()` 仍返回 `brainless`。现在暂停/恢复正确切换 `_ltRunning` 状态。
+- **清理 ~200 行死代码**：移除已迁移至侧栏的旧浮动设置面板（`injectPanelStyles` + `createSettingsUI`），减小 VSIX 体积。
+- **🔴 修复切号选中不可用账号**：新增硬约束——候选账号日/周任一维度 ≤1% 时绝对不选（不受 `minQuota` 配置值影响）。修复 `scoreMode=daily` 时可能选中「周 0% 日 100%」等实际不可用账号的问题。
+- **切号策略默认值调整**：默认策略从「最低非零优先」改为「满额度优先」。
+- **批量导入选项居中修复**：radio 按钮改用 `padding` + `min-height` + `line-height: normal` 替代固定 `height` + `line-height: 1`，修复中文字符垂直不居中问题。
+
+### v4.20.2
+- **修复 `injectBubblesStyles` 冗余 DOM 操作**：`document.head.appendChild(style)` 在 `if (!style)` 块外无条件执行，每次调用都会多一次 DOM move。已移除。
+- **优化 `applySettingsChange`**：主题/形状变化时不再调 `injectBubblesStyles()`（CSS 是静态的），只调 `restyleAllBubbles()` 即可。
+- **修复 `getInjectionStatus` 正则**：旧正则 `[\d.]+` 无法匹配新版本格式 `1.0.0-a1b2c3d4e5`（含 hash 后缀），导致状态面板始终显示未注入。
+- **Bridge fetch 超时保护**：`bridgePoll` 和 `bridgePostResult` 添加 5s `AbortController` 超时，防止 bridge server 无响应时 fetch 挂起阻塞轮询。
+
+### v4.20.1
+- **审查发现 v4.20.0 的气泡主题切换实际是 noop**：根因是 `injectBubblesStyles` 函数有 `if (document.getElementById('ws-bubbles-css')) return` 早返回，**重复调用直接跳过**。而且主题颜色其实不写在 CSS 里，是渲染时用 inline style 应用的——已存在的气泡 inline style 已固化，CSS 重注入也无济于事。
+- **修复**：
+  - 让 `injectBubblesStyles` 改为**幂等**（已存在 `<style>` 元素时复用并更新 textContent）
+  - 抽出 `applyBubbleStyle(wrapper)` 函数（原嵌在 createBubble 内的主题/形状逻辑），便于复用
+  - 新增 `restyleAllBubbles()`：遍历所有 `.ws-bubbles` 容器对每个调用 `applyBubbleStyle`
+  - `applySettingsChange` 检测到 `bubblesTheme` 或 `bubblesShape` 变化时调 `restyleAllBubbles`
+  - emerald 主题 → 清掉 inline override 让 CSS 默认生效；其他主题 → inline style 覆盖
+  - hover 行为运行时读 `settings.bubblesTheme`，避免重复绑定 listener，主题切换 hover 也跟着变
+- **影响**：现在改气泡主题/形状**真正实时**对所有现存气泡生效，符合 v4.20.0 README 的承诺。
+
+### v4.20.0 ✨ 改设置一律实时生效，无需重启
+- **新增 `apply-settings` 反向桥命令**：侧栏 webview 改设置 → `enhSave` → 扩展宿主写盘 + `enqueueCommand({action:'apply-settings', payload:merged})` → windsurf-better.js 通过 `GET /pending` 取走 → 直接调 `applySettingsChange`，启停各模块的 observer。
+- **抽出 `applySettingsChange(newSettings, source)`**：原来散在 storage event handler 里的开关同步逻辑（启停 bubbles / 汉化 / autoContinue / dismissCorrupt / autoRecovery / notify / brainless）抽成统一函数，supports：
+  - 来源 1：bridge `apply-settings` 命令（跨 origin，主流程）
+  - 来源 2：storage event（同源 fallback）
+- **额外覆盖**：`bubblesTheme` / `bubblesShape` 改变时重注入 CSS（之前没处理，需要 reload）；`recoveryRules` / `customRecoveryRules` 等纯数据字段直接 Object.assign 即生效。
+- **banner 改成绿色"已实时应用"**（取代原来的"重启 Windsurf 后生效"），3.5s 自动消失，附保留「重启窗口」小链接以防万一。
+- **影响**：从 v4.20.0 起 **侧栏所有增强设置改完即时生效**：
+  - 切换汉化开关 → UI 立即变中/英文（v4.19.2 + v4.20.0 联动）
+  - 切换无脑模式 / 自动恢复 / 自动继续 → observer 立即启停
+  - 改气泡主题 → 立刻看到新颜色，无需 reload
+  - 修改恢复规则 → 下次错误检测立即用新规则
+
+### v4.19.2
+- **汉化支持实时关闭**：之前关闭汉化只能停止"新内容翻译"，已翻译的中文必须 Reload Window 才能恢复英文。本版顺势利用 v4.19.0 加的原文记录机制实现真正的实时还原。
+  - 翻译 textNode 时同时把原文存到 `WeakMap`（键是 textNode 本身，关闭时遍历整个 document 精确还原，不阻止 GC）
+  - 翻译 attribute 时把原值存到 `data-ws-orig-<attr>` 属性（aria-label/title/placeholder/data-tooltip 都覆盖）
+  - 关闭汉化时一次性扫描全文档：还原所有 textNode + 还原 attribute + 清理 `data-ws-orig` 标记
+- **影响**：在侧栏勾掉「启用汉化」**立即看到英文 UI**，无需重启或 reload window。
+
+### v4.19.1
+- **审查发现 v4.19.0 漏修的 2 个相邻汉化兼容点**：
+  - **`hasPermissionPrompt` 漏检中文权限按钮**：之前只检查 `accept all / approve / reject / 授权 / 允许`，但 TRANSLATIONS 把 "Accept all"/"Reject all" 翻译成了 "全部接受/全部拒绝"，关键字根本不命中。**后果**：开启无脑模式时，权限提示出现 → `hasPermissionPrompt` 返回 false → **仍会自动发送"继续"误干扰用户决策**。
+  - **`isAIGenerating` 漏检中文同义词**：只匹配 `stop / 停止 / cancel / abort`，不识别 "取消 / 终止 / 中止 / 中断"。**后果**：AI 生成中按钮显示 "取消" → 误判 AI 已停止 → 无脑模式提前发"继续"干扰当前生成。
+- **修复**：两个函数都改用「双语关键词集合 + `data-ws-orig` 原文兜底」的统一模式，与 v4.19.0 的 ERROR_PATTERNS 修复同套机制。
+
+### v4.19.0 ⚠️ 重要：解决「汉化导致自动恢复失效」
+- **🔴 修复汉化与错误识别的冲突**：你的猜测对的——汉化把 DOM 文本（如 `Model provider unreachable` → `模型提供商不可达`）原地替换，但 `ERROR_PATTERNS` 30+ 条几乎全是英文正则，**汉化开启时（默认开）几乎所有自动恢复模式都匹配不到**：
+  - 配额耗尽自动切号 ❌（`/usage quota is exhausted/i` 不匹配中文 "配额已用完"）
+  - 模型提供商故障自动切模型 ❌（`/Model provider unreachable/i` 不匹配 "模型提供商不可达"）
+  - 网络超时自动重试 ❌（同样问题）
+  - 工具调用上限自动发 continue ❌（`/tool call limit reached/i` 不匹配中文）
+- **修复方案**：汉化时把原文存到父元素 `data-ws-orig` 属性，错误检测函数 `getLatestErrorText` / 续接扫描读元素文本时**拼接 `data-ws-orig` + 可见文本**，英文正则在原文上匹配，中文正则也能匹配可见文本，**两种语言共存**。
+- **影响**：开启汉化的用户现在自动恢复终于真正生效；之前以为"自动恢复有问题"的多个症状其实都是这个 bug 引起的。
+- **`autoContinue` 是个例外**：它本来就同时检查 `'Continue response'` 和 `'继续回复'` 两种文本，所以一直工作。其他 30+ 条只有少数加了中文 pattern 兼容。
+
+### v4.18.1
+- **「未检测到可用模型」修复**：模型选择器按钮 + 下拉面板的 selector 完全不够覆盖 Windsurf 实际 DOM。改进：
+  - `findModelSelectorBtn` 增加到 4 层 fallback：aria-label / data-testid / class 含 `model+select` / **全文档扫描可点击元素文本匹配模型名前缀**（最稳）
+  - 加 `[role="combobox"]` / `[aria-haspopup="listbox"|menu|true]` 覆盖更多自定义下拉
+  - 选最短匹配（避免选到含 "claude" 字样的长按钮，如"Claude API 设置"等）
+- **新增 `scanPageForModelNames` 全文档兜底**：`getAvailableModels` 在"找不到按钮"或"面板没出现"两种失败路径都会触发兜底扫描，直接从页面已渲染的按钮 / 列表项中抓符合模型名前缀的文本
+- **详细调试日志**：每一步都打到 console，按 F12 → Console 可以看到具体卡在哪一步：
+  - `[ModelSwitch] 找到选择器按钮: <文本>`
+  - `[ModelSwitch] 模型下拉面板未出现，尝试全页面扫描`
+  - `[ModelSwitch] 全页面扫描得到 N 个候选模型`
+
+### v4.18.0 ⚠️ 重要：解决「装了新版没生效」问题
+- **🔴 根因修复：注入触发机制**：之前 `enhancementInjector` 通过读取 `windsurf-better.js` 里的 `const VERSION = 'X.Y.Z'` 常量决定是否要重新注入。每次改脚本都要手动递增 VERSION，**多次遗漏导致用户装了新 vsix 但 workbench.html 仍嵌着旧版脚本**——这就是为什么 v4.17.1 / v4.17.2 / v4.17.3 的修复（通知样式 / payload 解包 / DOM fallback / CSS）很多用户实际装上后**根本没生效**。
+  - **修复**：`getPatchVersion()` 改用脚本内容的 SHA1 前 10 位作为版本标识。**内容变 hash 必变 → 自动触发重注入**，不再依赖人为维护版本号。
+  - **影响**：装了 4.18.0 后，今后所有 windsurf-better.js 修改都会被正确注入；同时**之前几个 patch 版本累积的修复也会一并生效**：
+    - 通知改到右上角 + 渐变色条样式
+    - 切号失败修复（pool-signal 走桥）
+    - "未指定模型" 修复（payload 解包）
+    - DOM 选择器多层 fallback
+    - 数字输入框正常显示
+
+### v4.17.3
+- **修复数字输入框显示空白**：`<input type="number" class="enhance-select">` 被 `.enhance-select` 的 select 样式覆盖（`appearance:none` + 自定义下拉箭头 SVG + 24px 右 padding），导致 48px 宽的小输入框只剩 16px 显示空间，数字被挤出可见区。
+  - **修复**：CSS 加针对 `input[type="number"].enhance-select` 和 `input[type="text"].enhance-select` 的特化规则，移除下拉箭头 SVG、改用原生 spinner、收窄 padding。
+  - **影响**：「自动恢复」面板的「最大重试」「延迟」「无脑模式空闲秒数 / 连发上限」等所有数字输入框现在能正常显示。
+
+### v4.17.2
+- **🔴 修复"未指定模型"等参数丢失问题**：webview `sendCommand(action, extra)` 把参数包进 `payload` 字段，但 windsurf-better.js 直接读 `cmd.model` / `cmd.text` 等顶层字段，导致**所有带参数的测试命令拿不到数据**（最明显："测试切换模型"必报"未指定模型"）。修复：`handleSidebarCommand` 入口统一把 `cmd.payload.*` 平铺到 `cmd.*`，兼容平铺写法。
+- **DOM 选择器多层 fallback**：原来 `findModelSelectorBtn` 只匹配 `aria-label*="Model Selector"`，Windsurf 实际 DOM 不一定有这个 aria-label。新增三层 fallback：
+  1. `aria-label`（原匹配）
+  2. **按钮文本是已知模型名前缀**（claude- / gpt- / o1 / gemini / sonnet / haiku / opus 等）
+  3. `data-testid` 含 "model"
+- **影响**：`获取可用模型列表`、`当前模型`、`测试切换模型` 在 Windsurf 实际 UI 下应能正确工作（之前都因选择器不匹配而失败）。
+- **审查教训**：之前几次"代码审查"只看了流程没真测端到端字段，已记录在反馈里。
+
+### v4.17.1
+- **🔴 修复切号失败"切号超时，扩展可能未响应"**：根因是 `sendPoolSignal` 仍走 `localStorage` 跨 origin 路径（vscode-file:// → vscode-webview:// 不通），signalBridge 永远收不到信号。
+  - **修复**：`sendPoolSignal` 改用 HTTP 桥发起切号请求；`sidebarProvider.onBridgeResult` 识别 `type='pool-signal'` 后调 `autoSwitcher.forceSwitch`，结果通过 `enqueueCommand({action:'pool-result'})` 反向回传，windsurf-better.js 的 `handleSidebarCommand` 加 `pool-result` case 写回 localStorage 触发原处理逻辑。
+  - **影响**：自动恢复中"额度耗尽切号 / 限流切号 / 模型不可用降级切号"等所有切号路径**真正可用**了。
+- **通知样式优化**：
+  - 位置从底部 → **右上角**（更符合常规 toast 习惯，不被聊天框挡住）
+  - 渐变背景 + 类型化左侧色条（蓝=info / 绿=success / 红=error）
+  - 自动判类型：根据消息内容关键词自动选色（"成功/已切换"→绿，"超时/失败/错误"→红）
+  - 滑入动画 + 模糊背板 + 关闭按钮 ×
+  - 防 XSS：消息文本 HTML 转义
+
+### v4.17.0
+- **桥服务器健壮性修复**（基于 v4.16.0 的多轮审查发现）：
+  - **端口/Token 持久化复用**：扩展宿主启动桥时优先复用上次的 port/token（保存在 `enh-settings.json`），让 windsurf-better.js 嵌入的旧值仍能匹配；端口被占自动 fallback 到 OS 分配。**修复每次 Windsurf 启动都需要 reload 才能用桥功能的问题**。
+  - **fallback 路径修复**：旧实现 EADDRINUSE 时 `listen(0)` 没传回调，导致 Promise 永远 pending、新端口不会写入 enh-settings。改用 `'listening'` 事件统一处理首次 listen 和 fallback 两种情况。
+  - **CORS preflight 缓存**：`Access-Control-Max-Age: 86400`，避免 windsurf-better.js 每秒 `GET /pending` 都触发 OPTIONS 预检。
+  - **增强未启用时跳过桥**：`windsurfPool.enhancement.enabled = false` 时不启动 HTTP server，节省一个端口。
+- **首次安装体验**：首次激活会弹一次「立即重启」提示（因为桥端口要嵌入 workbench.html），重启后所有功能即时可用；后续启动端口稳定不再弹。
+
+### v4.16.0
+- **HTTP 桥（`bridgeServer.ts`）**：解决侧栏 webview 与 workbench 注入脚本因 origin 隔离导致的所有跨向通信失效问题。
+  - **问题根因**：旧实现用 `localStorage` + `storage event` 通信，但两边 origin 不同（`vscode-webview://` vs `vscode-file://`），事件不会跨 origin 触发，导致以下功能**从未真正工作**：
+    - 获取可用模型列表 / 测试切号 / 测试重试 / 测试切换模型 / 测试发送继续 / 测试权限
+    - 完成提醒声音（`ws-pool-notify`）
+    - windsurf-better.js 检测到错误时的"立即切号信号"（`ws-pool-signal`）
+  - **方案**：扩展宿主进程启动 localhost HTTP server（端口由 OS 分配，绑 127.0.0.1，token 鉴权）。
+    - webview ─ `postMessage('enhCommand')` → 扩展宿主 ─ `enqueueCommand` → 桥队列
+    - windsurf-better.js 每秒 ─ `GET /pending` → 取走命令 → 执行 ─ `POST /result` → 扩展宿主 ─ `postMessage('enhCommandResult')` → webview
+  - **CSP 调整**：`enhancementInjector.ts` 的 `ensureConnectSrc` 自动给 workbench.html 的 CSP 加 `connect-src http://127.0.0.1:* http://localhost:*`。
+  - **端口/token 嵌入**：写入 `enh-settings.json` 的 `__bridgePort` / `__bridgeToken`，由现有的注入机制带到 `window.__WS_BETTER_INJECTED_SETTINGS__`。
+- **🤖 无脑模式（`brainlessModeEnabled`）**：AI 停止 N 秒后自动发"继续"，让 AI 不停工作。
+  - 默认**关闭**，需要在「自动操作」section 手动启用。
+  - 可配置：`brainlessIdleSeconds`（空闲秒数，默认 8s）、`brainlessMaxConsecutive`（连发上限，默认 3 次）。
+  - 智能跳过：检测到权限提示（accept all / always allow / 授权 / 允许）时不触发；AI 正在生成时不计时；和 recovery 模块共用 5s 全局冷却避免冲突。
+- **autoContinue 防抖优化**：`MutationObserver` 加 200ms 防抖，避免边生成边触发数十次 `querySelectorAll`；增加 5s 自冷却 + 与 recovery 模块共用 `isInCooldown()` 防双触；按钮加 `isVisibleAndClickable()` 校验避免点不可见按钮。
+- **windsurf-better.js v1.1.0+**：新增 bridge HTTP client（`startBridgePolling` / `bridgePostResult`）；`handleSidebarCommand` 改用 bridge 回 `respond`，旧 `localStorage` 跨 origin 路径作废。
 
 ### v4.15.0
 - **汉化大幅扩充**：新增 30+ 条翻译，覆盖智能体切换（Switch agent / Switch agent location）、模型选择（Send the task to a single model / Select multiple models to compare）、Devin 相关（Devin Local / Devin Cloud / Describe your task to Devin）、错误提示（Model provider unreachable / 第三方模型提供商不可用 / 每周配额耗尽）、UI 文本（See more / Auto-fix / Install Update / Reasoning Effort / Your modified files / Prompt cache has expired / Higher cost expected / Cannot switch modes after cascade has started）等。

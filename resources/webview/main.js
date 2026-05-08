@@ -6,11 +6,12 @@
   let lastEmail = '';
   let usageCache = new Map();
   let autoSwitchEnabled = true;
+  let _ltRunning = false; // 长任务是否正在运行（防止其他保存操作覆盖 continueMode）
   let autoSwitchThreshold = 10;
   let autoSwitchCheckSec = 60;
   let autoSwitchCooldownSec = 30;
   let autoSwitchScoreMode = 'min';
-  let autoSwitchStrategy = 'lowestNonZero';
+  let autoSwitchStrategy = 'highestFirst';
   let autoSwitchMinQuota = 10;
   let autoSwitchPreferUsedThreshold = 50;
   let autoSwitchPoolScope = 'all';
@@ -113,12 +114,43 @@
   const enhBubblesTheme = $('#enhBubblesTheme');
   const enhBubblesShape = $('#enhBubblesShape');
   const enhLocalizationEnabled = $('#enhLocalizationEnabled');
+  // ── 自动继续（新 UI） ──
   const enhAutoContinueEnabled = $('#enhAutoContinueEnabled');
-  const enhDismissCorruptEnabled = $('#enhDismissCorruptEnabled');
+  const acOffHint = $('#acOffHint');
+  const acOnContent = $('#acOnContent');
+  const acTabGuardian = $('#acTabGuardian');
+  const acTabLongTask = $('#acTabLongTask');
+  const acPanelGuardian = $('#acPanelGuardian');
+  const acPanelLongTask = $('#acPanelLongTask');
+  // 守护面板
+  const enhGdAutoContinueBtn = $('#enhGdAutoContinueBtn');
+  const enhGdAutoRetry = $('#enhGdAutoRetry');
+  const enhGdAutoSendOnToolLimit = $('#enhGdAutoSendOnToolLimit');
+  const enhGdApproveWeb = $('#enhGdApproveWeb');
+  const enhGdApproveTerminal = $('#enhGdApproveTerminal');
+  const enhGdApproveFile = $('#enhGdApproveFile');
+  const enhGdDismissCorrupt = $('#enhGdDismissCorrupt');
+  // 长任务面板
+  const acForceStopBtn = $('#acForceStopBtn');
+  const acStatusDot = $('#acStatusDot');
+  const acStatusText = $('#acStatusText');
+  const acStatusCount = $('#acStatusCount');
+  const acContinueCount = $('#acContinueCount');
+  const acQueueList = $('#acQueueList');
+  const acQueueNewText = $('#acQueueNewText');
+  const acQueueAddBtn = $('#acQueueAddBtn');
+  const enhLtLoop = $('#enhLtLoop');
+  const enhLtIdleSeconds = $('#enhLtIdleSeconds');
+  const enhLtMaxContinue = $('#enhLtMaxContinue');
+  const acStartBtn = $('#acStartBtn');
+  const acPauseBtn = $('#acPauseBtn');
+  const acResumeBtn = $('#acResumeBtn');
+  const acStopBtn = $('#acStopBtn');
+  const acLastAction = $('#acLastAction');
+  // 兼容旧引用
   const enhAutoSwitchOnQuota = $('#enhAutoSwitchOnQuota');
   const enhAutoSwitchOnRateLimit = $('#enhAutoSwitchOnRateLimit');
   const enhAutoRecoveryEnabled = $('#enhAutoRecoveryEnabled');
-  const enhAutoSendContinue = $('#enhAutoSendContinue');
   // 恢复规则控件
   const ruleNetworkAction = $('#ruleNetworkAction');
   const ruleNetworkMaxRetries = $('#ruleNetworkMaxRetries');
@@ -1166,9 +1198,9 @@
     const seen = new Set();
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
-      // 检测 auth1_ token 直接导入
-      if (line.startsWith('auth1_')) {
-        const tokenKey = line.substring(0, 24);
+      // 检测 token 直接导入（auth1_ 或 devin-session-token$）
+      if (line.startsWith('auth1_') || line.startsWith('devin-session-token$')) {
+        const tokenKey = line.substring(0, 32);
         if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
         seen.add(tokenKey);
         accts.push({ token: line });
@@ -1247,6 +1279,54 @@
     }
   }
 
+  async function doBatchImportDevin() {
+    if (batchBusy) return;
+    const textarea = document.getElementById('batchDevinText');
+    if (!textarea || !textarea.value.trim()) {
+      setBatchMsg('请输入 Devin Session Token', true);
+      return;
+    }
+    const lines = textarea.value.trim().split('\n').filter(l => l.trim());
+    const accts = [];
+    const errors = [];
+    const seen = new Set();
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i].trim();
+      if (!line) continue;
+      // 自动补前缀
+      if (!line.startsWith('devin-session-token$')) {
+        // 如果粘的是纯 JWT，自动加前缀
+        if (line.startsWith('eyJ')) {
+          line = 'devin-session-token$' + line;
+        } else {
+          errors.push(`第 ${i+1} 行格式错误（需以 devin-session-token$ 或 eyJ 开头）`);
+          continue;
+        }
+      }
+      const tokenKey = line.substring(0, 40);
+      if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
+      seen.add(tokenKey);
+      accts.push({ token: line });
+    }
+    const batchTagEl = document.getElementById('batchTag');
+    const batchTag = batchTagEl ? batchTagEl.value.trim() : '';
+    if (batchTag) accts.forEach(a => a.tag = batchTag);
+    const { fresh, skipped } = filterExistingAccounts(accts);
+    if (fresh.length === 0) {
+      const msg = skipped.length ? `所有 ${skipped.length} 个 token 已存在` : (errors.length ? errors.join('\n') : '未解析到有效 token');
+      setBatchMsg(msg, true);
+      showBatchModal('Devin Token 导入');
+      finalizeBatchModal('Devin Token 导入', [], { skipped: skipped.length, parseFail: errors.length });
+      return;
+    }
+    setBatchBusy(true, '[data-action="batchImportDevin"]');
+    try {
+      await sendBatchAccounts(fresh, { skipped: skipped.length, parseFail: errors.length });
+    } finally {
+      setBatchBusy(false, '[data-action="batchImportDevin"]');
+    }
+  }
+
   function updateTextPlaceholder(delim, authMethod) {
     const ta = document.getElementById('batchText');
     const hint = document.querySelector('#batchTextArea .batch-hint');
@@ -1256,14 +1336,14 @@
     if (d === 'custom') d = '<自定义>';
     const am = authMethod || 'auto';
     if (am === 'auth1') {
-      ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789\nauth1_xxxx... (直接粘 auth1_ token 也行)`;
-      if (hint) hint.textContent = '每行一组: 邮箱{分隔符}密码（Auth1 登录） — 或直接粘贴 auth1_ token';
+      ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789\nauth1_xxxx... 或 devin-session-token$eyJ...`;
+      if (hint) hint.textContent = '每行一组: 邮箱{分隔符}密码 — 或直接粘贴 auth1_ / devin-session-token$ 开头的 token';
     } else if (am === 'firebase') {
       ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789`;
       if (hint) hint.textContent = '每行一组: 邮箱{分隔符}密码（Firebase 登录）';
     } else {
-      ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789\nauth1_xxxx... (直接粘 auth1_ token 也行)`;
-      if (hint) hint.textContent = '每行一组: 邮箱{分隔符}密码 — 或直接粘贴以 auth1_ 开头的 token 自动识别';
+      ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789\nauth1_xxxx... 或 devin-session-token$eyJ...`;
+      if (hint) hint.textContent = '每行一组: 邮箱{分隔符}密码 — 或直接粘贴 auth1_ / devin-session-token$ 开头的 token 自动识别';
     }
   }
 
@@ -1559,7 +1639,7 @@
         autoSwitchCheckSec = msg.checkSec || 60;
         autoSwitchCooldownSec = msg.cooldownSec || 30;
         autoSwitchScoreMode = msg.scoreMode || 'min';
-        autoSwitchStrategy = msg.switchStrategy || 'lowestNonZero';
+        autoSwitchStrategy = msg.switchStrategy || 'highestFirst';
         autoSwitchMinQuota = msg.minQuota ?? 10;
         autoSwitchPreferUsedThreshold = msg.preferUsedThreshold ?? 50;
         autoSwitchPoolScope = msg.poolScope || 'all';
@@ -1597,6 +1677,18 @@
 
       case 'enhSaved': {
         // 后端确认设置已写盘且 workbench 已重新注入；banner 已在保存时弹出
+        break;
+      }
+
+      case 'enhCommandResult': {
+        // bridge HTTP server 收到 windsurf-better.js 的执行结果，转发给 webview
+        if (msg.result) handleCommandResult(msg.result);
+        break;
+      }
+
+      case 'ltStateUpdate': {
+        // 长任务状态更新（从 bridge/扩展侧推送）
+        updateLtState(msg.state || 'idle', { label: msg.label, count: msg.count, action: msg.action });
         break;
       }
     }
@@ -1666,9 +1758,11 @@
 
   let _cmdIdCounter = 0;
   function sendCommand(action, extra) {
-    const cmd = { id: ++_cmdIdCounter, action, ts: Date.now(), ...(extra || {}) };
-    localStorage.setItem('ws-better-command', JSON.stringify(cmd));
-    return cmd.id;
+    // 走扩展宿主 → bridge HTTP server → windsurf-better.js 轮询取走
+    const id = ++_cmdIdCounter;
+    const payload = extra || {};
+    try { vscode.postMessage({ type: 'enhCommand', id, action, payload }); } catch {}
+    return id;
   }
 
   function showTestResult(el, status, message) {
@@ -1680,55 +1774,57 @@
     }
   }
 
-  // 监听命令结果
-  window.addEventListener('storage', (e) => {
-    if (e.key !== 'ws-better-command-result') return;
-    try {
-      const result = JSON.parse(e.newValue);
-      if (!result) return;
+  // 处理命令结果（由扩展宿主通过 'enhCommandResult' 消息推过来）
+  function handleCommandResult(result) {
+    if (!result) return;
 
-      // 获取模型列表结果
-      if (result.action === 'fetch-models' && result.status === 'done') {
+    // 获取模型列表结果
+    if (result.action === 'fetch-models') {
+      // 无论成功/失败都重置按钮状态
+      if (fetchModelsBtn) { fetchModelsBtn.textContent = '获取可用模型列表'; fetchModelsBtn.disabled = false; }
+      if (result.status === 'done') {
         if (currentModelName) currentModelName.textContent = result.currentModel || '-';
         if (result.models && result.models.length > 0) {
           renderAvailableModels(result.models);
         } else {
           showTestResult(testSwitchModelResult, 'error', '未检测到可用模型（可能需要先打开聊天面板）');
         }
+      } else if (result.status === 'error') {
+        showTestResult(testSwitchModelResult, 'error', result.message || '获取失败');
       }
+    }
 
-      // 获取当前模型结果
-      if (result.action === 'get-current-model' && result.status === 'done') {
-        if (currentModelName) currentModelName.textContent = result.currentModel || '-';
-      }
+    // 获取当前模型结果
+    if (result.action === 'get-current-model' && result.status === 'done') {
+      if (currentModelName) currentModelName.textContent = result.currentModel || '-';
+    }
 
-      // 测试切换模型结果
-      if (result.action === 'test-switch-model') {
-        showTestResult(testSwitchModelResult, result.status === 'done' ? 'success' : (result.status === 'running' ? 'running' : 'error'), result.message || '');
-        if (result.newModel && currentModelName) currentModelName.textContent = result.newModel;
-      }
+    // 测试切换模型结果
+    if (result.action === 'test-switch-model') {
+      showTestResult(testSwitchModelResult, result.status === 'done' ? 'success' : (result.status === 'running' ? 'running' : 'error'), result.message || '');
+      if (result.newModel && currentModelName) currentModelName.textContent = result.newModel;
+    }
 
-      // 测试重试结果
-      if (result.action === 'test-retry') {
-        showTestResult(testRetryResult, result.status === 'done' ? 'success' : 'error', result.message || '');
-      }
+    // 测试重试结果
+    if (result.action === 'test-retry') {
+      showTestResult(testRetryResult, result.status === 'done' ? 'success' : 'error', result.message || '');
+    }
 
-      // 测试发送 continue 结果
-      if (result.action === 'test-send-continue') {
-        showTestResult(testSendContinueResult, result.status === 'done' ? 'success' : 'error', result.message || '');
-      }
+    // 测试发送 continue 结果
+    if (result.action === 'test-send-continue') {
+      showTestResult(testSendContinueResult, result.status === 'done' ? 'success' : 'error', result.message || '');
+    }
 
-      // 测试切号结果
-      if (result.action === 'test-switch-account') {
-        showTestResult(testSwitchAccountResult, result.status === 'done' ? 'success' : (result.status === 'running' ? 'running' : 'error'), result.message || '');
-      }
+    // 测试切号结果
+    if (result.action === 'test-switch-account') {
+      showTestResult(testSwitchAccountResult, result.status === 'done' ? 'success' : (result.status === 'running' ? 'running' : 'error'), result.message || '');
+    }
 
-      // 测试权限检测结果
-      if (result.action === 'test-permission') {
-        showTestResult(testPermissionResult, result.status === 'done' ? 'success' : 'error', result.message || '');
-      }
-    } catch {}
-  });
+    // 测试权限检测结果
+    if (result.action === 'test-permission') {
+      showTestResult(testPermissionResult, result.status === 'done' ? 'success' : 'error', result.message || '');
+    }
+  }
 
   function renderAvailableModels(models) {
     if (!availableModelsList) return;
@@ -1904,6 +2000,71 @@
   // localStorage 仅作启动期回退；正常流程是：
   //   webview 启动 → postMessage('enhLoad') → 后端回 'enhLoaded' → applySettingsToUI
   //   控件改变 → saveEnhanceSettings → postMessage('enhSave') → 后端写盘+重新注入 → 回 'enhSaved'
+
+  // 渲染队列列表 DOM
+  function renderQueueList(queue) {
+    if (!acQueueList) return;
+    acQueueList.innerHTML = '';
+    (queue || ['继续']).forEach((text, idx) => {
+      const item = document.createElement('div');
+      item.className = 'ac-queue-item';
+      item.dataset.idx = idx;
+      item.innerHTML = '<span class="ac-queue-handle">⠿</span>'
+        + '<input type="text" class="ac-queue-input" value="' + (text || '').replace(/"/g, '&quot;') + '" placeholder="继续文字...">'
+        + '<button class="ac-queue-del" title="删除">✕</button>';
+      item.querySelector('.ac-queue-del').addEventListener('click', () => {
+        item.remove();
+        // 如果删到空，重新渲染 fallback 项
+        if (!acQueueList.querySelector('.ac-queue-item')) renderQueueList(['继续']);
+        saveEnhanceSettings();
+      });
+      item.querySelector('.ac-queue-input').addEventListener('blur', saveEnhanceSettings);
+      acQueueList.appendChild(item);
+    });
+  }
+
+  // 切换 Tab 面板显示
+  function switchAcTab(tab) {
+    if (acPanelGuardian) acPanelGuardian.style.display = tab === 'guardian' ? '' : 'none';
+    if (acPanelLongTask) acPanelLongTask.style.display = tab === 'long-task' ? '' : 'none';
+  }
+
+  // 切换总开关显示
+  function toggleAcEnabled(enabled) {
+    if (acOffHint) acOffHint.style.display = enabled ? 'none' : '';
+    if (acOnContent) acOnContent.style.display = enabled ? '' : 'none';
+  }
+
+  // 长任务面板状态切换
+  // state: 'idle' | 'running' | 'paused' | 'stopped' | 'handling'
+  function updateLtState(state, extra) {
+    const dotClasses = { idle: 'ac-dot-idle', running: 'ac-dot-running', paused: 'ac-dot-paused', stopped: 'ac-dot-stopped', handling: 'ac-dot-handling' };
+    const labels = { idle: '就绪', running: '运行中', paused: '已暂停', stopped: '已停止', handling: '处理中断' };
+    if (acStatusDot) { acStatusDot.className = 'ac-status-dot ' + (dotClasses[state] || 'ac-dot-idle'); }
+    if (acStatusText) acStatusText.textContent = (extra && extra.label) || labels[state] || '就绪';
+    // 计数
+    if (acStatusCount) acStatusCount.style.display = (state === 'idle') ? 'none' : '';
+    if (acContinueCount && extra && extra.count !== undefined) acContinueCount.textContent = extra.count;
+    // 强制停止按钮
+    if (acForceStopBtn) acForceStopBtn.disabled = (state === 'idle' || state === 'stopped');
+    // 控制按钮
+    const show = (el, v) => { if (el) el.style.display = v ? '' : 'none'; };
+    if (state === 'idle' || state === 'stopped') {
+      show(acStartBtn, true); show(acPauseBtn, false); show(acResumeBtn, false); show(acStopBtn, false);
+      if (state === 'stopped' && acStartBtn) acStartBtn.textContent = '▶ 重新开始';
+      else if (acStartBtn) acStartBtn.textContent = '▶ 开始';
+    } else if (state === 'running' || state === 'handling') {
+      show(acStartBtn, false); show(acPauseBtn, true); show(acResumeBtn, false); show(acStopBtn, true);
+    } else if (state === 'paused') {
+      show(acStartBtn, false); show(acPauseBtn, false); show(acResumeBtn, true); show(acStopBtn, true);
+    }
+    // 最近操作
+    if (acLastAction && extra && extra.action) {
+      acLastAction.textContent = extra.action;
+      acLastAction.style.display = '';
+    }
+  }
+
   function applyEnhSettingsToUI(s) {
     if (!s || typeof s !== 'object') return;
     try {
@@ -1912,12 +2073,39 @@
       if (enhBubblesTheme) enhBubblesTheme.value = s.bubblesTheme || 'emerald';
       if (enhBubblesShape) enhBubblesShape.value = s.bubblesShape || 'rounded';
       if (enhLocalizationEnabled) enhLocalizationEnabled.checked = s.localizationEnabled !== false;
-      if (enhAutoContinueEnabled) enhAutoContinueEnabled.checked = s.autoContinueEnabled !== false;
-      if (enhDismissCorruptEnabled) enhDismissCorruptEnabled.checked = s.dismissCorruptEnabled !== false;
+
+      // 自动继续：新 UI
+      const acEnabled = s.autoContinueEnabled !== undefined ? s.autoContinueEnabled : true;
+      if (enhAutoContinueEnabled) enhAutoContinueEnabled.checked = acEnabled;
+      toggleAcEnabled(acEnabled);
+
+      const acTab = s.autoContinueTab || (s.continueMode === 'brainless' ? 'long-task' : 'guardian');
+      if (acTabGuardian) acTabGuardian.checked = acTab === 'guardian';
+      if (acTabLongTask) acTabLongTask.checked = acTab === 'long-task';
+      switchAcTab(acTab);
+
+      // 守护模式
+      const gd = s.guardian || {};
+      if (enhGdAutoContinueBtn) enhGdAutoContinueBtn.checked = gd.autoContinueButton !== false;
+      if (enhGdAutoRetry) enhGdAutoRetry.checked = gd.autoRetry !== false;
+      if (enhGdAutoSendOnToolLimit) enhGdAutoSendOnToolLimit.checked = gd.autoSendOnToolLimit !== false;
+      const permScope = gd.permissionScope || ['web-request', 'terminal', 'file-write'];
+      if (enhGdApproveWeb) enhGdApproveWeb.checked = permScope.includes('web-request');
+      if (enhGdApproveTerminal) enhGdApproveTerminal.checked = permScope.includes('terminal');
+      if (enhGdApproveFile) enhGdApproveFile.checked = permScope.includes('file-write');
+      if (enhGdDismissCorrupt) enhGdDismissCorrupt.checked = gd.dismissCorrupt !== undefined ? gd.dismissCorrupt : (s.dismissCorruptEnabled !== false);
+
+      // 长任务模式
+      const lt = s.longTask || {};
+      renderQueueList(lt.continueQueue || (s.continueText ? [s.continueText] : ['继续']));
+      if (enhLtLoop) enhLtLoop.checked = lt.loop !== false;
+      if (enhLtIdleSeconds) enhLtIdleSeconds.value = lt.idleSeconds || s.brainlessIdleSeconds || 8;
+      if (enhLtMaxContinue) enhLtMaxContinue.value = lt.maxContinueCount !== undefined ? lt.maxContinueCount : (s.brainlessMaxConsecutive || 0);
+
+      // 兼容旧字段
       if (enhAutoSwitchOnQuota) enhAutoSwitchOnQuota.checked = s.autoSwitchOnQuota !== false;
       if (enhAutoSwitchOnRateLimit) enhAutoSwitchOnRateLimit.checked = s.autoSwitchOnRateLimit !== false;
       if (enhAutoRecoveryEnabled) enhAutoRecoveryEnabled.checked = s.autoRecoveryEnabled !== false;
-      if (enhAutoSendContinue) enhAutoSendContinue.checked = s.autoSendContinue !== false;
       // 恢复规则
       const rules = s.recoveryRules || {};
       if (ruleNetworkAction && rules.networkErrors) ruleNetworkAction.value = rules.networkErrors.action || 'retry';
@@ -1929,10 +2117,10 @@
       if (ruleModelAfterAction && rules.modelErrors) ruleModelAfterAction.value = rules.modelErrors.afterAction || 'send-continue';
       if (ruleContinuationAction && rules.continuationErrors) ruleContinuationAction.value = rules.continuationErrors.action || 'send-continue';
       if (rulePermissionAction && rules.permissionRequests) rulePermissionAction.value = rules.permissionRequests.action || 'auto-allow';
-      const permScope = (rules.permissionRequests && rules.permissionRequests.scope) || ['web-request'];
-      if (permScopeWeb) permScopeWeb.checked = permScope.includes('web-request');
-      if (permScopeTerminal) permScopeTerminal.checked = permScope.includes('terminal');
-      if (permScopeFile) permScopeFile.checked = permScope.includes('file-write');
+      const rulePermScope = (rules.permissionRequests && rules.permissionRequests.scope) || ['web-request'];
+      if (permScopeWeb) permScopeWeb.checked = rulePermScope.includes('web-request');
+      if (permScopeTerminal) permScopeTerminal.checked = rulePermScope.includes('terminal');
+      if (permScopeFile) permScopeFile.checked = rulePermScope.includes('file-write');
       if (ruleUserAction && rules.userIntervention) ruleUserAction.value = rules.userIntervention.action || 'notify';
       // 模型优先级
       renderModelPriority((rules.modelErrors && rules.modelErrors.modelPriority) || ['claude-3.5-sonnet', 'gpt-4o', 'claude-3-haiku']);
@@ -1962,19 +2150,64 @@
   }
 
   // 把当前 UI 状态收集为 settings 对象（保存/比较用）
+  // 从队列 DOM 收集文本数组
+  function getQueueFromDOM() {
+    if (!acQueueList) return ['继续'];
+    const items = acQueueList.querySelectorAll('.ac-queue-input');
+    const arr = [];
+    items.forEach(inp => { const v = (inp.value || '').trim(); if (v) arr.push(v); });
+    return arr.length ? arr : ['继续'];
+  }
+
   function collectEnhSettings() {
+    const acEnabled = enhAutoContinueEnabled ? enhAutoContinueEnabled.checked : true;
+    const acTab = (acTabLongTask && acTabLongTask.checked) ? 'long-task' : 'guardian';
+    // 长任务正在运行时保持 brainless；否则始终为 smart，避免重启后意外触发
+    const continueMode = !acEnabled ? 'off' : (_ltRunning ? 'brainless' : 'smart');
+
+    // 预计算共享值，避免重复 parseInt / DOM 查询
+    const idleSec = enhLtIdleSeconds ? Math.max(3, parseInt(enhLtIdleSeconds.value) || 8) : 8;
+    const maxCount = enhLtMaxContinue ? Math.max(0, parseInt(enhLtMaxContinue.value) || 0) : 0;
+    const queue = getQueueFromDOM();
+    const dismissCorrupt = enhGdDismissCorrupt ? enhGdDismissCorrupt.checked : true;
+    const permScope = [
+      ...(enhGdApproveWeb && enhGdApproveWeb.checked ? ['web-request'] : []),
+      ...(enhGdApproveTerminal && enhGdApproveTerminal.checked ? ['terminal'] : []),
+      ...(enhGdApproveFile && enhGdApproveFile.checked ? ['file-write'] : []),
+    ];
+
     return {
       bubblesEnabled: enhBubblesEnabled ? enhBubblesEnabled.checked : true,
       bubblesAutoSend: enhBubblesAutoSend ? enhBubblesAutoSend.checked : true,
       bubblesTheme: enhBubblesTheme ? enhBubblesTheme.value : 'emerald',
       bubblesShape: enhBubblesShape ? enhBubblesShape.value : 'rounded',
       localizationEnabled: enhLocalizationEnabled ? enhLocalizationEnabled.checked : true,
-      autoContinueEnabled: enhAutoContinueEnabled ? enhAutoContinueEnabled.checked : true,
-      dismissCorruptEnabled: enhDismissCorruptEnabled ? enhDismissCorruptEnabled.checked : true,
+      continueMode,
+      autoContinueEnabled: acEnabled,
+      autoContinueTab: acTab,
+      guardian: {
+        autoContinueButton: enhGdAutoContinueBtn ? enhGdAutoContinueBtn.checked : true,
+        autoRetry: enhGdAutoRetry ? enhGdAutoRetry.checked : true,
+        autoSendOnToolLimit: enhGdAutoSendOnToolLimit ? enhGdAutoSendOnToolLimit.checked : true,
+        autoApprovePermission: permScope.length > 0,
+        permissionScope: permScope,
+        dismissCorrupt,
+      },
+      longTask: {
+        idleSeconds: idleSec,
+        maxContinueCount: maxCount,
+        continueQueue: queue,
+        loop: enhLtLoop ? enhLtLoop.checked : true,
+      },
+      // 兼容旧脚本 windsurf-better.js 直接读取的顶层字段
+      dismissCorruptEnabled: dismissCorrupt,
       autoSwitchOnQuota: enhAutoSwitchOnQuota ? enhAutoSwitchOnQuota.checked : true,
       autoSwitchOnRateLimit: enhAutoSwitchOnRateLimit ? enhAutoSwitchOnRateLimit.checked : true,
+      brainlessModeEnabled: false, // 清除旧字段，防止 loadSettings 迁移逻辑重新激活 brainless
+      brainlessIdleSeconds: idleSec,
+      brainlessMaxConsecutive: maxCount || 99999,
       autoRecoveryEnabled: enhAutoRecoveryEnabled ? enhAutoRecoveryEnabled.checked : true,
-      autoSendContinue: enhAutoSendContinue ? enhAutoSendContinue.checked : true,
+      continueText: queue[0] || 'continue',
       recoveryRules: collectRecoveryRules(),
       customRecoveryRules: collectCustomRules(),
       notifyEnabled: enhNotifyEnabled ? enhNotifyEnabled.checked : true,
@@ -2003,16 +2236,17 @@
     } catch {}
   }
 
-  // 显示"设置已保存，重启 Windsurf 后生效"提示条（banner）
+  // 显示"设置已实时应用"提示条（banner）
+  // 自从 v4.20.0 起，扩展宿主通过 HTTP 桥实时推送 apply-settings 命令给 windsurf-better.js，
+  // 无需 reload window 即可生效；保留 banner 作为反馈，附"重启窗口"小链接以备万一
   let _enhBannerTimer = null;
   function showEnhReloadBanner() {
     let banner = document.getElementById('enhReloadBanner');
     if (!banner) {
       banner = document.createElement('div');
       banner.id = 'enhReloadBanner';
-      banner.style.cssText = 'position:sticky;top:0;z-index:50;padding:6px 10px;margin:6px 0;background:linear-gradient(90deg,#3b82f6,#8b5cf6);color:#fff;border-radius:6px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;box-shadow:0 2px 6px rgba(0,0,0,.15);';
-      banner.innerHTML = '<span>✓ 设置已保存，重启 Windsurf 后生效</span><button id="enhReloadBtn" style="background:rgba(255,255,255,.2);border:none;color:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:12px;">立即重启</button>';
-      // 插到增强卡片顶部（正好是用户改设置的位置，视觉上即时反馈）
+      banner.style.cssText = 'position:sticky;top:0;z-index:50;padding:6px 10px;margin:6px 0;background:linear-gradient(90deg,#10b981,#06b6d4);color:#fff;border-radius:6px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;box-shadow:0 2px 6px rgba(0,0,0,.15);';
+      banner.innerHTML = '<span>✓ 设置已实时应用</span><button id="enhReloadBtn" title="如有异常可重启窗口" style="background:rgba(255,255,255,.18);border:none;color:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;opacity:0.85;">重启窗口</button>';
       const host = document.getElementById('enhanceArea')
         || document.querySelector('.enhance-card')
         || document.body;
@@ -2022,7 +2256,7 @@
     }
     banner.style.display = 'flex';
     if (_enhBannerTimer) clearTimeout(_enhBannerTimer);
-    _enhBannerTimer = setTimeout(() => { banner.style.display = 'none'; }, 8000);
+    _enhBannerTimer = setTimeout(() => { banner.style.display = 'none'; }, 3500);
   }
 
   // 气泡预览：主题和形状数据（与 windsurf-better.js 保持一致）
@@ -2867,6 +3101,8 @@
     if (batchTextBtn) batchTextBtn.addEventListener('click', () => { doBatchImportText(); closeAddAccountModal(); });
     const batchJsonBtn = $('[data-action="batchImportJson"]');
     if (batchJsonBtn) batchJsonBtn.addEventListener('click', () => { doBatchImportJson(); closeAddAccountModal(); });
+    const batchDevinBtn = $('[data-action="batchImportDevin"]');
+    if (batchDevinBtn) batchDevinBtn.addEventListener('click', () => { doBatchImportDevin(); closeAddAccountModal(); });
 
     // 从当前账户添加
     const addCurrentBtn = $('[data-action="addCurrent"]');
@@ -3112,11 +3348,15 @@
       addOverlay.addEventListener('change', (e) => {
         const target = e.target;
         if (target.name === 'batchFormat') {
-          const isJson = target.value === 'json';
+          const fmt = target.value;
           const textArea = document.getElementById('batchTextArea');
           const jsonArea = document.getElementById('batchJsonArea');
-          if (textArea) textArea.hidden = isJson;
-          if (jsonArea) jsonArea.hidden = !isJson;
+          const devinArea = document.getElementById('batchDevinArea');
+          const authSection = document.getElementById('batchAuthSection');
+          if (textArea) textArea.hidden = fmt !== 'text';
+          if (jsonArea) jsonArea.hidden = fmt !== 'json';
+          if (devinArea) devinArea.hidden = fmt !== 'devin';
+          if (authSection) authSection.hidden = fmt === 'devin';
           setBatchMsg('', false);
         }
         if (target.name === 'batchDelimRadio') {
@@ -3202,6 +3442,28 @@
     const instEditSubmit = document.getElementById('instEditSubmit');
     if (instEditSubmit) instEditSubmit.addEventListener('click', submitInstEdit);
 
+    // 面板折叠状态持久化（enhance/inst/as/list）
+    (function persistDetailsState() {
+      const KEY = 'ws-pool-details-open';
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch {}
+      const ids = ['enhanceDetails', 'instDetails', 'acDetails', 'asDetails', 'listDetails'];
+      ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (Object.prototype.hasOwnProperty.call(saved, id)) {
+          if (saved[id]) el.setAttribute('open', ''); else el.removeAttribute('open');
+        }
+        el.addEventListener('toggle', () => {
+          try {
+            const cur = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
+            cur[id] = el.open;
+            localStorage.setItem(KEY, JSON.stringify(cur));
+          } catch {}
+        });
+      });
+    })();
+
     // Windsurf 增强开关按钮（直接绑定到按钮，避免 summary 冒泡和子元素点击失效）
     if (enhanceToggleBtn) {
       enhanceToggleBtn.addEventListener('click', (e) => {
@@ -3231,11 +3493,96 @@
     // 增强设置控件事件
     loadEnhanceSettings();
     updateBubblePreview();
-    const enhSettingsEls = [enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled, enhAutoContinueEnabled, enhDismissCorruptEnabled, enhAutoSwitchOnQuota, enhAutoSwitchOnRateLimit, enhAutoRecoveryEnabled, enhAutoSendContinue, enhNotifyEnabled, enhNotifyTrigger, enhNotifySound, enhNotifyDesktop, enhNotifyTone, enhNotifyRepeat, enhCustomTone, enhAudioFile,
-      ruleNetworkAction, ruleNetworkMaxRetries, ruleNetworkDelay, ruleQuotaAction, ruleQuotaAfterAction, ruleModelAction, ruleModelAfterAction, ruleContinuationAction, rulePermissionAction, permScopeWeb, permScopeTerminal, permScopeFile, ruleUserAction];
+    // 确保初始 HTML 队列项的事件被绑定（loadEnhanceSettings 可能异步延迟）
+    renderQueueList(getQueueFromDOM());
+
+    // ── 自动继续：总开关 ──
+    if (enhAutoContinueEnabled) enhAutoContinueEnabled.addEventListener('change', () => {
+      toggleAcEnabled(enhAutoContinueEnabled.checked);
+      saveEnhanceSettings();
+    });
+
+    // ── 自动继续：Tab 切换（只切换面板，不立即变更 continueMode，避免杀掉运行中的长任务） ──
+    [acTabGuardian, acTabLongTask].forEach(radio => {
+      if (radio) radio.addEventListener('change', () => {
+        switchAcTab(radio.value);
+        // 只保存 Tab 偏好，不强制同步 continueMode — 让用户通过控制按钮显式操作
+        try {
+          const cur = JSON.parse(localStorage.getItem('ws-better-settings') || '{}');
+          cur.autoContinueTab = radio.value;
+          localStorage.setItem('ws-better-settings', JSON.stringify(cur));
+        } catch {}
+      });
+    });
+
+    // ── 守护面板 + 长任务面板的所有勾选/输入 ──
+    const enhSettingsEls = [
+      enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled,
+      // 守护模式
+      enhGdAutoContinueBtn, enhGdAutoRetry, enhGdAutoSendOnToolLimit,
+      enhGdApproveWeb, enhGdApproveTerminal, enhGdApproveFile, enhGdDismissCorrupt,
+      // 长任务模式
+      enhLtLoop, enhLtIdleSeconds, enhLtMaxContinue,
+      // 兼容旧
+      enhAutoSwitchOnQuota, enhAutoSwitchOnRateLimit, enhAutoRecoveryEnabled,
+      // 通知
+      enhNotifyEnabled, enhNotifyTrigger, enhNotifySound, enhNotifyDesktop, enhNotifyTone, enhNotifyRepeat, enhCustomTone, enhAudioFile,
+      // 恢复规则
+      ruleNetworkAction, ruleNetworkMaxRetries, ruleNetworkDelay, ruleQuotaAction, ruleQuotaAfterAction, ruleModelAction, ruleModelAfterAction, ruleContinuationAction, rulePermissionAction, permScopeWeb, permScopeTerminal, permScopeFile, ruleUserAction,
+    ];
     enhSettingsEls.forEach(el => {
       if (el) el.addEventListener('change', saveEnhanceSettings);
     });
+
+    // ── 长任务：队列添加（按钮 + Enter 键） ──
+    function addQueueItem() {
+      const text = acQueueNewText ? acQueueNewText.value.trim() : '';
+      if (!text) return;
+      const queue = getQueueFromDOM();
+      queue.push(text);
+      renderQueueList(queue);
+      if (acQueueNewText) acQueueNewText.value = '';
+      saveEnhanceSettings();
+    }
+    if (acQueueAddBtn) acQueueAddBtn.addEventListener('click', addQueueItem);
+    if (acQueueNewText) acQueueNewText.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); addQueueItem(); }
+    });
+
+    // ── 长任务：控制按钮 ──
+    // 通过修改 continueMode 并保存来触发注入脚本的 applySettingsChange
+    if (acStartBtn) acStartBtn.addEventListener('click', () => {
+      _ltRunning = true;
+      updateLtState('running');
+      saveLtMode('brainless');
+    });
+    if (acPauseBtn) acPauseBtn.addEventListener('click', () => {
+      _ltRunning = false;
+      updateLtState('paused');
+      saveLtMode('smart');
+    });
+    if (acResumeBtn) acResumeBtn.addEventListener('click', () => {
+      _ltRunning = true;
+      updateLtState('running');
+      saveLtMode('brainless');
+    });
+    if (acStopBtn) acStopBtn.addEventListener('click', () => {
+      _ltRunning = false;
+      updateLtState('idle');
+      saveLtMode('smart');
+    });
+    if (acForceStopBtn) acForceStopBtn.addEventListener('click', () => {
+      _ltRunning = false;
+      updateLtState('idle');
+      saveLtMode('smart');
+    });
+    // 辅助函数：保存设置并强制覆盖 continueMode
+    function saveLtMode(mode) {
+      const s = collectEnhSettings();
+      s.continueMode = mode;
+      try { localStorage.setItem('ws-better-settings', JSON.stringify(s)); } catch {}
+      vscode.postMessage({ type: 'enhSave', settings: s });
+    }
 
     // 模型优先级添加
     if (modelPriorityAdd) {
@@ -3261,8 +3608,24 @@
         fetchModelsBtn.textContent = '获取中...';
         fetchModelsBtn.disabled = true;
         sendCommand('fetch-models');
-        setTimeout(() => { fetchModelsBtn.textContent = '获取可用模型列表'; fetchModelsBtn.disabled = false; }, 5000);
+        // 10s 超时：如果增强脚本未注入或 bridge 不可达，命令无人处理
+        setTimeout(() => {
+          if (fetchModelsBtn.disabled) {
+            fetchModelsBtn.textContent = '获取可用模型列表';
+            fetchModelsBtn.disabled = false;
+            showTestResult(testSwitchModelResult, 'error', '超时未响应（请确认增强脚本已注入并打开了聊天面板）');
+          }
+        }, 10000);
       });
+    }
+    // 通用超时：测试命令 12s 无响应则提示脚本未注入
+    function sendTestCommand(action, resultEl, extra) {
+      sendCommand(action, extra);
+      setTimeout(() => {
+        if (resultEl && resultEl.classList.contains('show') && resultEl.textContent.includes('中...')) {
+          showTestResult(resultEl, 'error', '超时未响应（请确认增强脚本已注入）');
+        }
+      }, 12000);
     }
     if (testSwitchModelBtn) {
       testSwitchModelBtn.addEventListener('click', () => {
@@ -3272,31 +3635,32 @@
           return;
         }
         showTestResult(testSwitchModelResult, 'running', '正在切换...');
-        sendCommand('test-switch-model', { model: priority[0] });
+        sendTestCommand('test-switch-model', testSwitchModelResult, { model: priority[0] });
       });
     }
     if (testRetryBtn) {
       testRetryBtn.addEventListener('click', () => {
         showTestResult(testRetryResult, 'running', '测试中...');
-        sendCommand('test-retry');
+        sendTestCommand('test-retry', testRetryResult);
       });
     }
     if (testSwitchAccountBtn) {
       testSwitchAccountBtn.addEventListener('click', () => {
         showTestResult(testSwitchAccountResult, 'running', '测试中...');
-        sendCommand('test-switch-account');
+        sendTestCommand('test-switch-account', testSwitchAccountResult);
       });
     }
     if (testSendContinueBtn) {
       testSendContinueBtn.addEventListener('click', () => {
+        const text = (getQueueFromDOM()[0] || 'continue');
         showTestResult(testSendContinueResult, 'running', '测试中...');
-        sendCommand('test-send-continue');
+        sendTestCommand('test-send-continue', testSendContinueResult, { text });
       });
     }
     if (testPermissionBtn) {
       testPermissionBtn.addEventListener('click', () => {
         showTestResult(testPermissionResult, 'running', '测试中...');
-        sendCommand('test-permission');
+        sendTestCommand('test-permission', testPermissionResult);
       });
     }
 

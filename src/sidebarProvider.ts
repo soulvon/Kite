@@ -11,6 +11,7 @@ import { AutoSwitcher } from './autoSwitcher';
 import { getSignalBridgeScript, handlePoolSignal, PoolSignal } from './signalBridge';
 import { getInjectionStatus, ensureEnhancement } from './enhancementInjector';
 import { readEnhSettings, writeEnhSettings, mergeEnhSettings } from './enhSettingsStore';
+import { enqueueCommand, onBridgeResult } from './bridgeServer';
 import { hasBubbleRules } from './rulesInjector';
 import { playSystemSound } from './soundPlayer';
 
@@ -54,6 +55,41 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._autoSwitcher.onRefreshUI = () => {
       this.refresh();
     };
+    // 定时器自动切号成功后 → 通知 bridge（windsurf-better.js 显示通知 + 重试消息）
+    this._autoSwitcher.onAutoSwitchDone = (newEmail, reason) => {
+      // 推送 pool-result 到 bridge，让 windsurf-better.js 处理（显示通知 + 重试）
+      try {
+        enqueueCommand({
+          id: Date.now(),
+          action: 'pool-result',
+          payload: { type: 'switched', ts: Date.now(), email: newEmail }
+        });
+      } catch {}
+      // 弹 VS Code 通知（面板关着也能看到）
+      vscode.window.showInformationMessage(`额度不足，已自动切换至 ${newEmail}`);
+    };
+
+    // 监听 bridge 的 /result：
+    // - type='pool-signal' → 切号请求（windsurf-better.js 主动发起），由 autoSwitcher 处理后反向回传
+    // - 其他 → 命令结果，转发给 webview 显示
+    const unsubscribeBridge = onBridgeResult((result) => {
+      try {
+        if (result && result.type === 'pool-signal' && result.signal) {
+          this.log(`[bridge ←] pool-signal type=${result.signal.type}`);
+          handlePoolSignal(result.signal as PoolSignal, this._autoSwitcher, (poolResult) => {
+            // 通过 enqueueCommand 反向把切号结果送回 windsurf-better.js
+            // windsurf-better.js 收到 action='pool-result' 命令 → 写 localStorage 触发原处理逻辑
+            enqueueCommand({ id: Date.now(), action: 'pool-result', payload: poolResult });
+          }).catch(err => console.warn('[sidebar] handlePoolSignal err:', err));
+          return;
+        }
+        this.log(`[bridge ←] action=${result?.action} id=${result?.id} status=${result?.status}`);
+        this.postMessage({ type: 'enhCommandResult', result } as any);
+      } catch (err) {
+        this.log(`[bridge ←] ✗ 异常: ${err}`);
+      }
+    });
+    this._disposables.push({ dispose: unsubscribeBridge });
   }
 
   private log(msg: string) {
@@ -73,6 +109,102 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /** 主动通知 webview 刷新 Windsurf 增强状态（供外部命令在修改文件/配置后调用） */
   public refreshEnhancementStatus(): void {
     this._pushEnhancementStatus();
+  }
+
+  /**
+   * 从 Windsurf 本地 SQLite 数据库直接读取可用模型列表
+   * 路径: %APPDATA%/Windsurf/User/globalStorage/state.vscdb
+   * 键: windsurfConfigurations（base64 protobuf，含模型 label 文本）
+   * 零 UI 操作、零 DOM 交互、瞬间返回
+   */
+  private async _handleFetchModels(cmdId: number) {
+    try {
+      const allModels = await this._readModelsFromStateDb();
+      // 获取最近使用的模型 UID
+      let recentUids: string[] = [];
+      let currentModel = '';
+      try {
+        const codeiumState = await this._readStateDbKey('codeium.windsurf');
+        if (codeiumState) {
+          const state = JSON.parse(codeiumState);
+          const selected = state['windsurf.state.lastSelectedCascadeModelUids'];
+          if (Array.isArray(selected)) {
+            recentUids = selected;
+            currentModel = selected[0] || '';
+          }
+        }
+      } catch {}
+      // 过滤：只保留主流基础模型 + 最近使用的
+      const models = this._filterMainstreamModels(allModels, recentUids);
+      this.postMessage({ type: 'enhCommandResult', result: {
+        id: cmdId, action: 'fetch-models', status: 'done',
+        models, currentModel
+      }} as any);
+    } catch (err) {
+      this.postMessage({ type: 'enhCommandResult', result: {
+        id: cmdId, action: 'fetch-models', status: 'error',
+        message: '读取模型数据库失败: ' + err
+      }} as any);
+    }
+  }
+
+  /** 过滤只保留主流模型 + 最近使用 */
+  private _filterMainstreamModels(allModels: string[], recentUids: string[]): string[] {
+    // 排除含这些关键词的变体（Low/Medium/High/XHigh/Fast/Mini/BYOK/Thinking/1M/Spark/No Thinking/Max）
+    const variantRe = /\b(Low|Medium|High|XHigh|X-High|Fast|Mini|BYOK|Thinking|1M|Spark|No Thinking|Max|Minimal)\b/i;
+    const mainstream = allModels.filter(m => !variantRe.test(m));
+    // 把最近使用的 uid 转成 label 匹配（uid: claude-opus-4-7-medium → 匹配 "Claude Opus 4.7 Medium"）
+    const recentLabels: string[] = [];
+    for (const uid of recentUids) {
+      const normalized = uid.replace(/-/g, ' ').toLowerCase();
+      const match = allModels.find(m => {
+        const mNorm = m.replace(/[.\-]/g, ' ').toLowerCase();
+        return mNorm === normalized || normalized.includes(mNorm) || mNorm.includes(normalized);
+      });
+      if (match && !mainstream.includes(match)) recentLabels.push(match);
+    }
+    // 合并：主流 + 最近使用（去重）
+    const result = [...mainstream];
+    for (const r of recentLabels) { if (!result.includes(r)) result.push(r); }
+    return result;
+  }
+
+  private _readStateDbKey(key: string): Promise<string | null> {
+    const dbPath = path.join(process.env.APPDATA || '', 'Windsurf/User/globalStorage/state.vscdb');
+    const sqlitePath = path.join(vscode.env.appRoot, 'node_modules/@vscode/sqlite3');
+    return new Promise((resolve, reject) => {
+      try {
+        const sqlite = require(sqlitePath);
+        const db = new sqlite.Database(dbPath, sqlite.OPEN_READONLY, (err: any) => {
+          if (err) { reject(err); return; }
+          db.get('SELECT value FROM ItemTable WHERE key = ?', [key], (e: any, row: any) => {
+            db.close();
+            if (e) reject(e);
+            else resolve(row ? row.value : null);
+          });
+        });
+      } catch (e) { reject(e); }
+    });
+  }
+
+  private async _readModelsFromStateDb(): Promise<string[]> {
+    const raw = await this._readStateDbKey('windsurfConfigurations');
+    if (!raw) return [];
+    // windsurfConfigurations 是 base64 编码的 protobuf 二进制
+    const buf = Buffer.from(raw, 'base64');
+    const text = buf.toString('utf8');
+    // 从二进制中提取可读的模型 label（过滤掉内部枚举名）
+    const models = new Set<string>();
+    const re = /(?:Claude|GPT|SWE|Gemini|Grok|DeepSeek|Llama|Qwen|Mistral)[\w\s.\-()]+/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const name = m[0].trim();
+      // 只保留 display label（排除 ENUM 格式如 GPT_5_2_HIGH）
+      if (name.length > 3 && name.length < 50 && !/_/.test(name)) {
+        models.add(name);
+      }
+    }
+    return [...models].sort();
   }
 
   /** 打开日志文件 */
@@ -206,17 +338,40 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: 'enhLoaded', settings } as any);
         return;
       }
+      case 'enhCommand': {
+        // webview 触发命令 → 塞 bridge 队列，等 windsurf-better.js 来轮询取走执行
+        const m = message as any;
+        if (m.id != null && m.action) {
+          this.log(`[enhCommand] → 入队 action=${m.action} id=${m.id}`);
+          // 特殊处理 fetch-models：先用 Windsurf 内部命令打开面板，再让 JS 被动读
+          if (m.action === 'fetch-models') {
+            this._handleFetchModels(m.id);
+          } else {
+            enqueueCommand({ id: m.id, action: m.action, payload: m.payload || {} });
+          }
+        } else {
+          this.log(`[enhCommand] ✗ 字段缺失 id=${(message as any).id} action=${(message as any).action}`);
+        }
+        return;
+      }
       case 'enhSave': {
-        // webview 改了设置 → 写盘 → 重写 workbench.html 嵌入新值 → 提示重启
+        // webview 改了设置 → 写盘 + 重写 workbench.html（下次启动用）+ 通过桥实时推送给 windsurf-better.js
         const patch = (message as any).settings || {};
         const merged = mergeEnhSettings(patch);
-        // 立即重新注入 workbench.html，使下次 reload 即可生效
+        // 重新注入 workbench.html（保证下次启动也是新值）
         try {
           ensureEnhancement();
         } catch (err) {
           console.warn('[windsurf-pool] re-inject after enhSave failed:', err);
         }
-        // 回传保存结果（webview 可据此显示"已保存，重启生效"banner）
+        // 通过桥实时推送 apply-settings 命令给 windsurf-better.js
+        // 这样改设置无需 reload，立即生效（启停 observer / 还原汉化 / 切换 bubbles 主题等）
+        try {
+          enqueueCommand({ id: Date.now(), action: 'apply-settings', payload: merged });
+        } catch (err) {
+          console.warn('[windsurf-pool] bridge push apply-settings failed:', err);
+        }
+        // 回传保存结果（webview 显示"已实时应用"toast）
         this.postMessage({ type: 'enhSaved', settings: merged } as any);
         return;
       }
@@ -942,7 +1097,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </label>
             <label class="enhance-option">
               <input type="checkbox" id="enhBubblesAutoSend" checked>
-              <span>点击自动发送</span>
+              <span>点击建议提示后自动发送</span>
             </label>
             <div class="enhance-option-row">
               <span class="enhance-option-label">主题</span>
@@ -975,234 +1130,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
           </div>
 
-          <!-- 界面汉化 -->
-          <div class="enhance-section">
-            <div class="enhance-section-title">界面汉化</div>
+          <!-- 界面汉化（紧凑行，和气泡同区） -->
+          <div class="enhance-section" style="padding-bottom:4px">
             <label class="enhance-option">
               <input type="checkbox" id="enhLocalizationEnabled" checked>
-              <span>启用汉化</span>
+              <span>启用界面汉化</span>
             </label>
           </div>
 
-          <!-- 自动操作 -->
-          <div class="enhance-section enhance-section--checks">
-            <div class="enhance-section-title">自动操作</div>
-            <label class="enhance-option">
-              <input type="checkbox" id="enhAutoContinueEnabled" checked>
-              <span>回复截断时自动继续</span>
-            </label>
-            <label class="enhance-option">
-              <input type="checkbox" id="enhDismissCorruptEnabled" checked>
-              <span>自动关闭"文件损坏"通知</span>
-            </label>
-            <label class="enhance-option">
-              <input type="checkbox" id="enhAutoSwitchOnQuota" checked>
-              <span>额度耗尽时自动切号</span>
-            </label>
-            <label class="enhance-option">
-              <input type="checkbox" id="enhAutoSwitchOnRateLimit" checked>
-              <span>请求限流时自动切号</span>
-            </label>
-          </div>
-
-          <!-- 自动恢复 -->
-          <div class="enhance-section">
-            <div class="enhance-section-title">自动恢复</div>
-            <label class="enhance-option">
-              <input type="checkbox" id="enhAutoRecoveryEnabled" checked>
-              <span>启用自动恢复</span>
-            </label>
-
-            <!-- 网络超时 / 临时故障 -->
-            <details class="enhance-rule-details" open>
-              <summary class="enhance-rule-summary">网络超时 / 临时故障</summary>
-              <div class="enhance-rule-body">
-                <div class="enhance-option-row">
-                  <span class="enhance-option-label">处理方式</span>
-                  <select class="enhance-select" id="ruleNetworkAction" style="flex:1">
-                    <option value="retry">自动重试</option>
-                    <option value="switch-account">切换账号</option>
-                    <option value="notify">仅通知</option>
-                    <option value="ignore">忽略</option>
-                  </select>
-                </div>
-                <div class="enhance-option-row" id="ruleNetworkRetryOpts">
-                  <span class="enhance-option-label">最大重试</span>
-                  <input type="number" class="enhance-select" id="ruleNetworkMaxRetries" value="3" min="1" max="10" style="width:48px;text-align:center">
-                  <span class="enhance-option-label">次</span>
-                  <span class="enhance-option-label" style="margin-left:8px">延迟</span>
-                  <input type="number" class="enhance-select" id="ruleNetworkDelay" value="3" min="1" max="30" style="width:48px;text-align:center">
-                  <span class="enhance-option-label">秒</span>
-                </div>
-                <button class="enhance-test-btn" id="testRetryBtn">测试重试</button>
-                <div class="test-result" id="testRetryResult"></div>
-              </div>
-            </details>
-
-            <!-- 配额耗尽 / 速率限制 -->
-            <details class="enhance-rule-details" open>
-              <summary class="enhance-rule-summary">配额耗尽 / 速率限制</summary>
-              <div class="enhance-rule-body">
-                <div class="enhance-option-row">
-                  <span class="enhance-option-label">处理方式</span>
-                  <select class="enhance-select" id="ruleQuotaAction" style="flex:1">
-                    <option value="switch-account">切换账号</option>
-                    <option value="switch-model">切换模型</option>
-                    <option value="notify">仅通知</option>
-                    <option value="ignore">忽略</option>
-                  </select>
-                </div>
-                <div class="enhance-option-row">
-                  <span class="enhance-option-label">切换后</span>
-                  <select class="enhance-select" id="ruleQuotaAfterAction" style="flex:1">
-                    <option value="auto">智能判断</option>
-                    <option value="send-continue">发送继续</option>
-                    <option value="retry-message">重发消息</option>
-                    <option value="none">不操作</option>
-                  </select>
-                </div>
-                <button class="enhance-test-btn" id="testSwitchAccountBtn">测试切号</button>
-                <div class="test-result" id="testSwitchAccountResult"></div>
-              </div>
-            </details>
-
-            <!-- 模型不可用 -->
-            <details class="enhance-rule-details" open>
-              <summary class="enhance-rule-summary">模型不可用</summary>
-              <div class="enhance-rule-body">
-                <div class="enhance-option-row">
-                  <span class="enhance-option-label">处理方式</span>
-                  <select class="enhance-select" id="ruleModelAction" style="flex:1">
-                    <option value="switch-model">切换模型</option>
-                    <option value="switch-account">切换账号</option>
-                    <option value="retry">自动重试</option>
-                    <option value="notify">仅通知</option>
-                    <option value="ignore">忽略</option>
-                  </select>
-                </div>
-                <div class="enhance-option-row">
-                  <span class="enhance-option-label">切换后</span>
-                  <select class="enhance-select" id="ruleModelAfterAction" style="flex:1">
-                    <option value="send-continue">发送继续</option>
-                    <option value="auto">智能判断</option>
-                    <option value="retry-message">重发消息</option>
-                    <option value="none">不操作</option>
-                  </select>
-                </div>
-                <div class="enhance-option-row" style="flex-wrap:wrap;gap:4px">
-                  <span class="enhance-option-label" style="width:100%">模型优先级（拖拽排序）</span>
-                  <div class="enhance-option-row" style="margin-bottom:4px">
-                    <button class="enhance-test-btn" id="fetchModelsBtn" style="flex:1">获取可用模型列表</button>
-                  </div>
-                  <div id="modelPriorityList" class="model-priority-list"></div>
-                  <div id="availableModelsList" class="available-models-list" style="display:none"></div>
-                  <div class="enhance-option-row" style="margin-top:4px">
-                    <input type="text" class="enhance-select" id="modelPriorityInput" placeholder="手动输入模型名..." style="flex:1">
-                    <button class="enhance-test-btn" id="modelPriorityAdd">添加</button>
-                  </div>
-                </div>
-                <div class="enhance-option-row" style="margin-top:4px;gap:4px">
-                  <span class="enhance-option-label">当前模型:</span>
-                  <span id="currentModelName" style="font-size:12px;color:var(--accent)">-</span>
-                </div>
-                <div class="enhance-option-row" style="gap:4px">
-                  <button class="enhance-test-btn" id="testSwitchModelBtn" style="flex:1">测试切换模型</button>
-                </div>
-                <div class="test-result" id="testSwitchModelResult"></div>
-              </div>
-            </details>
-
-            <!-- 工具调用上限 / 响应截断 -->
-            <details class="enhance-rule-details">
-              <summary class="enhance-rule-summary">工具调用上限 / 响应截断</summary>
-              <div class="enhance-rule-body">
-                <div class="enhance-option-row">
-                  <span class="enhance-option-label">处理方式</span>
-                  <select class="enhance-select" id="ruleContinuationAction" style="flex:1">
-                    <option value="send-continue">发送继续</option>
-                    <option value="notify">仅通知</option>
-                    <option value="ignore">忽略</option>
-                  </select>
-                </div>
-                <label class="enhance-option">
-                  <input type="checkbox" id="enhAutoSendContinue" checked>
-                  <span>自动发送 continue</span>
-                </label>
-                <button class="enhance-test-btn" id="testSendContinueBtn">测试发送 continue</button>
-                <div class="test-result" id="testSendContinueResult"></div>
-              </div>
-            </details>
-
-            <!-- 权限请求 -->
-            <details class="enhance-rule-details">
-              <summary class="enhance-rule-summary">权限请求</summary>
-              <div class="enhance-rule-body">
-                <div class="enhance-option-row">
-                  <span class="enhance-option-label">处理方式</span>
-                  <select class="enhance-select" id="rulePermissionAction" style="flex:1">
-                    <option value="auto-allow">自动允许</option>
-                    <option value="notify">仅通知</option>
-                  </select>
-                </div>
-                <div id="permissionScopeOpts">
-                  <label class="enhance-option"><input type="checkbox" id="permScopeWeb" checked><span>Web 请求</span></label>
-                  <label class="enhance-option"><input type="checkbox" id="permScopeTerminal"><span>终端命令</span></label>
-                  <label class="enhance-option"><input type="checkbox" id="permScopeFile"><span>文件写入</span></label>
-                </div>
-                <button class="enhance-test-btn" id="testPermissionBtn">测试权限检测</button>
-                <div class="test-result" id="testPermissionResult"></div>
-              </div>
-            </details>
-
-            <!-- 需要用户介入 -->
-            <details class="enhance-rule-details">
-              <summary class="enhance-rule-summary">需要用户介入</summary>
-              <div class="enhance-rule-body">
-                <div class="enhance-option-row">
-                  <span class="enhance-option-label">处理方式</span>
-                  <select class="enhance-select" id="ruleUserAction" style="flex:1">
-                    <option value="notify">仅通知</option>
-                    <option value="ignore">忽略</option>
-                  </select>
-                </div>
-                <p class="enhance-hint" style="margin:4px 0 0;font-size:11px;opacity:0.6">登录失效、上下文过长、版本过期等</p>
-              </div>
-            </details>
-
-            <!-- 自定义规则 -->
-            <details class="enhance-rule-details">
-              <summary class="enhance-rule-summary">自定义规则</summary>
-              <div class="enhance-rule-body">
-                <div id="customRulesList"></div>
-                <div class="enhance-option-row" style="margin-top:4px">
-                  <button class="enhance-test-btn" id="customRuleAdd" style="width:100%">+ 添加规则</button>
-                </div>
-              </div>
-            </details>
-
-            <!-- 恢复历史日志 -->
-            <details class="enhance-recovery-log-details">
-              <summary class="enhance-recovery-log-summary">
-                <span>恢复历史日志</span>
-                <span class="recovery-log-count" id="recoveryLogCount">0</span>
-              </summary>
-              <div class="enhance-recovery-log-toolbar">
-                <select class="enhance-select" id="recoveryLogFilter" style="flex:1">
-                  <option value="">全部分类</option>
-                  <option value="networkErrors">网络超时</option>
-                  <option value="quotaErrors">配额耗尽</option>
-                  <option value="modelErrors">模型不可用</option>
-                  <option value="continuationErrors">响应截断</option>
-                  <option value="permissionRequests">权限请求</option>
-                  <option value="userIntervention">用户介入</option>
-                  <option value="custom">自定义规则</option>
-                </select>
-                <button class="enhance-test-btn" id="recoveryLogRefresh" title="刷新">刷新</button>
-                <button class="enhance-test-btn" id="recoveryLogClear" title="清空">清空</button>
-              </div>
-              <div class="recovery-log-list" id="recoveryLogList"></div>
-            </details>
-          </div>
 
           <!-- 完成提醒 -->
           <div class="enhance-section">
@@ -1264,7 +1199,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     <!-- 多实例管理面板 -->
     <div class="card instance-card" id="instanceArea">
-      <details class="inst-details" id="instDetails" open>
+      <details class="inst-details" id="instDetails">
         <summary class="inst-summary">
           <svg class="inst-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
           <span class="inst-title" title="同时开多个 Windsurf 窗口，每个窗口登不同账号，可以同时用同一个项目">多实例分身</span>
@@ -1374,9 +1309,401 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
 
+    <!-- 自动继续面板 -->
+    <div class="card auto-switch-card ac-root" id="autoContinueArea">
+      <details class="as-details" id="acDetails">
+        <summary class="as-top-summary">
+          <svg class="as-top-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M12 17h.01"/></svg>
+          <span class="as-top-title">自动继续</span>
+          <span class="as-top-arrow"></span>
+          <label class="as-switch" onclick="event.stopPropagation()">
+            <input type="checkbox" id="enhAutoContinueEnabled" checked>
+            <span class="as-switch-track"><span class="as-switch-thumb"></span></span>
+          </label>
+        </summary>
+        <div class="ac-body" id="acBody">
+          <!-- 关闭状态 -->
+          <div id="acOffHint" class="ac-off-state" style="display:none">
+            <div class="ac-glass-card">
+              <div class="ac-off-content">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="ac-dim-icon"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+                <div class="ac-off-title">功能已禁用</div>
+                <p class="ac-off-desc">开启总开关以激活自动化任务处理</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 开启状态 -->
+          <div id="acOnContent">
+            <!-- Pill Tab -->
+            <div class="ac-nav">
+              <input type="radio" name="acTab" id="acTabGuardian" value="guardian" checked>
+              <label for="acTabGuardian">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <span>守护模式</span>
+              </label>
+              <input type="radio" name="acTab" id="acTabLongTask" value="long-task">
+              <label for="acTabLongTask">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                <span>长任务</span>
+              </label>
+              <div class="ac-nav-indicator"></div>
+            </div>
+
+            <!-- 守护模式 -->
+            <div class="ac-section-panel" id="acPanelGuardian">
+              <div class="ac-section-header">
+                <span class="ac-dot"></span>
+                <span class="ac-section-desc">监听 AI 生成状态，自动处理异常中断</span>
+              </div>
+              <div class="ac-option-grid">
+                <div class="ac-option-item">
+                  <label class="ac-checkbox-wrapper">
+                    <input type="checkbox" id="enhGdAutoContinueBtn" checked>
+                    <div class="ac-checkbox-custom"></div>
+                    <div class="ac-option-label-group">
+                      <span class="ac-option-name">自动续写</span>
+                      <span class="ac-option-hint">自动点击「继续回复」按钮</span>
+                    </div>
+                  </label>
+                </div>
+                <div class="ac-option-item">
+                  <label class="ac-checkbox-wrapper">
+                    <input type="checkbox" id="enhGdAutoRetry" checked>
+                    <div class="ac-checkbox-custom"></div>
+                    <div class="ac-option-label-group">
+                      <span class="ac-option-name">自动重试</span>
+                      <span class="ac-option-hint">自动处理网络超时或生成失败</span>
+                    </div>
+                  </label>
+                </div>
+                <div class="ac-option-item">
+                  <label class="ac-checkbox-wrapper">
+                    <input type="checkbox" id="enhGdAutoSendOnToolLimit" checked>
+                    <div class="ac-checkbox-custom"></div>
+                    <div class="ac-option-label-group">
+                      <span class="ac-option-name">突破限制</span>
+                      <span class="ac-option-hint">工具调用达到上限时自动发送 continue</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <!-- 高级设置 -->
+              <details class="ac-inner-collapse">
+                <summary class="ac-inner-summary">
+                  <span>高级安全设置</span>
+                  <div class="ac-summary-line"></div>
+                </summary>
+                <div class="ac-inner-content">
+                  <div class="ac-permission-box">
+                    <div class="ac-sub-label">自动批准权限</div>
+                    <div class="ac-tag-group">
+                      <label class="ac-tag-check"><input type="checkbox" id="enhGdApproveWeb" checked><span>Web 访问</span></label>
+                      <label class="ac-tag-check"><input type="checkbox" id="enhGdApproveTerminal" checked><span>终端执行</span></label>
+                      <label class="ac-tag-check"><input type="checkbox" id="enhGdApproveFile" checked><span>文件写入</span></label>
+                    </div>
+                  </div>
+                  <div class="ac-option-item" style="margin-top:10px">
+                    <label class="ac-checkbox-wrapper">
+                      <input type="checkbox" id="enhGdDismissCorrupt" checked>
+                      <div class="ac-checkbox-custom"></div>
+                      <span class="ac-option-name">自动关闭「文件损坏」干扰弹窗</span>
+                    </label>
+                  </div>
+                </div>
+              </details>
+            </div>
+
+            <!-- 长任务模式 -->
+            <div class="ac-section-panel" id="acPanelLongTask" style="display:none">
+              <div class="ac-status-strip">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span class="ac-status-indicator ac-dot-idle" id="acStatusDot"></span>
+                  <span class="ac-status-label" id="acStatusText">系统就绪</span>
+                </div>
+                <div id="acStatusCount" style="display:none">
+                  <span class="ac-count-pill"><span id="acContinueCount">0</span> 轮</span>
+                </div>
+              </div>
+
+              <div class="ac-queue-container">
+                <div class="ac-sub-header">
+                  <span class="ac-sub-title">任务指令队列</span>
+                  <span class="ac-sub-info">按顺序自动发送指令</span>
+                </div>
+                <div id="acQueueList">
+                  <div class="ac-queue-row" data-idx="0">
+                    <div class="ac-drag-handle">⠿</div>
+                    <input type="text" class="ac-input-clean" value="继续" placeholder="输入指令...">
+                    <button class="ac-btn-icon ac-btn-del" title="删除">✕</button>
+                  </div>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:6px">
+                  <input type="text" class="ac-input-field" id="acQueueNewText" placeholder="添加新指令..." style="flex:1">
+                  <button class="ac-btn-primary" id="acQueueAddBtn">添加</button>
+                </div>
+              </div>
+
+              <div class="ac-lt-options">
+                <label class="ac-checkbox-wrapper">
+                  <input type="checkbox" id="enhLtLoop" checked>
+                  <div class="ac-checkbox-custom"></div>
+                  <span class="ac-option-name">循环运行队列</span>
+                </label>
+
+                <details class="ac-inner-collapse">
+                  <summary class="ac-inner-summary"><span>运行参数</span><div class="ac-summary-line"></div></summary>
+                  <div class="ac-inner-content">
+                    <div class="ac-row-between">
+                      <span class="ac-param-label">空闲等待时间</span>
+                      <div class="ac-input-group-unit">
+                        <input type="number" id="enhLtIdleSeconds" min="3" max="120" value="8">
+                        <span>秒</span>
+                      </div>
+                    </div>
+                    <div class="ac-row-between">
+                      <span class="ac-param-label">最大执行轮次</span>
+                      <div class="ac-input-group-unit">
+                        <input type="number" id="enhLtMaxContinue" min="0" max="9999" value="0">
+                        <span>(0=无限)</span>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              </div>
+
+              <div class="ac-action-bar">
+                <div class="ac-action-main">
+                  <button class="ac-btn-run" id="acStartBtn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 9-14 9V3z"/></svg>
+                    开始运行
+                  </button>
+                  <button class="ac-btn-pause" id="acPauseBtn" style="display:none">⏸ 暂停</button>
+                  <button class="ac-btn-resume" id="acResumeBtn" style="display:none">▶ 继续</button>
+                  <button class="ac-btn-stop" id="acStopBtn" style="display:none">⏹ 停止</button>
+                </div>
+                <button class="ac-btn-ghost" id="testSendContinueBtn" title="测试发送">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                </button>
+              </div>
+              <div class="test-result" id="testSendContinueResult"></div>
+              <button class="ac-btn-danger" id="acForceStopBtn" disabled>强制中断引擎</button>
+              <div class="ac-last-action" id="acLastAction" style="display:none"></div>
+            </div>
+          </div>
+
+          <!-- 错误恢复核心引擎 -->
+          <div class="ac-engine-divider"></div>
+          <details class="ac-engine-collapse">
+            <summary class="ac-engine-summary">
+              <div class="ac-engine-summary-content">
+                <div class="ac-engine-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+                </div>
+                <div class="ac-engine-title-group">
+                  <span class="ac-engine-title">错误恢复核心</span>
+                  <span class="ac-engine-status">智能监控中</span>
+                </div>
+              </div>
+              <div class="ac-engine-arrow"></div>
+            </summary>
+            <div class="ac-engine-body">
+              <div class="ac-engine-intro">
+                <label class="ac-toggle-simple">
+                  <input type="checkbox" id="enhAutoRecoveryEnabled" checked>
+                  <span class="ac-toggle-slider"></span>
+                  <span>启用自动故障排除引擎</span>
+                </label>
+              </div>
+
+              <div class="ac-rule-grid">
+                <!-- 网络故障 -->
+                <details class="ac-rule-item">
+                  <summary class="ac-rule-header">
+                    <span class="ac-rule-dot net"></span>
+                    <span class="ac-rule-name">网络超时 / 通信异常</span>
+                  </summary>
+                  <div class="ac-rule-content">
+                    <div class="ac-field-row">
+                      <span>处理策略</span>
+                      <select class="ac-select-minimal" id="ruleNetworkAction">
+                        <option value="retry">立即重试</option>
+                        <option value="switch-account">切换备用号</option>
+                        <option value="notify">仅发出警报</option>
+                        <option value="ignore">不处理</option>
+                      </select>
+                    </div>
+                    <div class="ac-field-row" id="ruleNetworkRetryOpts">
+                      <span>重试参数</span>
+                      <div class="ac-param-inputs">
+                        <input type="number" id="ruleNetworkMaxRetries" value="3" min="1" max="10" style="width:40px;text-align:center">次 /
+                        <input type="number" id="ruleNetworkDelay" value="3" min="1" max="30" style="width:40px;text-align:center">秒
+                      </div>
+                    </div>
+                    <button class="ac-btn-small" id="testRetryBtn">执行模拟测试</button>
+                    <div class="test-result" id="testRetryResult"></div>
+                  </div>
+                </details>
+
+                <!-- 配额/频率 -->
+                <details class="ac-rule-item">
+                  <summary class="ac-rule-header">
+                    <span class="ac-rule-dot quota"></span>
+                    <span class="ac-rule-name">额度耗尽 / 访问限流</span>
+                  </summary>
+                  <div class="ac-rule-content">
+                    <div class="ac-field-row">
+                      <span>自动切号</span>
+                      <div class="ac-mini-checks">
+                        <label><input type="checkbox" id="enhAutoSwitchOnQuota" checked><span>额度</span></label>
+                        <label><input type="checkbox" id="enhAutoSwitchOnRateLimit" checked><span>限流</span></label>
+                      </div>
+                    </div>
+                    <div class="ac-field-row">
+                      <span>恢复策略</span>
+                      <select class="ac-select-minimal" id="ruleQuotaAction">
+                        <option value="switch-account">轮换至下一账号</option>
+                        <option value="switch-model">降级至备用模型</option>
+                        <option value="notify">仅发出警报</option>
+                        <option value="ignore">忽略</option>
+                      </select>
+                    </div>
+                    <div class="ac-field-row">
+                      <span>切号后动作</span>
+                      <select class="ac-select-minimal" id="ruleQuotaAfterAction">
+                        <option value="auto">智能接续</option>
+                        <option value="send-continue">强制发继续</option>
+                        <option value="retry-message">重发上一条</option>
+                        <option value="none">等待指令</option>
+                      </select>
+                    </div>
+                    <button class="ac-btn-small" id="testSwitchAccountBtn">模拟切号流程</button>
+                    <div class="test-result" id="testSwitchAccountResult"></div>
+                  </div>
+                </details>
+
+                <!-- 模型故障 -->
+                <details class="ac-rule-item">
+                  <summary class="ac-rule-header">
+                    <span class="ac-rule-dot model"></span>
+                    <span class="ac-rule-name">模型过载 / 暂不可用</span>
+                  </summary>
+                  <div class="ac-rule-content">
+                    <div class="ac-field-row">
+                      <span>恢复方案</span>
+                      <select class="ac-select-minimal" id="ruleModelAction">
+                        <option value="switch-model">轮换可用模型</option>
+                        <option value="switch-account">换号并重试</option>
+                        <option value="retry">原样重试</option>
+                        <option value="notify">仅通知</option>
+                        <option value="ignore">忽略</option>
+                      </select>
+                    </div>
+                    <div class="ac-field-row">
+                      <span>切换后</span>
+                      <select class="ac-select-minimal" id="ruleModelAfterAction">
+                        <option value="send-continue">发送继续</option>
+                        <option value="auto">智能判断</option>
+                        <option value="retry-message">重发消息</option>
+                        <option value="none">不操作</option>
+                      </select>
+                    </div>
+                    <div style="margin-top:8px">
+                      <div class="ac-sub-label">可用模型优先级</div>
+                      <button class="ac-btn-outline" id="fetchModelsBtn">刷新列表</button>
+                      <div id="modelPriorityList" class="ac-tag-list"></div>
+                      <div id="availableModelsList" style="display:none"></div>
+                      <div style="display:flex;gap:4px;margin-top:4px">
+                        <input type="text" class="ac-input-field" id="modelPriorityInput" placeholder="手动输入模型名..." style="flex:1">
+                        <button class="ac-btn-small" id="modelPriorityAdd">添加</button>
+                      </div>
+                      <div class="ac-field-row" style="margin-top:6px">
+                        <span>当前模型</span>
+                        <span id="currentModelName" style="color:var(--ac-accent)">-</span>
+                      </div>
+                    </div>
+                    <button class="ac-btn-small" id="testSwitchModelBtn">测试切换模型</button>
+                    <div class="test-result" id="testSwitchModelResult"></div>
+                  </div>
+                </details>
+
+                <!-- 其他规则 -->
+                <details class="ac-rule-item">
+                  <summary class="ac-rule-header">
+                    <span class="ac-rule-dot other"></span>
+                    <span class="ac-rule-name">截断 / 权限 / 自定义</span>
+                  </summary>
+                  <div class="ac-rule-content">
+                    <div class="ac-field-row">
+                      <span>截断处理</span>
+                      <select class="ac-select-minimal" id="ruleContinuationAction">
+                        <option value="send-continue">发送接续指令</option>
+                        <option value="notify">仅通知</option>
+                        <option value="ignore">忽略</option>
+                      </select>
+                    </div>
+                    <div class="ac-field-row">
+                      <span>权限请求</span>
+                      <select class="ac-select-minimal" id="rulePermissionAction">
+                        <option value="auto-allow">自动允许</option>
+                        <option value="notify">仅通知</option>
+                      </select>
+                    </div>
+                    <div id="permissionScopeOpts" style="margin:6px 0">
+                      <div class="ac-mini-checks">
+                        <label><input type="checkbox" id="permScopeWeb" checked><span>Web</span></label>
+                        <label><input type="checkbox" id="permScopeTerminal"><span>终端</span></label>
+                        <label><input type="checkbox" id="permScopeFile"><span>文件</span></label>
+                      </div>
+                    </div>
+                    <button class="ac-btn-small" id="testPermissionBtn">测试权限检测</button>
+                    <div class="test-result" id="testPermissionResult"></div>
+                    <div class="ac-field-row" style="margin-top:8px">
+                      <span>用户介入</span>
+                      <select class="ac-select-minimal" id="ruleUserAction">
+                        <option value="notify">仅通知</option>
+                        <option value="ignore">忽略</option>
+                      </select>
+                    </div>
+                    <div id="customRulesList" class="ac-custom-rules" style="margin-top:8px"></div>
+                    <button class="ac-btn-small" id="customRuleAdd" style="width:100%;margin-top:4px">+ 增加正则匹配规则</button>
+                  </div>
+                </details>
+              </div>
+
+              <!-- 历史日志 -->
+              <details class="ac-log-collapse">
+                <summary class="ac-log-summary">
+                  <span>查看恢复执行日志</span>
+                  <span class="ac-log-count" id="recoveryLogCount">0</span>
+                </summary>
+                <div class="ac-log-body">
+                  <div class="ac-log-toolbar">
+                    <select id="recoveryLogFilter" class="ac-select-mini">
+                      <option value="">所有日志</option>
+                      <option value="networkErrors">网络</option>
+                      <option value="quotaErrors">配额</option>
+                      <option value="modelErrors">模型</option>
+                      <option value="continuationErrors">截断</option>
+                      <option value="permissionRequests">权限</option>
+                      <option value="userIntervention">介入</option>
+                      <option value="custom">自定义</option>
+                    </select>
+                    <button class="ac-btn-icon" id="recoveryLogRefresh" title="刷新">刷新</button>
+                    <button class="ac-btn-icon" id="recoveryLogClear" title="清空">清空</button>
+                </div>
+                <div class="recovery-log-list" id="recoveryLogList"></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+    </div>
+
     <!-- 自动切号面板 -->
     <div class="card auto-switch-card" id="autoSwitchArea">
-      <details class="as-details" id="asDetails" open>
+      <details class="as-details" id="asDetails">
         <summary class="as-top-summary">
           <svg class="as-top-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           <span class="as-top-title">自动切号</span>
@@ -1443,16 +1770,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <p class="as-strategy-desc">决定自动切号 / 错误切号挑下一个号的优先级。</p>
             <div class="as-strategy-heading">策略</div>
             <label class="as-strategy-option">
-              <input type="radio" name="asSwitchStrategy" value="lowestNonZero" checked>
+              <input type="radio" name="asSwitchStrategy" value="lowestNonZero">
               <div class="as-strategy-content">
-                <strong>最低非零优先（推荐）</strong>
+                <strong>最低非零优先</strong>
                 <span class="as-strategy-explain">优先用低额度但还没用完的号，把剩余消耗完再用满额度号。避开周/日额度为 0 的号。</span>
               </div>
             </label>
             <label class="as-strategy-option">
-              <input type="radio" name="asSwitchStrategy" value="highestFirst">
+              <input type="radio" name="asSwitchStrategy" value="highestFirst" checked>
               <div class="as-strategy-content">
-                <strong>满额度优先（旧策略）</strong>
+                <strong>满额度优先（推荐）</strong>
                 <span class="as-strategy-explain">优先用额度最高的号。可能造成低额度号永远用不到。</span>
               </div>
             </label>
@@ -1657,11 +1984,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <label class="batch-mode-label">导入格式</label>
             <div class="batch-radio-group">
               <label class="batch-radio"><input type="radio" name="batchFormat" value="text" checked> 文本</label>
-              <label class="batch-radio"><input type="radio" name="batchFormat" value="json"> JSON 格式</label>
+              <label class="batch-radio"><input type="radio" name="batchFormat" value="json"> JSON</label>
+              <label class="batch-radio"><input type="radio" name="batchFormat" value="devin"> Devin Token</label>
             </div>
           </div>
 
-          <div class="batch-section">
+          <div class="batch-section" id="batchAuthSection">
             <label class="batch-mode-label">登录方式</label>
             <div class="batch-radio-group">
               <label class="batch-radio"><input type="radio" name="batchAuthMethod" value="auto" checked> 自动</label>
@@ -1685,15 +2013,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
             <select id="batchDelimiter" hidden><option value="----">----</option><option value="\\t">Tab</option><option value=" ">空格</option><option value=",">逗号</option><option value="|">竖线</option><option value="custom">自定义</option></select>
 
-            <label class="batch-hint">每行一组: 邮箱{分隔符}密码 — 或直接粘贴以 auth1_ 开头的 token 自动识别</label>
-            <textarea id="batchText" class="batch-textarea" rows="6" placeholder="user1@example.com----password123&#10;user2@example.com----abc456789&#10;auth1_xxxx... (直接粘 auth1_ token 也行)"></textarea>
+            <label class="batch-hint">每行一组: 邮箱{分隔符}密码 — 或直接粘贴 auth1_ / devin-session-token$ 开头的 token 自动识别</label>
+            <textarea id="batchText" class="batch-textarea" rows="6" placeholder="user1@example.com----password123&#10;user2@example.com----abc456789&#10;auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
 
             <details class="batch-example">
               <summary>格式示例（点击展开）</summary>
               <div class="batch-example-content">
-                <div class="batch-example-label">文本示例</div>
+                <div class="batch-example-label">邮箱 + 密码</div>
                 <pre class="batch-example-code">user1@example.com----password123
 user2@example.com----abc456789</pre>
+                <div class="batch-example-label" style="margin-top:8px">Token 直接导入</div>
+                <pre class="batch-example-code">auth1_xxxxxxxxxxxx...
+devin-session-token$eyJhbGciOi...</pre>
               </div>
             </details>
 
@@ -1716,6 +2047,22 @@ user2@example.com----abc456789</pre>
             </details>
 
             <button class="primary" data-action="batchImportJson">批量导入</button>
+          </div>
+
+          <div id="batchDevinArea" hidden>
+            <label class="batch-hint">每行一个 Devin Session Token，自动提取 JWT 并导入。</label>
+            <textarea id="batchDevinText" class="batch-textarea" rows="6" placeholder="devin-session-token$eyJhbGciOiJIUzI1NiIs...&#10;devin-session-token$eyJhbGciOiJIUzI1NiIs..."></textarea>
+
+            <details class="batch-example">
+              <summary>格式示例（点击展开）</summary>
+              <div class="batch-example-content">
+                <div class="batch-example-label">Devin Session Token</div>
+                <pre class="batch-example-code">devin-session-token$eyJhbGciOiJIUzI1NiIs...
+devin-session-token$eyJhbGciOiJIUzI1NiIs...</pre>
+              </div>
+            </details>
+
+            <button class="primary" data-action="batchImportDevin">批量导入</button>
           </div>
 
           <div id="batchMsg" class="batch-msg" hidden></div>

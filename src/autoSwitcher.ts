@@ -34,6 +34,7 @@ export interface AutoSwitchSettings {
 type UsageUpdateCb = (email: string, snapshot: UsageSnapshot | null, error?: string) => void;
 type SwitchEventCb = (log: string, status: string, statusType: string) => void;
 type RefreshUICb = () => void;
+type AutoSwitchDoneCb = (newEmail: string, reason: string) => void;
 
 // ─── 默认值 ─────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ const DEFAULTS: AutoSwitchSettings = {
   cooldownSec: 30,
   scoreMode: 'min' as ScoreMode,
   refreshMin: 5,
-  switchStrategy: 'lowestNonZero' as SwitchStrategy,
+  switchStrategy: 'highestFirst' as SwitchStrategy,
   minQuota: 10,
   preferUsedThreshold: 50,
   poolScope: 'all' as PoolScope,
@@ -64,6 +65,7 @@ export class AutoSwitcher implements vscode.Disposable {
   private _refreshTimer: NodeJS.Timeout | null = null;
   private _checkTimer: NodeJS.Timeout | null = null;
   private _refreshing = false;
+  private _switching = false;
   private _cooldownUntil = 0;
   private _lastSwitchedFrom = '';
   private _lastSwitchedAt = 0;
@@ -71,6 +73,7 @@ export class AutoSwitcher implements vscode.Disposable {
   private _onUsageUpdate: UsageUpdateCb | null = null;
   private _onSwitchEvent: SwitchEventCb | null = null;
   private _onRefreshUI: RefreshUICb | null = null;
+  private _onAutoSwitchDone: AutoSwitchDoneCb | null = null;
 
   constructor(ctx: vscode.ExtensionContext) {
     this._ctx = ctx;
@@ -114,6 +117,7 @@ export class AutoSwitcher implements vscode.Disposable {
   set onUsageUpdate(cb: UsageUpdateCb | null) { this._onUsageUpdate = cb; }
   set onSwitchEvent(cb: SwitchEventCb | null) { this._onSwitchEvent = cb; }
   set onRefreshUI(cb: RefreshUICb | null) { this._onRefreshUI = cb; }
+  set onAutoSwitchDone(cb: AutoSwitchDoneCb | null) { this._onAutoSwitchDone = cb; }
 
   // ── 生命周期 ──
 
@@ -129,47 +133,65 @@ export class AutoSwitcher implements vscode.Disposable {
 
   // ── 缓存访问 ──
 
+  get cacheSize(): number { return this._cache.size; }
+
   getCached(email: string): UsageCacheEntry | undefined { return this._cache.get(email); }
 
   getAllCached(): Map<string, UsageCacheEntry> { return this._cache; }
 
   // ── 刷新 ──
 
+  // 并行批量大小：同时查询的账号数
+  private static readonly BATCH_SIZE = 5;
+  // 批次间等待时间（ms）
+  private static readonly BATCH_DELAY = 1500;
+
   async refreshAll(force = false): Promise<void> {
     if (this._refreshing) return;
     this._refreshing = true;
-    let consecutiveErrors = 0;
     try {
       const accounts = await accountStore.readAccounts(this._ctx);
-      for (const acct of accounts) {
-        if (acct.disabled) continue;
-        if (!force && this._shouldSkip(acct.email)) continue;
-        const { snapshot, error } = await fetchUsage(acct);
-        const entry: UsageCacheEntry = { snapshot, error, ts: Date.now() };
-        if (snapshot) {
-          const d = snapshot.dailyRemainingPercent;
-          const w = snapshot.weeklyRemainingPercent;
-          if (d <= 0 && w <= 0) {
-            const reset = Math.min(snapshot.dailyResetAtUnix || Infinity, snapshot.weeklyResetAtUnix || Infinity);
-            if (reset !== Infinity) entry.skipUntil = reset * 1000;
-          } else if (d <= 0 && snapshot.dailyResetAtUnix) {
-            entry.skipUntil = snapshot.dailyResetAtUnix * 1000;
-          } else if (w <= 0 && snapshot.weeklyResetAtUnix) {
-            entry.skipUntil = snapshot.weeklyResetAtUnix * 1000;
-          }
-        }
-        this._cache.set(acct.email, entry);
-        this._onUsageUpdate?.(acct.email, snapshot, error);
+      const ttlMs = this.settings.refreshMin * 60_000;
 
-        // 网络错误时指数退避，避免频繁请求被断开
-        if (error) {
-          consecutiveErrors++;
-          await sleep(THROTTLE_MS + ERROR_BACKOFF_MS * Math.min(consecutiveErrors, 3));
-        } else {
-          consecutiveErrors = 0;
-          await sleep(THROTTLE_MS);
+      // 过滤需要刷新的账号
+      const toRefresh = accounts.filter(acct => {
+        if (acct.disabled) return false;
+        const cached = this._cache.get(acct.email);
+        // 额度耗尽的号始终跳过（不论 force），等重置时间到再查
+        if (cached?.skipUntil && Date.now() < cached.skipUntil) return false;
+        // force 时跳过 TTL 检查，否则遵守 TTL
+        if (!force && cached && Date.now() - cached.ts < ttlMs) return false;
+        return true;
+      });
+
+      const skipped = accounts.length - toRefresh.length;
+      if (skipped > 0) {
+        console.log(`[autoSwitch] refreshAll: ${toRefresh.length} 个待刷新, ${skipped} 个跳过`);
+      }
+
+      // 并行批量刷新
+      let consecutiveFailBatches = 0;
+      for (let i = 0; i < toRefresh.length; i += AutoSwitcher.BATCH_SIZE) {
+        const batch = toRefresh.slice(i, i + AutoSwitcher.BATCH_SIZE);
+        await Promise.all(batch.map(acct => this._refreshOne(acct, true)));
+
+        // 检查本批是否全部有 error（网络断了等）
+        const batchHasErrors = batch.every(a => this._cache.get(a.email)?.error);
+        if (batchHasErrors) consecutiveFailBatches++;
+        else consecutiveFailBatches = 0;
+
+        // 连续 3 批全失败 → 网络可能断了，提前终止
+        if (consecutiveFailBatches >= 3) {
+          console.warn(`[autoSwitch] refreshAll: 连续 ${consecutiveFailBatches} 批失败，终止刷新`);
+          break;
+        }
+
+        // 批次间延迟（有错误时额外等待）
+        if (i + AutoSwitcher.BATCH_SIZE < toRefresh.length) {
+          await sleep(AutoSwitcher.BATCH_DELAY + (batchHasErrors ? ERROR_BACKOFF_MS : 0));
         }
       }
+
       // 全量刷新完成后检查自动切号
       this._checkAndSwitch();
     } finally {
@@ -190,7 +212,7 @@ export class AutoSwitcher implements vscode.Disposable {
     if (this._checkTimer) { clearInterval(this._checkTimer); this._checkTimer = null; }
 
     const s = this.settings;
-    // 全量刷新定时器（始终运行）；force=true 避免被自身 TTL 跳过所有账号
+    // 全量刷新定时器（始终运行）；force=true 只跳过 TTL，不跳过 skipUntil
     this._refreshTimer = setInterval(() => this.refreshAll(true), s.refreshMin * 60_000);
     // 自动切号检查（仅启用时）
     if (s.enabled) {
@@ -263,86 +285,96 @@ export class AutoSwitcher implements vscode.Disposable {
   private async _checkAndSwitch(): Promise<void> {
     const s = this.settings;
     if (!s.enabled) { console.log('[autoSwitch] skip: disabled'); return; }
+    if (this._switching) { console.log('[autoSwitch] skip: already switching'); return; }
     if (Date.now() < this._cooldownUntil) {
       console.log(`[autoSwitch] skip: cooldown ${Math.ceil((this._cooldownUntil - Date.now()) / 1000)}s`);
       return;
     }
-
-    const curEmail = this._ctx.globalState.get<string>('lastEmail');
-    if (!curEmail) { console.log('[autoSwitch] skip: no current account'); return; }
-
-    // 当前号缓存过期则先刷新
-    const curEntry = this._cache.get(curEmail);
-    if (!curEntry || Date.now() - curEntry.ts > CURRENT_TTL_MS) {
-      await this.refreshSingle(curEmail, true);
-    }
-
-    const freshEntry = this._cache.get(curEmail);
-    const snap = freshEntry?.snapshot;
-    if (!snap) {
-      console.log(`[autoSwitch] skip: no snapshot for ${curEmail}${freshEntry?.error ? ' err=' + freshEntry.error : ''}`);
-      return;
-    }
-
-    const dPct = clamp(snap.dailyRemainingPercent);
-    const wPct = clamp(snap.weeklyRemainingPercent);
-    const curScore = calcScore(dPct, wPct, s.scoreMode);
-    const minPct = Math.min(dPct, wPct);
-    const minQ = s.minQuota ?? 10;
-
-    // 硬约束：若任一维度低于 minQuota，视为当前号不可用，强制触发切号
-    // 这避免了 scoreMode='daily' 时日限充足但周限耗尽却不切号的陷阱
-    const hardExhausted = minPct <= minQ;
-
-    if (!hardExhausted && curScore > s.threshold) {
-      // 当前号额度充足，无需切换；不发空消息以免覆盖之前状态
-      return;
-    }
-
-    // 确定瓶颈原因
-    let reason: string;
-    if (hardExhausted && minPct === wPct && wPct < dPct) {
-      reason = `周配额耗尽 ${Math.round(wPct)}%`;
-    } else if (hardExhausted && minPct === dPct && dPct < wPct) {
-      reason = `日配额耗尽 ${Math.round(dPct)}%`;
-    } else if (dPct <= s.threshold && wPct <= s.threshold) {
-      reason = `日 ${Math.round(dPct)}% / 周 ${Math.round(wPct)}%`;
-    } else if (s.scoreMode === 'daily' || dPct <= s.threshold) {
-      reason = `日配额 ${Math.round(dPct)}%`;
-    } else {
-      reason = `周配额 ${Math.round(wPct)}%`;
-    }
-
-    // 寻找最佳候选（传入 curScore，使候选至少比当前号好）
-    const cand = this._findBest(curEmail, s.threshold, s.scoreMode, curScore);
-    if (!cand) {
-      const log = `[${ts()}] ${curEmail} ${reason} 低于阈值，无可用候选`;
-      this._onSwitchEvent?.(log, `${curEmail} ${reason} 低于阈值，无可用候选`, 'warn');
-      console.log(`[autoSwitch] ${curEmail} curScore=${Math.round(curScore)} d=${Math.round(dPct)} w=${Math.round(wPct)} no candidates`);
-      return;
-    }
-
-    // 执行切换
-    this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
-    this._lastSwitchedFrom = curEmail;
-    this._lastSwitchedAt = Date.now();
-
-    const log = `[${ts()}] ${curEmail} ${reason} → ${cand.email}`;
-    this._onSwitchEvent?.(log, `${reason} 低于 ${s.threshold}%，切换至 ${cand.email}`, '');
-
+    this._switching = true;
     try {
+      const curEmail = this._ctx.globalState.get<string>('lastEmail');
+      if (!curEmail) { console.log('[autoSwitch] skip: no current account'); return; }
+
+      // 当前号缓存过期则先刷新
+      const curEntry = this._cache.get(curEmail);
+      if (!curEntry || Date.now() - curEntry.ts > CURRENT_TTL_MS) {
+        await this.refreshSingle(curEmail, true);
+      }
+
+      const freshEntry = this._cache.get(curEmail);
+      const snap = freshEntry?.snapshot;
+      if (!snap) {
+        console.log(`[autoSwitch] skip: no snapshot for ${curEmail}${freshEntry?.error ? ' err=' + freshEntry.error : ''}`);
+        return;
+      }
+
+      const dPct = clamp(snap.dailyRemainingPercent);
+      const wPct = clamp(snap.weeklyRemainingPercent);
+      const curScore = calcScore(dPct, wPct, s.scoreMode);
+      const minPct = Math.min(dPct, wPct);
+      const minQ = s.minQuota ?? 10;
+
+      // 硬约束：若任一维度低于 minQuota，视为当前号不可用，强制触发切号
+      // 这避免了 scoreMode='daily' 时日限充足但周限耗尽却不切号的陷阱
+      const hardExhausted = minPct <= minQ;
+
+      if (!hardExhausted && curScore > s.threshold) {
+        // 当前号额度充足，无需切换
+        return;
+      }
+
+      // 确定瓶颈原因
+      let reason: string;
+      if (hardExhausted && minPct === wPct && wPct < dPct) {
+        reason = `周配额耗尽 ${Math.round(wPct)}%`;
+      } else if (hardExhausted && minPct === dPct && dPct < wPct) {
+        reason = `日配额耗尽 ${Math.round(dPct)}%`;
+      } else if (dPct <= s.threshold && wPct <= s.threshold) {
+        reason = `日 ${Math.round(dPct)}% / 周 ${Math.round(wPct)}%`;
+      } else if (s.scoreMode === 'daily' || dPct <= s.threshold) {
+        reason = `日配额 ${Math.round(dPct)}%`;
+      } else {
+        reason = `周配额 ${Math.round(wPct)}%`;
+      }
+
+      // 寻找最佳候选
+      // hardExhausted 时放宽阈值（当前号某个维度已耗尽，候选只需比 0 好即可）
+      const findScore = hardExhausted ? 0 : curScore;
+      const cand = this._findBest(curEmail, s.threshold, s.scoreMode, findScore);
+      if (!cand) {
+        const log = `[${ts()}] ${curEmail} ${reason} 低于阈值，无可用候选`;
+        this._onSwitchEvent?.(log, `${curEmail} ${reason} 低于阈值，无可用候选`, 'warn');
+        console.log(`[autoSwitch] ${curEmail} curScore=${Math.round(curScore)} d=${Math.round(dPct)} w=${Math.round(wPct)} no candidates`);
+        return;
+      }
+
+      const log = `[${ts()}] ${curEmail} ${reason} → ${cand.email}`;
+      this._onSwitchEvent?.(log, `${reason} 低于 ${s.threshold}%，切换至 ${cand.email}`, '');
+
       const accounts = await accountStore.readAccounts(this._ctx);
       const acct = accounts.find(a => a.email === cand.email);
       if (!acct) return;
       const { injectSession } = await import('./sessionInjector');
-      const ok = await injectSession(this._ctx, acct);
+      const ok = await injectSession(this._ctx, acct, { silent: true });
       if (ok) {
+        // 切换成功后才设置 cooldown（失败则立即可重试）
+        this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
+        this._lastSwitchedFrom = curEmail;
+        this._lastSwitchedAt = Date.now();
         await accountStore.setCurrentAccount(this._ctx, cand.email);
         this._onRefreshUI?.();
-        // 切号后立即刷新新旧账号配额并推送到 webview
-        this._refreshAndPush(curEmail, cand.email);
+        // 通知 bridge → windsurf-better.js 显示通知 + 重试消息
+        this._onAutoSwitchDone?.(cand.email, reason);
+        // 后台异步刷新新旧账号配额（不阻塞切号流程）
+        this._refreshAndPush(curEmail, cand.email).catch(() => {});
+      } else {
+        console.warn(`[autoSwitch] injectSession 失败: ${cand.email}`);
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn('[autoSwitch] switch error:', err);
+    } finally {
+      this._switching = false;
+    }
   }
 
   /**
@@ -351,40 +383,65 @@ export class AutoSwitcher implements vscode.Disposable {
    * @returns 切换成功返回新账号 email，失败返回 null
    */
   async forceSwitch(reason: string): Promise<{ email: string } | null> {
-    const s = this.settings;
-    const curEmail = this._ctx.globalState.get<string>('lastEmail');
-    if (!curEmail) return null;
+    // 如果定时器正在切号，等最多 5s（避免信号被白白丢弃）
+    if (this._switching) {
+      for (let i = 0; i < 10; i++) {
+        await sleep(500);
+        if (!this._switching) break;
+      }
+      if (this._switching) return null;
+    }
+    this._switching = true;
+    try {
+      const s = this.settings;
+      const curEmail = this._ctx.globalState.get<string>('lastEmail');
+      if (!curEmail) return null;
 
-    // 强制刷新所有号的额度
-    await this.refreshAll(true);
+      // ── 第 1 步：纯缓存挑号（0ms）──
+      // 信号触发说明当前号 UI 已报错，不需要再 API 验证
+      let cand = this._findBest(curEmail, 0, s.scoreMode);
 
-    // 找最佳候选（不看 threshold，只看谁额度最多）
-    const cand = this._findBest(curEmail, 0, s.scoreMode);
-    if (!cand || cand.score <= 0) return null;
+      // ── 第 2 步：缓存无候选 → 快速并行刷新一批 ──
+      if (!cand) {
+        const accounts = await accountStore.readAccounts(this._ctx);
+        const others = accounts.filter(a => a.email !== curEmail && !a.disabled);
+        if (others.length > 0) {
+          // 并行刷新（最多 10 个，~2s 完成）
+          const batch = others.slice(0, 10);
+          await Promise.allSettled(batch.map(a => this._refreshOne(a, true)));
+          cand = this._findBest(curEmail, 0, s.scoreMode);
+        }
+      }
 
-    // 执行切换
-    const accounts = await accountStore.readAccounts(this._ctx);
-    const acct = accounts.find(a => a.email === cand.email);
-    if (!acct) return null;
+      if (!cand || cand.score <= 0) return null;
 
-    const { injectSession } = await import('./sessionInjector');
-    const ok = await injectSession(this._ctx, acct);
-    if (!ok) return null;
+      // ── 第 3 步：执行切换 ──
+      const accounts = await accountStore.readAccounts(this._ctx);
+      const acct = accounts.find(a => a.email === cand.email);
+      if (!acct) return null;
 
-    // 与 _checkAndSwitch 保持一致：更新冷却时间和反向切号防护
-    this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
-    this._lastSwitchedFrom = curEmail;
-    this._lastSwitchedAt = Date.now();
+      const { injectSession } = await import('./sessionInjector');
+      const ok = await injectSession(this._ctx, acct, { silent: true });
+      if (!ok) return null;
 
-    await accountStore.setCurrentAccount(this._ctx, cand.email);
-    this._onRefreshUI?.();
-    // 切号后立即刷新新旧账号配额并推送到 webview
-    this._refreshAndPush(curEmail, cand.email);
+      // 更新状态
+      this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
+      this._lastSwitchedFrom = curEmail;
+      this._lastSwitchedAt = Date.now();
 
-    const log = `[${ts()}] 信号切号(${reason}): ${curEmail} → ${cand.email}`;
-    this._onSwitchEvent?.(log, `${reason} → ${cand.email}`, '');
+      await accountStore.setCurrentAccount(this._ctx, cand.email);
+      this._onRefreshUI?.();
 
-    return { email: cand.email };
+      const log = `[${ts()}] 信号切号(${reason}): ${curEmail} → ${cand.email}`;
+      this._onSwitchEvent?.(log, `${reason} → ${cand.email}`, '');
+
+      // 后台异步刷新新旧账号配额（不阻塞返回）
+      this._refreshAndPush(curEmail, cand.email).catch(() => {});
+
+      return { email: cand.email };
+    } finally {
+      this._switching = false;
+    }
   }
 
   private _findBest(curEmail: string, threshold: number, mode: ScoreMode, curScore: number = 0): { email: string; score: number } | null {
@@ -432,8 +489,11 @@ export class AutoSwitcher implements vscode.Disposable {
       const dPct = clamp(entry.snapshot.dailyRemainingPercent);
       const wPct = clamp(entry.snapshot.weeklyRemainingPercent);
 
-      // 硬约束：周限和日限是 AND 关系，任一耗尽即不可用
-      // 不能因 scoreMode='daily' 就忽略周限制约（反之亦然）
+      // 硬约束 1：任一维度 ≤1% 视为耗尽，绝对不选（不受 minQ 配置影响）
+      // 典型场景：周 0% 日 100% 的账号实际不可用
+      if (dPct <= 1 || wPct <= 1) { rejectedDueToMinQ++; continue; }
+
+      // 硬约束 2：两个维度取 min，低于 minQ 配置值也不选
       const minViable = Math.min(dPct, wPct);
       if (minViable <= minQ) { rejectedDueToMinQ++; continue; }
 
