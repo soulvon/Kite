@@ -1506,10 +1506,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                   <span class="v2-strip-name">自动故障排除引擎</span>
                   <span class="v2-strip-desc">检测异常并按规则自动恢复</span>
                 </div>
-                <label class="v2-mini-toggle" data-target="enhAutoRecoveryEnabled">
-                  <input type="checkbox" id="enhAutoRecoveryEnabled" checked>
-                  <span class="v2-mini-track"><span class="v2-mini-thumb"></span></span>
-                </label>
+                <div class="v2-mini-toggle is-on" id="enhAutoRecoveryEnabledToggle" data-target="enhAutoRecoveryEnabled"></div>
+                <input type="checkbox" id="enhAutoRecoveryEnabled" checked hidden>
               </div>
 
               <div style="display:flex;flex-direction:column;gap:2px">

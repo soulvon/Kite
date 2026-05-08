@@ -26,6 +26,17 @@
   --accent-cyan: #06b6d4;
   --accent-orange: #f0883e;
   --accent-pink: #ec4899;
+  /* GitHub-style palette (与侧栏 main.css 一致) */
+  --gh-blue: #0e639c;
+  --gh-blue-light: #58a6ff;
+  --gh-blue-soft: #79c0ff;
+  --gh-green: #3fb950;
+  --gh-yellow: #d29922;
+  --gh-yellow-soft: #e3b341;
+  --gh-red: #f85149;
+  --gh-orange: #d19a66;
+  --gh-purple: #a78bfa;
+  --gh-gray: #8b949e;
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -698,7 +709,7 @@ html, body {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   font-family: var(--font-mono);
-  color: #58a6ff;
+  color: var(--gh-blue-light);
 }
 .summary-bar {
   height: 6px;
@@ -710,7 +721,7 @@ html, body {
 }
 .summary-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #0e639c 0%, #3fb950 100%);
+  background: linear-gradient(90deg, var(--gh-blue) 0%, var(--gh-green) 100%);
   border-radius: 3px;
   transition: width 0.5s ease;
   box-shadow: 0 0 6px rgba(14, 99, 156, 0.5);
@@ -841,9 +852,9 @@ html, body {
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
-.grid-active-tag { color: #fff; background: #3fb950; }
-.grid-disabled-tag { color: #f85149; background: rgba(248, 81, 73, 0.18); }
-.grid-locked-tag { color: #d29922; background: rgba(210, 153, 34, 0.18); }
+.grid-active-tag { color: #fff; background: var(--gh-green); }
+.grid-disabled-tag { color: var(--gh-red); background: rgba(248, 81, 73, 0.18); }
+.grid-locked-tag { color: var(--gh-yellow); background: rgba(210, 153, 34, 0.18); }
 
 .grid-card-meta {
   display: flex;
@@ -859,33 +870,33 @@ html, body {
   line-height: 1.3;
   white-space: nowrap;
   background: rgba(167, 139, 250, 0.22);
-  color: #a78bfa;
+  color: var(--gh-purple);
   border: 1px solid rgba(167, 139, 250, 0.35);
 }
 .grid-plan-chip.tier-free,
 .grid-plan-chip.tier-unknown {
   background: rgba(139, 148, 158, 0.18);
-  color: #8b949e;
+  color: var(--gh-gray);
   border-color: rgba(139, 148, 158, 0.3);
 }
 .grid-plan-chip.tier-trial {
   background: rgba(210, 153, 34, 0.2);
-  color: #d29922;
+  color: var(--gh-yellow);
   border-color: rgba(210, 153, 34, 0.35);
 }
 .grid-plan-chip.tier-pro {
   background: rgba(88, 166, 255, 0.2);
-  color: #58a6ff;
+  color: var(--gh-blue-light);
   border-color: rgba(88, 166, 255, 0.35);
 }
 .grid-plan-chip.tier-team {
   background: rgba(63, 185, 80, 0.18);
-  color: #3fb950;
+  color: var(--gh-green);
   border-color: rgba(63, 185, 80, 0.3);
 }
 .grid-plan-chip.tier-enterprise {
   background: rgba(167, 139, 250, 0.22);
-  color: #a78bfa;
+  color: var(--gh-purple);
   border-color: rgba(167, 139, 250, 0.35);
 }
 .grid-server { font-size: 10px; color: var(--text-dim); }
@@ -911,10 +922,10 @@ html, body {
   font-size: 11.5px;
   font-family: var(--font-mono);
 }
-.grid-quota-val.is-ok { color: #3fb950; }
-.grid-quota-val.is-info { color: #58a6ff; }
-.grid-quota-val.is-warn { color: #d19a66; }
-.grid-quota-val.is-danger { color: #f85149; }
+.grid-quota-val.is-ok { color: var(--gh-green); }
+.grid-quota-val.is-info { color: var(--gh-blue-light); }
+.grid-quota-val.is-warn { color: var(--gh-orange); }
+.grid-quota-val.is-danger { color: var(--gh-red); }
 .grid-quota-reset { font-size: 10px; color: var(--text-dim); opacity: 0.8; }
 
 .quota-bar {
@@ -932,19 +943,19 @@ html, body {
   transition: width 0.4s ease;
 }
 .quota-bar-fill.is-ok {
-  background: linear-gradient(90deg, #0e639c 0%, #3fb950 100%);
+  background: linear-gradient(90deg, var(--gh-blue) 0%, var(--gh-green) 100%);
   box-shadow: 0 0 6px rgba(14, 99, 156, 0.5);
 }
 .quota-bar-fill.is-warn {
-  background: linear-gradient(90deg, #d19a66 0%, #e3b341 100%);
+  background: linear-gradient(90deg, var(--gh-orange) 0%, var(--gh-yellow-soft) 100%);
   box-shadow: 0 0 6px rgba(209, 154, 102, 0.5);
 }
 .quota-bar-fill.is-danger {
-  background: linear-gradient(90deg, #f85149 0%, #ef4444 100%);
+  background: linear-gradient(90deg, var(--gh-red) 0%, var(--accent-red) 100%);
   box-shadow: 0 0 6px rgba(248, 81, 73, 0.5);
 }
 .quota-bar-fill.is-info {
-  background: linear-gradient(90deg, #58a6ff 0%, #79c0ff 100%);
+  background: linear-gradient(90deg, var(--gh-blue-light) 0%, var(--gh-blue-soft) 100%);
   box-shadow: 0 0 6px rgba(88, 166, 255, 0.5);
 }
 
@@ -970,10 +981,10 @@ html, body {
   color: var(--text-primary);
   font-family: var(--font-mono);
 }
-.period-red { color: #f85149; font-weight: 600; }
-.period-yellow { color: #d19a66; font-weight: 600; }
-.period-green { color: #3fb950; font-weight: 500; }
-.period-blue { color: #58a6ff; font-weight: 500; }
+.period-red { color: var(--gh-red); font-weight: 600; }
+.period-yellow { color: var(--gh-orange); font-weight: 600; }
+.period-green { color: var(--gh-green); font-weight: 500; }
+.period-blue { color: var(--gh-blue-light); font-weight: 500; }
 .period-gray { color: rgba(226, 232, 240, 0.4); font-weight: 500; }
 
 .grid-card-actions {
@@ -1013,7 +1024,7 @@ html, body {
   font-family: inherit;
 }
 .status-toggle-btn.is-enabled {
-  color: #3fb950;
+  color: var(--gh-green);
   background: rgba(63, 185, 80, 0.12);
   border-color: rgba(63, 185, 80, 0.3);
 }
@@ -1286,7 +1297,7 @@ html, body {
         </div>
         <div class="opt-row">
           <span class="opt-label">形状</span>
-          <select class="sel" style="flex:1">
+          <select class="sel" style="flex:1" onchange="updateBubbleShape(this.value)">
             <option value="pill">胶囊</option>
             <option value="rounded" selected>圆角</option>
             <option value="soft">柔和</option>
@@ -1330,9 +1341,22 @@ html, body {
         <div class="opt-row">
           <span class="opt-label">铃声</span>
           <select class="sel" style="flex:1">
-            <option>Funk</option><option>Ding</option><option>Chime</option><option>Beep</option><option>自定义音符</option><option>音频文件</option>
+            <option>Funk</option><option>Ding</option><option>Chime</option><option>Beep</option><option selected>自定义音符</option><option>音频文件</option>
           </select>
           <button class="btn-solid btn-ghost-solid" style="padding:4px 10px;font-size:10px">试听</button>
+        </div>
+        <!-- 自定义音符（选「自定义音符」时显示） -->
+        <div class="opt-row">
+          <span class="opt-label">音符</span>
+          <input type="text" class="txt" style="flex:1" placeholder="频率:时长, ... 如 880:200,0:50,660:200" value="880:200,0:50,660:200">
+        </div>
+        <!-- 音频文件（选「音频文件」时显示） -->
+        <div class="opt-row">
+          <span class="opt-label">路径</span>
+          <input type="text" class="txt" style="flex:1" placeholder="音频文件路径（.wav / .mp3）">
+          <button class="btn-solid btn-ghost-solid" style="padding:4px 8px;font-size:10px" title="浏览">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          </button>
         </div>
         <div class="opt-row">
           <span class="opt-label">次数</span>
@@ -1367,7 +1391,8 @@ html, body {
 
       <div class="opt-row" style="margin-top:10px">
         <span class="opt-label">范围</span>
-        <select class="sel" style="flex:1"><option>全部账号</option><option>按标签</option><option>当前实例分组</option></select>
+        <select class="sel" style="flex:1"><option>全部账号</option><option selected>按标签</option><option>当前实例分组</option></select>
+        <select class="sel" style="flex:1"><option>工作 (6)</option><option>测试 (4)</option><option>备用 (8)</option></select>
       </div>
 
       <div class="hint">取 min(日配额, 周配额) 作为评分，任一配额低于阈值即触发切号。</div>
@@ -1488,8 +1513,16 @@ html, body {
         </div>
 
         <div class="ctrl-bar">
+          <button class="btn-solid btn-emerald" style="flex:1;justify-content:center">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 9-14 9V3z"/></svg>
+            开始运行
+          </button>
           <button class="btn-solid btn-amber">⏸ 暂停</button>
+          <button class="btn-solid btn-emerald">▶ 继续</button>
           <button class="btn-solid btn-red">⏹ 停止</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn-solid btn-ghost-solid" style="flex:1;font-size:10px;justify-content:center">测试发送</button>
         </div>
       </div>
 
@@ -1654,8 +1687,11 @@ html, body {
           <input type="text" placeholder="搜索账号...">
         </div>
         <select class="sel" style="font-size:10px">
-          <option>⭐ 推荐</option><option>综合配额</option><option>日配额</option><option>周配额</option><option>到期日</option><option>邮箱 A-Z</option>
+          <option>⭐ 推荐</option><option>综合配额</option><option>日配额</option><option>周配额</option><option>到期日</option><option>邮箱 A-Z</option><option>添加时间</option>
         </select>
+        <button class="btn-icon" title="切换排序方向">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+        </button>
         <button class="btn-icon" title="刷新">⟳</button>
       </div>
 
@@ -1834,11 +1870,64 @@ html, body {
     <div class="panel-body">
       <div class="tab-bar">
         <button class="active">批量导入</button>
-        <button>单个登录</button>
-        <button>已登录账户</button>
+        <button onclick="switchAddAcctTab(this,'single')">单个登录</button>
+        <button onclick="switchAddAcctTab(this,'logged')">已登录账户</button>
       </div>
 
-      <div style="margin-top:4px">
+      <!-- Tab: 单个登录 -->
+      <div id="addAcctTabSingle" style="display:none;flex-direction:column;gap:10px">
+        <div>
+          <label class="opt-label" style="display:block;margin-bottom:4px">邮箱</label>
+          <input type="email" class="txt" placeholder="user@example.com">
+        </div>
+        <div>
+          <label class="opt-label" style="display:block;margin-bottom:4px">密码 / Token</label>
+          <input type="password" class="txt" placeholder="密码或 Devin token">
+        </div>
+        <div>
+          <label class="opt-label" style="display:block;margin-bottom:4px">登录方式</label>
+          <div class="radio-inline">
+            <label><input type="radio" name="single-auth" checked> 自动</label>
+            <label><input type="radio" name="single-auth"> Auth1</label>
+            <label><input type="radio" name="single-auth"> Firebase</label>
+            <label><input type="radio" name="single-auth"> Devin Token</label>
+          </div>
+        </div>
+        <div>
+          <label class="opt-label" style="display:block;margin-bottom:4px">标签（可选）</label>
+          <input type="text" class="txt" placeholder="添加后自动贴上这些标签">
+        </div>
+        <button class="btn-solid btn-emerald" style="justify-content:center">添加账号</button>
+      </div>
+
+      <!-- Tab: 已登录账户 -->
+      <div id="addAcctTabLogged" style="display:none;flex-direction:column;gap:8px">
+        <div class="hint" style="padding:8px;background:rgba(59,130,246,0.06);border-left:2px solid var(--accent-blue);border-radius:0 var(--radius-sm) var(--radius-sm) 0">
+          检测到 Windsurf 中已登录的账户，可一键导入。
+        </div>
+        <div class="inst-list">
+          <div class="inst-item">
+            <div class="inst-avatar g1">P</div>
+            <div class="inst-meta">
+              <div class="inst-name">primary@codeium.com <span class="grid-plan-chip tier-pro">PRO</span></div>
+              <div class="inst-email">当前 Windsurf 实例</div>
+            </div>
+            <button class="btn-solid btn-emerald" style="padding:4px 10px;font-size:10px">导入</button>
+          </div>
+          <div class="inst-item">
+            <div class="inst-avatar g3">W</div>
+            <div class="inst-meta">
+              <div class="inst-name">work@codeium.com <span class="grid-plan-chip tier-team">TEAM</span></div>
+              <div class="inst-email">实例 W2</div>
+            </div>
+            <button class="btn-solid btn-ghost-solid" style="padding:4px 10px;font-size:10px" disabled>已存在</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: 批量导入（默认显示） -->
+      <div id="addAcctTabBatch" style="display:flex;flex-direction:column;gap:10px">
+      <div>
         <label class="opt-label" style="display:block;margin-bottom:4px">导入标签</label>
         <input type="text" class="txt" placeholder="为本批导入的账号设置标签（可选）">
       </div>
@@ -1878,6 +1967,7 @@ user2@example.com----abc456789
 auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
 
       <button class="btn-solid btn-emerald" style="justify-content:center">批量导入</button>
+      </div>
     </div>
   </div>
 
@@ -2026,7 +2116,25 @@ auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
       <div class="divider"></div>
 
       <div>
-        <div class="section-title">恢复执行日志 · 12 条</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+          <span class="section-title" style="margin:0;flex:1">恢复执行日志 · 12 条</span>
+          <select class="sel" style="font-size:10px;padding:2px 18px 2px 6px">
+            <option value="">所有日志</option>
+            <option value="networkErrors">网络</option>
+            <option value="quotaErrors">配额</option>
+            <option value="modelErrors">模型</option>
+            <option value="continuationErrors">截断</option>
+            <option value="permissionRequests">权限</option>
+            <option value="userIntervention">介入</option>
+            <option value="custom">自定义</option>
+          </select>
+          <button class="btn-solid btn-ghost-solid" style="padding:3px 8px;font-size:10px" title="刷新">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+          <button class="btn-solid btn-ghost-solid" style="padding:3px 8px;font-size:10px" title="清空">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          </button>
+        </div>
         <div class="log-viewer">
           <div class="log-line"><span class="log-ts">03:58</span><span class="log-lvl-ok">✓</span><span>[quota] 已切换至 backup02@codeium.com</span></div>
           <div class="log-line"><span class="log-ts">03:57</span><span class="log-lvl-info">i</span><span>[network] 重试成功 (2/3)</span></div>
@@ -2488,6 +2596,53 @@ function updateBubbleTheme(key) {
     }
   });
 }
+
+// 气泡形状实时生效
+const BUBBLE_SHAPES = {
+  pill:    '999px',
+  rounded: '16px',
+  soft:    '8px',
+  sharp:   '2px',
+};
+function updateBubbleShape(key) {
+  const r = BUBBLE_SHAPES[key] || BUBBLE_SHAPES.rounded;
+  document.querySelectorAll('#bubblePreview .bubble-item').forEach(el => {
+    el.style.borderRadius = r;
+  });
+}
+
+// 添加账号 Tab 切换
+function switchAddAcctTab(btn, key) {
+  btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const map = { batch: 'addAcctTabBatch', single: 'addAcctTabSingle', logged: 'addAcctTabLogged' };
+  Object.entries(map).forEach(([k, id]) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = (k === key) ? 'flex' : 'none';
+  });
+}
+// 点击「批量导入」按钮
+Object.assign(window, { switchAddAcctTab });
+document.addEventListener('DOMContentLoaded', () => {
+  const tabBar = document.querySelector('.tab-bar');
+  if (tabBar) {
+    const firstBtn = tabBar.children[0];
+    if (firstBtn && !firstBtn.onclick) {
+      firstBtn.addEventListener('click', () => switchAddAcctTab(firstBtn, 'batch'));
+    }
+  }
+});
+
+// 默认只展开「号池汇总」和「我的账号」，其余面板默认折叠
+const KEEP_OPEN = ['号池汇总', '我的账号'];
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.panel-card').forEach(card => {
+    const title = card.querySelector('.panel-head-title')?.textContent?.trim();
+    if (!KEEP_OPEN.includes(title)) {
+      card.classList.add('collapsed');
+    }
+  });
+});
 </script>
 </body>
 </html>
