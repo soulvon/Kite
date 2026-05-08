@@ -1,0 +1,30 @@
+# 源码（vsix 只需要编译后的 out/）
+src/**
+**/*.ts
+!out/**/*.d.ts
+
+# 构建配置
+tsconfig.json
+.vscode/**
+.vscode-test/**
+
+# 开发文档（用户不需要）
+MERGE_SPEC.md
+REBUILD_SPEC.md
+
+# 工具脚本（仅开发用）
+scripts/**
+
+# 杂项
+.gitignore
+.gitattributes
+.git/**
+.github/**
+.windsurf/**
+node_modules/**
+*.vsix
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db

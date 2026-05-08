@@ -59,7 +59,7 @@
 		// 无脑模式参数
 		brainlessModeEnabled: false,  // 兼容旧设置
 		brainlessIdleSeconds: 8,
-		brainlessMaxConsecutive: 3,
+		brainlessMaxConsecutive: 0,  // 0 = 无限
 		brainlessSkipPermission: true,
 		// 自动恢复
 		autoRecoveryEnabled: true,
@@ -2057,8 +2057,11 @@
 	function startAutoContinue() {
 		if (autoContinueObserver) { autoContinueObserver.disconnect(); autoContinueObserver = null; }
 		if (settings.continueMode !== 'smart') return;
+		// 守护面板「自动续写」开关关闭时不启动
+		if (settings.guardian && settings.guardian.autoContinueButton === false) return;
 		const tryClick = () => {
 			if (settings.continueMode !== 'smart') return;
+			if (settings.guardian && settings.guardian.autoContinueButton === false) return;
 			// 与 recovery 模块共用冷却，避免重复点击同一按钮
 			if (typeof isInCooldown === 'function' && isInCooldown()) return;
 			// 自身 5s 冷却，避免短时间内被 MutationObserver 反复触发
@@ -2151,6 +2154,9 @@
 		{ pattern: /此模型已达到消息速率限制/i,                                category: 'quotaErrors', signal: 'rate-limited' },
 		{ pattern: /已达到.*(?:配额|限制|额度)/,                               category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /额度.*(?:耗尽|用完|不足)/,                                 category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /配额.*耗尽/,                                               category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /配额.*用完/,                                               category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /用量配额已耗尽/,                                           category: 'quotaErrors', signal: 'quota-exhausted' },
 
 		// ── 模型不可用（第三方提供商故障） ──
 		{ pattern: /third-party model provider is experiencing issues/i,       category: 'modelErrors', signal: 'provider-unavailable' },
@@ -2549,20 +2555,23 @@
 			}
 		}
 
-		// Windsurf Tailwind 样式检测：查找含 red 图标的错误容器
-		// Windsurf 用 <svg class="...fill-red-200 stroke-red-600"/> + <span>错误文本</span>
+		// 文本内容匹配：从最后几条消息中反向扫描，匹配 ERROR_PATTERNS
 		if (!latestError) {
-			const redIcons = scanRoot.querySelectorAll('svg[class*="red"], svg[class*="stroke-red"]');
-			for (let i = redIcons.length - 1; i >= 0; i--) {
-				const parent = redIcons[i].closest('div');
-				if (parent) {
-					const text = (parent.textContent || '').trim();
-					if (text.length > 5 && text.length < 500) {
-						latestError = text;
-						latestErrorEl = parent;
+			const msgEls = scanRoot.querySelectorAll('span, p, [class*="message"], [role="status"], [role="alert"]');
+			for (let i = msgEls.length - 1; i >= 0 && i > msgEls.length - 30; i--) {
+				const el = msgEls[i];
+				if (el.children.length > 5) continue; // 跳过大容器
+				if (el.dataset && el.dataset._wsRecoveryHandled) continue;
+				const t = getElementErrorText(el);
+				if (t.length < 10 || t.length > 500) continue;
+				for (const ep of ERROR_PATTERNS) {
+					if (ep.pattern.test(t)) {
+						latestError = t;
+						latestErrorEl = el;
 						break;
 					}
 				}
+				if (latestError) break;
 			}
 		}
 		
@@ -2570,7 +2579,7 @@
 
 		// 最终兜底：扫描整个 document.body 查找额度关键词（banner 可能在 chat root 之外）
 		if (!latestError) {
-			const QUOTA_KW_RE = /quota.*exhausted|usage.*limit.*reached|额度.*耗尽|monthly acu limit/i;
+			const QUOTA_KW_RE = /quota.*exhausted|usage.*limit.*reached|额度.*耗尽|monthly acu limit|rate limit exceeded|upgrade to a Pro|over their global rate limit|reached.*(?:message|rate)\s*limit|速率限制|配额.*(?:用完|耗尽|不足)/i;
 			const allText = document.body.querySelectorAll('span, p, div');
 			for (let i = allText.length - 1; i >= 0; i--) {
 				const el = allText[i];
@@ -2578,9 +2587,10 @@
 				if (el.dataset && el.dataset._wsRecoveryHandled) continue; // 已处理过，跳过
 				const t = (el.textContent || '').trim();
 				if (t.length > 10 && t.length < 300 && QUOTA_KW_RE.test(t)) {
-					latestError = t;
+					// 用 getElementErrorText 拼接 data-ws-orig 原文，让英文正则也能命中
+					latestError = getElementErrorText(el) || t;
 					latestErrorEl = el;
-					try { el.dataset._wsRecoveryHandled = '1'; } catch {}
+					// 注意：不在此处标记 _wsRecoveryHandled，由 checkForErrors 统一标记
 					break;
 				}
 			}
@@ -2879,6 +2889,8 @@
 
 			// 根据 action 分发处理
 			if (action === 'retry') {
+				// 守护面板「自动重试」开关关闭时跳过 retry（不影响切号/切模型等其他动作）
+				if (settings.guardian && settings.guardian.autoRetry === false) return;
 				handleRetryAction(rule, errorText, now, category);
 			} else if (action === 'switch-account') {
 				handleSwitchAccountAction(rule, ep, errorText, now, category);
@@ -2998,9 +3010,10 @@
 	}
 
 	// ── 统一发送 continue 辅助函数（防重复 + 按钮提交） ──
-	async function sendContinueMessage() {
-		if (Date.now() - _lastContinueTs < 10000) return false;
-		const text = (settings.continueText && String(settings.continueText).trim()) || 'continue';
+	async function sendContinueMessage(customText) {
+		const cooldown = (settings.sendCooldown && settings.sendCooldown > 0) ? settings.sendCooldown : 10000;
+		if (Date.now() - _lastContinueTs < cooldown) return false;
+		const text = customText || (settings.continueText && String(settings.continueText).trim()) || 'continue';
 		if (!await setInputText(text)) return false;
 		_lastContinueTs = Date.now();
 		markActionClick();
@@ -3033,6 +3046,8 @@
 	let _lastContinueTs = 0;
 	function checkForContinuePrompts() {
 		if (settings.continueMode !== 'smart') return;
+		// 守护面板「突破限制」开关关闭时不自动发送 continue
+		if (settings.guardian && settings.guardian.autoSendOnToolLimit === false) return;
 		if (Date.now() - _lastContinueTs < 15000) return;
 		// 避免和 checkForErrors 在同一轮双重触发
 		if (Date.now() - lastRecoveryTs < _recoveryCooldownMs) return;
@@ -3080,11 +3095,15 @@
 
 	let _lastPermApprovalTs = 0;
 	function checkForPermissionApproval() {
+		// 守护面板「自动批准权限」总开关
+		if (settings.guardian && settings.guardian.autoApprovePermission === false) return;
 		const rule = getRuleForCategory('permissionRequests');
 		if (!rule || rule.action !== 'auto-allow') return;
 		// 3s 冷却，避免重复点击
 		if (Date.now() - _lastPermApprovalTs < 3000) return;
-		const scopes = rule.scope || ['web-request'];
+		// guardian.permissionScope 优先，回退到 rule.scope
+		const gdScope = settings.guardian && Array.isArray(settings.guardian.permissionScope) ? settings.guardian.permissionScope : null;
+		const scopes = (gdScope && gdScope.length > 0) ? gdScope : (rule.scope || ['web-request']);
 
 		const btns = document.querySelectorAll('button, [role="button"]');
 		for (const btn of btns) {
@@ -3230,8 +3249,14 @@
 	let _brainlessLastFireTs = 0;
 
 	function getLastAssistantText() {
-		// 抓最后一条 assistant 消息的文本长度作为 idle 判定依据（复用统一常量）
-		const candidates = getScanRoot().querySelectorAll(ASSISTANT_MSG_SEL);
+		// 抓最后一条 assistant 消息的文本长度作为 idle 判定依据
+		const root = getScanRoot();
+		// 优先用标准选择器
+		let candidates = root.querySelectorAll(ASSISTANT_MSG_SEL);
+		if (candidates.length === 0) {
+			// 回退：扫描整个聊天区域的文本长度（Windsurf DOM 可能无 data-role 属性）
+			return root.textContent || '';
+		}
 		const last = candidates[candidates.length - 1];
 		return last ? (last.textContent || '') : '';
 	}
@@ -3268,48 +3293,158 @@
 		'停止', '取消', '终止', '中止', '中断',
 	]);
 
+	// 记录上一次检测到的 thumbs-up 数量（用于信号2判断是否有新消息在生成）
+	let _lastThumbsCount = 0;
+	let _expectingResponse = false;
+
 	function isAIGenerating() {
-		const btns = document.querySelectorAll('button, [role="button"]');
-		for (const b of btns) {
-			// 可见文本
-			const t = (b.textContent || '').trim().toLowerCase();
-			if (GENERATING_KEYWORDS.has(t)) return true;
-			// data-ws-orig 原文（汉化场景）
-			const orig = b.getAttribute && b.getAttribute('data-ws-orig');
-			if (orig && GENERATING_KEYWORDS.has(orig.trim().toLowerCase())) return true;
+		const chatRoot = document.querySelector('.chat-client-root') || document;
+		// 信号1: 输入框旁的按钮图标 = lucide-circle-stop → 生成中
+		if (chatRoot.querySelector('svg.lucide-circle-stop')) return true;
+		// 信号2: 操作栏（👍👎📋）数量检测
+		// 每条 AI 回复完成后才渲染 lucide-thumbs-up，生成中没有
+		const thumbs = chatRoot.querySelectorAll('svg.lucide-thumbs-up');
+		const currentCount = thumbs.length;
+		if (_expectingResponse) {
+			if (currentCount < _lastThumbsCount) {
+				// 数量减少 = 用户切换了对话，重置状态避免卡死
+				_expectingResponse = false;
+				_lastThumbsCount = currentCount;
+			} else if (currentCount === _lastThumbsCount) {
+				return true; // 数量没增加 = AI 还在生成
+			} else {
+				_expectingResponse = false; // 数量增加 = 回复已完成
+			}
 		}
 		return false;
 	}
 
-	function fireBrainlessContinue() {
+	// 长任务发送后调用：记录当前 thumbs-up 数量，标记等待新回复
+	function markExpectingNewResponse() {
+		const chatRoot = document.querySelector('.chat-client-root') || document;
+		const thumbs = chatRoot.querySelectorAll('svg.lucide-thumbs-up');
+		_lastThumbsCount = thumbs.length;
+		_expectingResponse = true;
+	}
+
+	// ── 队列状态 + 停止辅助 ──
+	let _brainlessQueueIndex = 0;
+	let _brainlessSendFailCount = 0;
+
+	function stopBrainlessMode(reason) {
+		if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }
+		console.log(LOG_PREFIX + '[Brainless] 停止: ' + reason);
+		showRecoveryNotification('长任务已停止: ' + reason);
+		// 通知侧栏更新状态
+		bridgePostResult({ action: 'lt-stopped', reason, count: _brainlessConsecutive });
+	}
+
+	function getNextQueueText() {
+		const lt = settings.longTask || {};
+		const queue = (Array.isArray(lt.continueQueue) && lt.continueQueue.length > 0)
+			? lt.continueQueue
+			: [(settings.continueText || 'continue')];
+		const loop = lt.loop !== false;
+
+		if (_brainlessQueueIndex >= queue.length) {
+			if (loop) {
+				_brainlessQueueIndex = 0;
+			} else {
+				return null; // 队列已耗尽
+			}
+		}
+		const text = (queue[_brainlessQueueIndex] || 'continue').trim();
+		_brainlessQueueIndex++;
+		return text;
+	}
+
+	async function fireBrainlessContinue() {
 		const now = Date.now();
-		// 全局冷却 5s，避免和其他自动操作打架
-		if (now - _brainlessLastFireTs < 5000) return;
-		if (typeof isInCooldown === 'function' && isInCooldown()) return;
-		// 防止无限循环：如果输入框已有文本（上次发送失败残留），先清空再说
-		const existingInput = findInputEl();
-		if (existingInput && (existingInput.textContent || '').trim().length > 0) {
-			console.log(LOG_PREFIX + '[Brainless] 输入框已有文本"' + existingInput.textContent.trim().substring(0, 20) + '"，跳过（上次可能发送失败）');
-			// 清空残留
-			try { existingInput.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch {}
+		// 长任务模式冷却 = 用户设置的空闲等待时间（界面显示多少就是多少）
+		const idleSec = (settings.brainlessIdleSeconds || 8);
+		const sendCd = idleSec * 1000;
+		if (now - _brainlessLastFireTs < sendCd) return;
+
+		// 守护模式正在处理中（切号/切模型冷却期内）→ 暂不发送
+		if (now - _lastSwitchTs < 60000 && now - lastRecoveryTs < _recoveryCooldownMs) {
+			console.log(LOG_PREFIX + '[Brainless] 守护模式处理中（切号/切模型），暂停发送');
+			_brainlessLastChangeTs = now;
 			return;
 		}
+
+		// 错误检测：检查是否有需要守护模式处理的错误
+		const { text: errorText } = getLatestErrorText();
+		if (errorText) {
+			for (const ep of ERROR_PATTERNS) {
+				if (!ep.pattern.test(errorText)) continue;
+				if (ep.category === 'userIntervention') {
+					// F 类：需要用户介入 → 停止长任务
+					const stopOnF = !(settings.longTask && settings.longTask.stopOnUserIntervention === false);
+					if (stopOnF) { stopBrainlessMode(ep.hint || '需要用户介入'); return; }
+				}
+				if (ep.category === 'quotaErrors' || ep.category === 'modelErrors' || ep.category === 'networkErrors') {
+					// C/D/B 类：让守护模式处理（换号/切模型/重试），长任务暂不发送
+					console.log(LOG_PREFIX + '[Brainless] 检测到 [' + ep.category + '] 错误，等待守护模式处理');
+					_brainlessLastChangeTs = now;
+					return;
+				}
+				break;
+			}
+		}
+
+		// 防止无限循环：如果输入框已有文本（上次发送失败残留），记录失败并清空
+		const existingInput = findInputEl();
+		if (existingInput && (existingInput.textContent || '').trim().length > 0) {
+			_brainlessSendFailCount++;
+			console.log(LOG_PREFIX + '[Brainless] 输入框残留，发送失败 #' + _brainlessSendFailCount);
+			try { existingInput.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch {}
+			const maxFail = (settings.longTask && settings.longTask.maxSendRetries) || 3;
+			if (_brainlessSendFailCount >= maxFail) {
+				stopBrainlessMode('发送失败(连续' + _brainlessSendFailCount + '次)');
+			}
+			return;
+		}
+
 		if (settings.brainlessSkipPermission && hasPermissionPrompt()) {
 			console.log(LOG_PREFIX + '[Brainless] 检测到权限提示，跳过');
 			return;
 		}
-		if (_brainlessConsecutive >= (settings.brainlessMaxConsecutive || 3)) {
-			console.log(LOG_PREFIX + '[Brainless] 已达连续触发上限 ' + _brainlessConsecutive + '，停止');
+
+		// 最大继续次数检查（0 = 无限）
+		const maxCount = settings.brainlessMaxConsecutive || 0;
+		if (maxCount > 0 && _brainlessConsecutive >= maxCount) {
+			stopBrainlessMode('达到最大继续次数(' + maxCount + ')');
 			return;
 		}
+
+		// 队列取下一条文本
+		const text = getNextQueueText();
+		if (text === null) {
+			stopBrainlessMode('队列已消费完');
+			return;
+		}
+
 		_brainlessLastFireTs = now;
 		_brainlessConsecutive++;
-		const text = (settings.continueText && String(settings.continueText).trim()) || 'continue';
 		console.log(LOG_PREFIX + '[Brainless] 🤖 自动发送"' + text + '" (#' + _brainlessConsecutive + ')');
+
 		try {
-			sendContinueMessage();
+			const sent = await sendContinueMessage(text);
+			if (sent) {
+				_brainlessSendFailCount = 0;
+				markExpectingNewResponse(); // 标记等待新回复，信号2开始检测
+				// 推送计数到侧栏
+				bridgePostResult({ action: 'lt-count', count: _brainlessConsecutive, text });
+			} else {
+				_brainlessSendFailCount++;
+				_brainlessQueueIndex--; // 发送失败，队列指针回退
+				const maxFail = (settings.longTask && settings.longTask.maxSendRetries) || 3;
+				if (_brainlessSendFailCount >= maxFail) {
+					stopBrainlessMode('发送失败(连续' + _brainlessSendFailCount + '次)');
+				}
+			}
 		} catch (e) {
-			console.warn(LOG_PREFIX + '[Brainless] 发送失败:', e);
+			console.warn(LOG_PREFIX + '[Brainless] 发送异常:', e);
 		}
 	}
 
@@ -3317,6 +3452,9 @@
 		if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }
 		if (settings.continueMode !== 'brainless') return;
 		console.log(LOG_PREFIX + '[Brainless] ✅已启用，idle=' + (settings.brainlessIdleSeconds || 8) + 's');
+		_brainlessQueueIndex = 0;
+		_brainlessSendFailCount = 0;
+		_brainlessLastFireTs = 0; // 重置冷却，让第一次发送不被阻塞
 		_brainlessLastLen = (getLastAssistantText() || '').length;
 		_brainlessLastChangeTs = Date.now();
 		brainlessTimer = setInterval(() => {
@@ -3537,6 +3675,25 @@
 		};
 
 		switch (cmd.action) {
+			case 'force-stop': {
+				// 强制停止长任务：清除 brainless 定时器 + 清空输入框（不影响守护模式 observer）
+				if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }
+				// 清空输入框残留
+				try {
+					const el = findInputEl();
+					if (el && (el.textContent || '').trim()) {
+						el.focus();
+						document.execCommand('selectAll', false, null);
+						document.execCommand('delete', false, null);
+					}
+				} catch {}
+				// 重置状态
+				_brainlessConsecutive = 0;
+				_brainlessQueueIndex = 0;
+				_brainlessSendFailCount = 0;
+				respond({ status: 'done', message: '已强制停止' });
+				break;
+			}
 			case 'pool-result': {
 				// 反向命令：扩展宿主切号结果回传 → 写 localStorage 让 checkForPoolResult 处理
 				try {
@@ -3740,7 +3897,9 @@
 			}
 		}
 		// 响应自动继续模式变化
-		if (old.continueMode !== settings.continueMode) {
+		const oldGd = old.guardian || {};
+		const newGd = settings.guardian || {};
+		if (old.continueMode !== settings.continueMode || oldGd.autoContinueButton !== newGd.autoContinueButton) {
 			// 停止旧模式
 			if (autoContinueObserver) { autoContinueObserver.disconnect(); autoContinueObserver = null; }
 			if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }

@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { writeFileWithElevation, copyFileWithElevation } from './elevatedFs';
 
 /**
  * Checksum 修复器
@@ -108,9 +109,9 @@ export function fixChecksums(dryRun = false): ChecksumFixResult {
       // 备份原始（仅首次）
       const backupPath = productPath + BACKUP_SUFFIX;
       if (!fs.existsSync(backupPath)) {
-        fs.copyFileSync(productPath, backupPath);
+        copyFileWithElevation(productPath, backupPath);
       }
-      fs.writeFileSync(productPath, content, 'utf8');
+      writeFileWithElevation(productPath, content, 'utf8');
     }
 
     return result;
@@ -128,7 +129,7 @@ export function restoreProductJson(): boolean {
     const productPath = getProductJsonPath();
     const backupPath = productPath + BACKUP_SUFFIX;
     if (!fs.existsSync(backupPath)) return false;
-    fs.copyFileSync(backupPath, productPath);
+    copyFileWithElevation(backupPath, productPath);
     return true;
   } catch {
     return false;

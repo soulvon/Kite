@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>侧栏面板 - 全局设计预览</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-base: #1e1e2e;
+  --bg-surface: #252536;
+  --bg-elevated: #2a2a3c;
+  --bg-card: #282840;
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-dim: rgba(255, 255, 255, 0.1);
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-dim: #64748b;
+  --accent-emerald: #10b981;
+  --accent-amber: #f59e0b;
+  --accent-red: #ef4444;
+  --accent-blue: #3b82f6;
+  --accent-violet: #8b5cf6;
+  --accent-cyan: #06b6d4;
+  --accent-orange: #f0883e;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-body: 'DM Sans', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  padding: 40px 20px;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.panel-col {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ═══════════════════════════════════════
+   SHARED: Panel Card Shell
+   ═══════════════════════════════════════ */
+.panel-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* ═══════ Header ═══════ */
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.panel-head:hover { background: rgba(255,255,255,0.015); }
+.panel-head-icon { color: var(--text-secondary); flex-shrink: 0; }
+.panel-head-title { font-size: 13px; font-weight: 600; flex: 1; }
+.panel-head-arrow {
+  font-size: 8px; color: var(--text-dim);
+  transform: rotate(90deg);
+  transition: transform 0.2s;
+}
+.panel-card.collapsed .panel-head-arrow { transform: rotate(0deg); }
+.panel-card.collapsed .panel-body { display: none; }
+
+/* Toggle */
+.toggle {
+  position: relative;
+  width: 32px; height: 18px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.3s;
+  flex-shrink: 0;
+}
+.toggle.on { background: var(--accent-emerald); }
+.toggle::after {
+  content: '';
+  position: absolute;
+  width: 14px; height: 14px;
+  top: 2px; left: 2px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.toggle.on::after { transform: translateX(14px); }
+
+/* Body */
+.panel-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: fadeIn 0.25s ease-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══════ Shared Components ═══════ */
+
+/* Section title */
+.section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+/* Mini toggle */
+.mini-toggle {
+  position: relative;
+  width: 28px; height: 16px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.25s;
+}
+.mini-toggle.on { background: var(--accent-emerald); }
+.mini-toggle::after {
+  content: '';
+  position: absolute;
+  width: 12px; height: 12px;
+  top: 2px; left: 2px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+.mini-toggle.on::after { transform: translateX(12px); }
+
+/* Feature strip */
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 0;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+.strip:hover { background: rgba(255,255,255,0.02); }
+.strip-band {
+  width: 3px; height: 24px;
+  border-radius: 0 2px 2px 0;
+  flex-shrink: 0;
+  transition: width 0.2s;
+}
+.strip:hover .strip-band { width: 4px; }
+.strip-band.emerald { background: var(--accent-emerald); }
+.strip-band.blue { background: var(--accent-blue); }
+.strip-band.violet { background: var(--accent-violet); }
+.strip-band.amber { background: var(--accent-amber); }
+.strip-band.cyan { background: var(--accent-cyan); }
+.strip-band.orange { background: var(--accent-orange); }
+.strip-band.red { background: var(--accent-red); }
+.strip-info { flex: 1; min-width: 0; }
+.strip-name { font-size: 12px; font-weight: 500; }
+.strip-desc { font-size: 10px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Param grid */
+.param-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.param-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+.param-label { font-size: 10px; color: var(--text-dim); }
+.param-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  width: 38px;
+  text-align: right;
+  outline: none;
+}
+.param-unit { font-size: 9px; color: var(--text-dim); margin-left: 2px; }
+
+/* Select */
+.sel {
+  appearance: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 5px 24px 5px 8px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  background-size: 14px;
+  transition: border-color 0.15s;
+}
+.sel:focus { border-color: var(--accent-emerald); }
+
+/* Button solid */
+.btn-solid {
+  padding: 6px 14px;
+  border-radius: var(--radius-md);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-solid:active { transform: scale(0.97); }
+.btn-emerald { background: #10b981; color: #fff; }
+.btn-emerald:hover { background: #059669; }
+.btn-amber { background: #f59e0b; color: #1a1a1a; }
+.btn-amber:hover { background: #d97706; }
+.btn-red { background: #ef4444; color: #fff; }
+.btn-red:hover { background: #dc2626; }
+.btn-blue { background: #3b82f6; color: #fff; }
+.btn-blue:hover { background: #2563eb; }
+.btn-ghost-solid { background: #3f3f5a; color: var(--text-primary); }
+.btn-ghost-solid:hover { background: #4a4a66; }
+.btn-danger-outline {
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-danger-outline:hover { background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.5); }
+
+/* Tag chip */
+.tag-chip {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid var(--border-dim);
+  color: var(--text-secondary);
+  user-select: none;
+}
+.tag-chip.active { background: #10b981; border-color: #10b981; color: #fff; }
+
+/* Status pill */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.status-pill.ok { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+.status-pill.warn { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+.status-pill.off { background: rgba(100, 116, 139, 0.15); color: #64748b; }
+
+/* Divider */
+.divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-dim), transparent);
+}
+
+/* Strategy radio */
+.strategy-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+  border: 1px solid var(--border-subtle);
+  margin-bottom: 4px;
+}
+.strategy-option:hover { background: rgba(255,255,255,0.02); }
+.strategy-option.active { border-color: var(--accent-emerald); background: rgba(16, 185, 129, 0.05); }
+.strategy-radio {
+  width: 14px; height: 14px;
+  border: 2px solid var(--text-dim);
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.strategy-option.active .strategy-radio { border-color: var(--accent-emerald); }
+.strategy-option.active .strategy-radio::after {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent-emerald);
+}
+.strategy-info { flex: 1; }
+.strategy-name { font-size: 11px; font-weight: 600; }
+.strategy-desc { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+
+/* Stagger */
+.strip:nth-child(1) { animation: stripIn 0.25s ease-out 0.03s both; }
+.strip:nth-child(2) { animation: stripIn 0.25s ease-out 0.06s both; }
+.strip:nth-child(3) { animation: stripIn 0.25s ease-out 0.09s both; }
+.strip:nth-child(4) { animation: stripIn 0.25s ease-out 0.12s both; }
+.strip:nth-child(5) { animation: stripIn 0.25s ease-out 0.15s both; }
+.strip:nth-child(6) { animation: stripIn 0.25s ease-out 0.18s both; }
+@keyframes stripIn {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ═══════ Enhancement-specific ═══════ */
+.enh-status-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.enh-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  font-size: 11px;
+}
+.enh-status-label { color: var(--text-dim); }
+.enh-status-val { font-weight: 600; }
+.enh-status-val.ok { color: var(--accent-emerald); }
+.enh-status-val.off { color: var(--text-dim); }
+
+.enh-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.enh-section {
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.enh-option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+.enh-option-label { color: var(--text-dim); font-size: 10px; white-space: nowrap; }
+
+/* Bubble preview */
+.bubble-preview {
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+.bubble-preview-label { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.bubble-preview-items { display: flex; gap: 6px; flex-wrap: wrap; }
+.bubble-item {
+  padding: 5px 12px;
+  font-size: 11px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #10b981, #06b6d4);
+  color: #fff;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.bubble-item:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(16, 185, 129, 0.3); }
+
+/* ═══════ Auto-switch specific ═══════ */
+.as-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  padding: 6px 0;
+}
+
+/* ═══════ Segmented Control ═══════ */
+.segment {
+  position: relative;
+  display: flex;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+}
+.segment input { display: none; }
+.segment-label {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px;
+  padding: 7px 0;
+  font-size: 11px; font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  z-index: 2;
+  transition: color 0.25s;
+  user-select: none;
+}
+.segment-label svg { opacity: 0.5; transition: opacity 0.25s; }
+.segment input:checked + .segment-label { color: #fff; font-weight: 600; }
+.segment input:checked + .segment-label svg { opacity: 1; }
+.segment-slider {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  background: #10b981;
+  border-radius: 6px;
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+.segment-slider.right { transform: translateX(calc(100% + 6px)); }
+
+/* ═══════ Long task status ═══════ */
+.lt-status {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: linear-gradient(135deg, var(--bg-elevated), var(--bg-surface));
+  position: relative; overflow: hidden;
+}
+.lt-status::before {
+  content: '';
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 2px;
+  background: linear-gradient(90deg, var(--accent-emerald), transparent);
+  animation: statusGlow 2s ease-in-out infinite;
+}
+@keyframes statusGlow { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+.lt-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent-emerald);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+  animation: dotPulse 2s ease-in-out infinite;
+}
+@keyframes dotPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.3); } }
+.lt-text { flex: 1; font-size: 12px; font-weight: 500; }
+.lt-count {
+  font-family: var(--font-mono);
+  font-size: 11px; font-weight: 600;
+  color: #fff;
+  background: var(--accent-emerald);
+  padding: 2px 8px; border-radius: 10px;
+}
+
+/* Queue */
+.queue-list { display: flex; flex-direction: column; gap: 3px; }
+.queue-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+.queue-item:hover { border-color: var(--border-dim); }
+.queue-item.active { border-color: rgba(16, 185, 129, 0.3); background: rgba(16, 185, 129, 0.06); }
+.queue-idx { font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); width: 14px; text-align: right; }
+.queue-text {
+  flex: 1; font-size: 11px; color: var(--text-primary);
+  background: transparent; border: none; outline: none;
+  font-family: var(--font-mono); padding: 2px 4px;
+}
+
+/* Controls */
+.ctrl-bar { display: flex; gap: 6px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+.ctrl-bar .btn-solid { flex: 1; justify-content: center; padding: 8px 14px; }
+
+/* Rule rows */
+.rule-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.rule-row:hover { background: rgba(255,255,255,0.02); }
+.rule-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.rule-dot.net { background: var(--accent-blue); }
+.rule-dot.quota { background: var(--accent-amber); }
+.rule-dot.model { background: var(--accent-violet); }
+.rule-dot.other { background: var(--text-dim); }
+.rule-name { flex: 1; font-size: 11px; font-weight: 500; }
+.rule-badge {
+  font-size: 9px; font-weight: 600;
+  padding: 2px 6px; border-radius: 4px;
+}
+.rule-badge.retry { color: #fff; background: #3b82f6; }
+.rule-badge.switch { color: #1a1a1a; background: #f59e0b; }
+.rule-badge.model { color: #fff; background: #8b5cf6; }
+.rule-badge.cont { color: #fff; background: #64748b; }
+
+/* Engine */
+.engine-box {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+.engine-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; cursor: pointer;
+  transition: background 0.15s;
+}
+.engine-head:hover { background: rgba(255,255,255,0.02); }
+.engine-icon-box {
+  width: 28px; height: 28px; border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(240, 136, 62, 0.12); color: #f0883e;
+}
+.engine-meta { flex: 1; }
+.engine-name { font-size: 12px; font-weight: 600; }
+.engine-stat { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--accent-emerald); }
+.engine-chevron { font-size: 10px; color: var(--text-dim); transition: transform 0.25s; }
+
+.engine-rules { border-top: 1px solid var(--border-subtle); padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════
+     COLUMN 1: Windsurf 增强
+     ═══════════════════════════════════ -->
+<div class="panel-col">
+  <div class="panel-card">
+    <div class="panel-head">
+      <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      <span class="panel-head-title">Windsurf 增强</span>
+      <span class="panel-head-arrow">▶</span>
+      <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+    </div>
+    <div class="panel-body">
+      <!-- 状态 -->
+      <div class="enh-status-grid">
+        <div class="enh-status-row">
+          <span class="enh-status-label">增强脚本</span>
+          <span class="enh-status-val ok">✓ 已注入 v5.0.3</span>
+        </div>
+        <div class="enh-status-row">
+          <span class="enh-status-label">智能建议规则</span>
+          <span class="enh-status-val ok">✓ 已配置</span>
+        </div>
+        <div class="enh-status-row">
+          <span class="enh-status-label">无感切号</span>
+          <span class="enh-status-val ok">✓ 已就绪</span>
+        </div>
+      </div>
+
+      <!-- 操作 -->
+      <div class="enh-actions">
+        <button class="btn-solid btn-blue">重新注入</button>
+        <button class="btn-solid btn-ghost-solid">修改提示词</button>
+        <button class="btn-danger-outline">恢复原始</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- 回复建议 -->
+      <div class="enh-section" style="border:none;padding-top:0">
+        <div class="section-title">回复建议提示</div>
+        <div class="strip">
+          <div class="strip-band emerald"></div>
+          <div class="strip-info">
+            <span class="strip-name">启用回复建议</span>
+            <span class="strip-desc">AI 回复后显示建议操作气泡</span>
+          </div>
+          <div class="mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="strip">
+          <div class="strip-band cyan"></div>
+          <div class="strip-info">
+            <span class="strip-name">点击后自动发送</span>
+            <span class="strip-desc">选择建议后直接发送，无需手动确认</span>
+          </div>
+          <div class="mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+
+        <div class="enh-option-row" style="margin-top:8px">
+          <span class="enh-option-label">主题</span>
+          <select class="sel" style="flex:1">
+            <option>绿青蓝（翡翠）</option>
+            <option>紫粉（极光）</option>
+            <option>橙红（日落）</option>
+            <option>深蓝（海洋）</option>
+            <option>透明（毛玻璃）</option>
+            <option>暗夜</option>
+          </select>
+        </div>
+        <div class="enh-option-row">
+          <span class="enh-option-label">形状</span>
+          <select class="sel" style="flex:1">
+            <option>胶囊</option>
+            <option selected>圆角</option>
+            <option>柔和</option>
+            <option>直角</option>
+          </select>
+        </div>
+
+        <div class="bubble-preview">
+          <div class="bubble-preview-label">预览效果</div>
+          <div class="bubble-preview-items">
+            <div class="bubble-item">添加单元测试</div>
+            <div class="bubble-item">优化错误处理</div>
+            <div class="bubble-item">重构为组件化</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- 汉化 -->
+      <div class="strip">
+        <div class="strip-band blue"></div>
+        <div class="strip-info">
+          <span class="strip-name">启用界面汉化</span>
+          <span class="strip-desc">将 Windsurf 英文界面翻译为中文</span>
+        </div>
+        <div class="mini-toggle on" onclick="this.classList.toggle('on')"></div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- 完成提醒 -->
+      <div class="enh-section" style="border:none;padding-top:0">
+        <div class="section-title">完成提醒</div>
+        <div class="strip">
+          <div class="strip-band amber"></div>
+          <div class="strip-info">
+            <span class="strip-name">启用完成提醒</span>
+            <span class="strip-desc">AI 回复完成时播放提示音 / 弹通知</span>
+          </div>
+          <div class="mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="enh-option-row" style="margin-top:6px">
+          <span class="enh-option-label">触发</span>
+          <select class="sel">
+            <option>每次都响</option>
+            <option>仅异常时</option>
+            <option>窗口不活跃时</option>
+          </select>
+        </div>
+        <div class="enh-option-row">
+          <span class="enh-option-label">铃声</span>
+          <select class="sel" style="flex:1">
+            <option>Funk</option>
+            <option>Ding</option>
+            <option>Chime</option>
+            <option>Beep</option>
+          </select>
+          <button class="btn-solid btn-ghost-solid" style="padding:4px 10px;font-size:10px">试听</button>
+        </div>
+        <div class="enh-option-row">
+          <span class="enh-option-label">次数</span>
+          <input type="number" class="param-val" value="2" style="width:32px;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:3px;padding:2px 4px">
+          <span class="enh-option-label">次</span>
+          <div style="flex:1"></div>
+          <span class="tag-chip active" onclick="this.classList.toggle('active')">响铃</span>
+          <span class="tag-chip active" onclick="this.classList.toggle('active')">通知</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════
+     COLUMN 2: 自动切号
+     ═══════════════════════════════════ -->
+<div class="panel-col">
+  <div class="panel-card">
+    <div class="panel-head">
+      <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      <span class="panel-head-title">自动切号</span>
+      <span class="panel-head-arrow">▶</span>
+      <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+    </div>
+    <div class="panel-body">
+      <!-- 参数网格 -->
+      <div class="param-grid">
+        <div class="param-cell">
+          <span class="param-label">阈值</span>
+          <div><input type="number" class="param-val" value="10"><span class="param-unit">%</span></div>
+        </div>
+        <div class="param-cell">
+          <span class="param-label">检查</span>
+          <div><input type="number" class="param-val" value="60"><span class="param-unit">秒</span></div>
+        </div>
+        <div class="param-cell">
+          <span class="param-label">冷却</span>
+          <div><input type="number" class="param-val" value="30"><span class="param-unit">秒</span></div>
+        </div>
+        <div class="param-cell">
+          <span class="param-label">评分</span>
+          <div>
+            <select class="sel" style="padding:2px 20px 2px 6px;font-size:10px">
+              <option>智能</option>
+              <option>仅日</option>
+              <option>仅周</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- 范围 -->
+      <div class="enh-option-row" style="margin-top:10px">
+        <span class="enh-option-label">范围</span>
+        <select class="sel" style="flex:1">
+          <option>全部账号</option>
+          <option>按标签</option>
+          <option>当前实例分组</option>
+        </select>
+      </div>
+
+      <div class="as-hint">取 min(日配额, 周配额) 作为评分，任一配额低于阈值即触发切号。</div>
+
+      <div class="divider"></div>
+
+      <!-- 策略 -->
+      <div style="margin-top:2px">
+        <div class="section-title">切号策略</div>
+        <div class="strategy-option active" onclick="selectStrategy(this)">
+          <div class="strategy-radio"></div>
+          <div class="strategy-info">
+            <div class="strategy-name">满额度优先（推荐）</div>
+            <div class="strategy-desc">优先用额度最高的号</div>
+          </div>
+        </div>
+        <div class="strategy-option" onclick="selectStrategy(this)">
+          <div class="strategy-radio"></div>
+          <div class="strategy-info">
+            <div class="strategy-name">最低非零优先</div>
+            <div class="strategy-desc">先消耗低额度号，保留满额度号</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider" style="margin-top:10px"></div>
+
+      <!-- 额度参数 -->
+      <div style="margin-top:2px">
+        <div class="section-title">门槛参数</div>
+        <div class="param-grid">
+          <div class="param-cell">
+            <span class="param-label">额度下限</span>
+            <div><input type="number" class="param-val" value="10"><span class="param-unit">%</span></div>
+          </div>
+          <div class="param-cell">
+            <span class="param-label">已用阈值</span>
+            <div><input type="number" class="param-val" value="50"><span class="param-unit">%</span></div>
+          </div>
+        </div>
+        <div class="as-hint" style="margin-top:4px">≤ 额度下限视为"耗尽"；≤ 已用阈值视为"在用中"优先消耗完。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════
+     COLUMN 3: 自动继续
+     ═══════════════════════════════════ -->
+<div class="panel-col">
+  <div class="panel-card">
+    <div class="panel-head">
+      <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M12 17h.01"/></svg>
+      <span class="panel-head-title">自动继续</span>
+      <span class="panel-head-arrow">▶</span>
+      <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+    </div>
+    <div class="panel-body">
+      <!-- Segment -->
+      <div class="segment" id="seg1">
+        <input type="radio" name="acMode" id="acG" checked>
+        <label for="acG" class="segment-label">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          守护模式
+        </label>
+        <input type="radio" name="acMode" id="acL">
+        <label for="acL" class="segment-label">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          长任务
+        </label>
+        <div class="segment-slider" id="acSlider"></div>
+      </div>
+
+      <!-- Guardian -->
+      <div id="pGuardian">
+        <div class="strip">
+          <div class="strip-band emerald"></div>
+          <div class="strip-info"><span class="strip-name">自动续写</span><span class="strip-desc">自动点击「继续回复」按钮</span></div>
+          <div class="mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="strip">
+          <div class="strip-band blue"></div>
+          <div class="strip-info"><span class="strip-name">自动重试</span><span class="strip-desc">网络超时或生成失败时自动重试</span></div>
+          <div class="mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="strip">
+          <div class="strip-band violet"></div>
+          <div class="strip-info"><span class="strip-name">突破限制</span><span class="strip-desc">工具调用上限时自动发送 continue</span></div>
+          <div class="mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="strip">
+          <div class="strip-band amber"></div>
+          <div class="strip-info"><span class="strip-name">清除干扰</span><span class="strip-desc">自动关闭「文件损坏」等系统弹窗</span></div>
+          <div class="mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-subtle)">
+          <div class="section-title">自动批准权限</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <span class="tag-chip active" onclick="this.classList.toggle('active')">Web 访问</span>
+            <span class="tag-chip active" onclick="this.classList.toggle('active')">终端执行</span>
+            <span class="tag-chip active" onclick="this.classList.toggle('active')">文件写入</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Long Task (hidden by default) -->
+      <div id="pLongTask" class="hidden">
+        <div class="lt-status">
+          <div class="lt-dot"></div>
+          <span class="lt-text">运行中 · 循环执行</span>
+          <span class="lt-count">12 轮</span>
+        </div>
+
+        <div style="margin-top:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <span class="section-title" style="margin:0">指令队列</span>
+            <span style="font-family:var(--font-mono);font-size:9px;color:var(--text-dim)">3 条 · 循环</span>
+          </div>
+          <div class="queue-list">
+            <div class="queue-item active"><span class="queue-idx">1</span><input class="queue-text" value="继续"></div>
+            <div class="queue-item"><span class="queue-idx">2</span><input class="queue-text" value="检查所有测试是否通过"></div>
+            <div class="queue-item"><span class="queue-idx">3</span><input class="queue-text" value="修复失败的测试"></div>
+          </div>
+          <div style="display:flex;gap:4px;margin-top:6px">
+            <input class="queue-text" placeholder="添加新指令..." style="flex:1;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:4px;padding:5px 8px">
+            <button class="btn-solid btn-emerald" style="padding:5px 10px;font-size:10px">+ 添加</button>
+          </div>
+        </div>
+
+        <div class="param-grid" style="margin-top:14px;grid-template-columns:1fr 1fr 1fr">
+          <div class="param-cell"><span class="param-label">等待</span><div><input type="number" class="param-val" value="2"><span class="param-unit">秒</span></div></div>
+          <div class="param-cell"><span class="param-label">上限</span><div><input type="number" class="param-val" value="100"><span class="param-unit">轮</span></div></div>
+          <div class="param-cell"><span class="param-label">重试</span><div><input type="number" class="param-val" value="10"><span class="param-unit">次</span></div></div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <span class="param-label" style="font-size:10px;color:var(--text-dim)">选项</span>
+          <span class="tag-chip active" onclick="this.classList.toggle('active')">循环队列</span>
+          <span class="tag-chip active" onclick="this.classList.toggle('active')">错误时停止</span>
+        </div>
+
+        <div class="ctrl-bar" style="margin-top:14px">
+          <button class="btn-solid btn-amber">⏸ 暂停</button>
+          <button class="btn-solid btn-red">⏹ 停止</button>
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="divider" style="margin-top:4px"></div>
+
+      <!-- Error Recovery -->
+      <div class="engine-box">
+        <div class="engine-head">
+          <div class="engine-icon-box">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+          </div>
+          <div class="engine-meta">
+            <span class="engine-name">错误恢复核心</span>
+            <span class="engine-stat">● 监控中</span>
+          </div>
+          <span class="engine-chevron">▼</span>
+        </div>
+        <div class="engine-rules">
+          <div class="rule-row"><span class="rule-dot net"></span><span class="rule-name">网络超时 / 通信异常</span><span class="rule-badge retry">重试×3</span></div>
+          <div class="rule-row"><span class="rule-dot quota"></span><span class="rule-name">额度耗尽 / 访问限流</span><span class="rule-badge switch">切号</span></div>
+          <div class="rule-row"><span class="rule-dot model"></span><span class="rule-name">模型过载 / 暂不可用</span><span class="rule-badge model">换模型</span></div>
+          <div class="rule-row"><span class="rule-dot other"></span><span class="rule-name">截断 / 权限 / 自定义</span><span class="rule-badge cont">接续</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Tab switching
+document.getElementById('acG').addEventListener('change', () => {
+  document.getElementById('acSlider').classList.remove('right');
+  document.getElementById('pGuardian').classList.remove('hidden');
+  document.getElementById('pLongTask').classList.add('hidden');
+});
+document.getElementById('acL').addEventListener('change', () => {
+  document.getElementById('acSlider').classList.add('right');
+  document.getElementById('pGuardian').classList.add('hidden');
+  document.getElementById('pLongTask').classList.remove('hidden');
+});
+
+// Strategy selection
+function selectStrategy(el) {
+  el.parentElement.querySelectorAll('.strategy-option').forEach(o => o.classList.remove('active'));
+  el.classList.add('active');
+}
+</script>
+</body>
+</html>

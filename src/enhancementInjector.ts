@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { readEnhSettings } from './enhSettingsStore';
+import { writeFileWithElevation, copyFileWithElevation } from './elevatedFs';
 
 const MARKER_PREFIX = '<!-- ws-better-v';
 const MARKER_SUFFIX = ' -->';
@@ -54,7 +56,7 @@ export function ensureEnhancement(): EnhancementResult {
   // 备份（仅首次）
   const originPath = workbenchPath + '.origin';
   if (!fs.existsSync(originPath)) {
-    fs.copyFileSync(workbenchPath, originPath);
+    copyFileWithElevation(workbenchPath, originPath);
   }
 
   let newHtml = html;
@@ -67,8 +69,9 @@ export function ensureEnhancement(): EnhancementResult {
               newHtml.substring(blockEndIdx + BLOCK_END.length);
   }
 
-  // CSP: 添加 'unsafe-inline'
+  // CSP: 添加 'unsafe-inline' + 允许 localhost connect（用于 bridge HTTP server）
   newHtml = ensureCSP(newHtml);
+  newHtml = ensureConnectSrc(newHtml);
 
   // Trusted Types: 添加 abBubbles
   newHtml = ensureTrustedTypes(newHtml);
@@ -85,7 +88,7 @@ export function ensureEnhancement(): EnhancementResult {
     `${BLOCK_END}\n`;
 
   newHtml = newHtml.replace('</body>', injection + '</body>');
-  fs.writeFileSync(workbenchPath, newHtml, 'utf8');
+  writeFileWithElevation(workbenchPath, newHtml, 'utf8');
 
   return { injected: true, needRestart: true };
 }
@@ -98,7 +101,7 @@ export function restoreWorkbench(): boolean {
   if (!workbenchPath) return false;
   const originPath = workbenchPath + '.origin';
   if (!fs.existsSync(originPath)) return false;
-  fs.copyFileSync(originPath, workbenchPath);
+  copyFileWithElevation(originPath, workbenchPath);
   return true;
 }
 
@@ -110,7 +113,7 @@ export function getInjectionStatus(): { injected: boolean; patchVersion: string 
   if (!workbenchPath) return { injected: false, patchVersion: null };
 
   const html = fs.readFileSync(workbenchPath, 'utf8');
-  const match = html.match(/<!-- ws-better-v([\d.]+) -->/);
+  const match = html.match(/<!-- ws-better-v([\d.]+-[a-f0-9]+) -->/);
   if (match) {
     return { injected: true, patchVersion: match[1] };
   }
@@ -144,16 +147,32 @@ function getScriptContent(): string | null {
   return _scriptCache;
 }
 
+/**
+ * 计算脚本"版本"，用于决定是否需要重新注入到 workbench.html
+ *
+ * 历史教训：之前只读脚本里的 `const VERSION = '1.1.0'` 常量做匹配，但每次改脚本
+ * 都要手动递增 VERSION，遗漏过多次 → 用户装新 vsix 后旧 windsurf-better.js
+ * 仍嵌在 workbench.html，新代码完全没生效。
+ *
+ * 现改为：以脚本内容的 SHA1 前 10 位作为版本标识。
+ * 内容变了 hash 必然变 → 自动触发重注入，无需人为维护版本号。
+ * 拼上文件中的 VERSION 字符串便于人眼阅读 marker。
+ */
 function getPatchVersion(): string {
   const content = getScriptContent();
   if (!content) return '0.0.0';
-  const match = content.match(/const VERSION = '([\d.]+)'/);
-  return match ? match[1] : '0.0.0';
+  const hash = crypto.createHash('sha1').update(content).digest('hex').slice(0, 10);
+  const m = content.match(/const VERSION = '([\d.]+)'/);
+  const ver = m ? m[1] : '0.0.0';
+  return `${ver}-${hash}`;
 }
 
 /**
  * 计算设置对象的稳定哈希（用于检测设置变化）
  * 递归对所有层级的 object key 排序，保证嵌套结构（如 recoveryRules）也稳定
+ * 注意：__bridgePort / __bridgeToken 等运行时字段也参与 hash，因为这些值变化时
+ * 必须重写 workbench.html 让新 port 嵌入。preferredPort 复用机制保证正常情况
+ * 下端口稳定，hash 不会无故变化。
  */
 function hashSettings(settings: Record<string, any>): string {
   try {
@@ -181,6 +200,16 @@ function ensureCSP(html: string): string {
   if (!m) return html; // CSP 没有 script-src 指令，跳过
   if (m[0].includes("'unsafe-inline'")) return html; // script-src 已含
   return html.replace(/(script-src\s+[^;]*)/, "$1 'unsafe-inline'");
+}
+
+/**
+ * 允许 connect-src 到 127.0.0.1 / localhost（任意端口），用于 bridge HTTP server
+ */
+function ensureConnectSrc(html: string): string {
+  const m = html.match(/connect-src\s+[^;]*/);
+  if (!m) return html;
+  if (m[0].includes('127.0.0.1')) return html; // 已含
+  return html.replace(/(connect-src\s+[^;]*)/, '$1 http://127.0.0.1:* http://localhost:*');
 }
 
 function ensureTrustedTypes(html: string): string {

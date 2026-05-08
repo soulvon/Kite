@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>自动继续 - 设计预览</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-base: #1e1e2e;
+  --bg-surface: #252536;
+  --bg-elevated: #2a2a3c;
+  --bg-overlay: rgba(30, 30, 46, 0.85);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-dim: rgba(255, 255, 255, 0.1);
+  --border-focus: rgba(16, 185, 129, 0.5);
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-dim: #64748b;
+  --accent-emerald: #10b981;
+  --accent-emerald-dim: rgba(16, 185, 129, 0.15);
+  --accent-emerald-glow: rgba(16, 185, 129, 0.3);
+  --accent-amber: #f59e0b;
+  --accent-amber-dim: rgba(245, 158, 11, 0.12);
+  --accent-red: #ef4444;
+  --accent-red-dim: rgba(239, 68, 68, 0.1);
+  --accent-blue: #3b82f6;
+  --accent-blue-dim: rgba(59, 130, 246, 0.12);
+  --accent-violet: #8b5cf6;
+  --accent-violet-dim: rgba(139, 92, 246, 0.12);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-body: 'DM Sans', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.preview-wrapper {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ═══════ Header (保持不变 - 仅模拟) ═══════ */
+.ac-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.ac-header-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.ac-header-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  flex: 1;
+}
+.ac-header-arrow {
+  font-size: 8px;
+  color: var(--text-dim);
+  margin-right: 4px;
+  transform: rotate(90deg);
+}
+.ac-header-toggle {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+.ac-header-toggle.active { background: var(--accent-emerald); }
+.ac-header-toggle::after {
+  content: '';
+  position: absolute;
+  width: 14px; height: 14px;
+  top: 2px; left: 2px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.ac-header-toggle.active::after { transform: translateX(14px); }
+
+/* ═══════ Body Container ═══════ */
+.ac-main {
+  background: var(--bg-surface);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  padding: 14px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border: 1px solid var(--border-subtle);
+  border-top: none;
+}
+
+/* ═══════ Off State ═══════ */
+.ac-off {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(100,116,139,0.06), transparent);
+  border: 1px dashed rgba(100,116,139,0.15);
+}
+.ac-off-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  animation: off-breathe 3s ease-in-out infinite;
+}
+@keyframes off-breathe {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+.ac-off-text {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+/* ═══════ Segmented Control ═══════ */
+.ac-segment {
+  position: relative;
+  display: flex;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  backdrop-filter: blur(8px);
+}
+.ac-segment input { display: none; }
+.ac-segment-label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  z-index: 2;
+  transition: color 0.25s;
+  user-select: none;
+}
+.ac-segment-label svg { opacity: 0.5; transition: opacity 0.25s; }
+.ac-segment input:checked + .ac-segment-label {
+  color: #fff;
+  font-weight: 600;
+}
+.ac-segment input:checked + .ac-segment-label svg { opacity: 1; }
+.ac-segment-slider {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  background: #10b981;
+  border: none;
+  border-radius: 6px;
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+.ac-segment-slider.right { transform: translateX(calc(100% + 6px)); }
+
+/* ═══════ Panel Entry Animation ═══════ */
+.ac-panel {
+  animation: panel-in 0.3s ease-out;
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══════ Guardian Mode - Feature Strips ═══════ */
+.ac-strips {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ac-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px 9px 0;
+  border-radius: var(--radius-sm);
+  position: relative;
+  transition: background 0.2s;
+}
+.ac-strip:hover { background: rgba(255,255,255,0.02); }
+.ac-strip-band {
+  width: 3px;
+  height: 24px;
+  border-radius: 0 2px 2px 0;
+  flex-shrink: 0;
+  transition: width 0.2s, opacity 0.2s;
+}
+.ac-strip:hover .ac-strip-band { width: 4px; }
+.ac-strip-band.emerald { background: var(--accent-emerald); }
+.ac-strip-band.blue { background: var(--accent-blue); }
+.ac-strip-band.violet { background: var(--accent-violet); }
+.ac-strip-band.amber { background: var(--accent-amber); }
+.ac-strip-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.ac-strip-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.ac-strip-desc {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Mini Toggle */
+.ac-mini-toggle {
+  position: relative;
+  width: 28px; height: 16px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.25s;
+}
+.ac-mini-toggle.on { background: var(--accent-emerald); }
+.ac-mini-toggle::after {
+  content: '';
+  position: absolute;
+  width: 12px; height: 12px;
+  top: 2px; left: 2px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+.ac-mini-toggle.on::after { transform: translateX(12px); }
+
+/* ═══════ Permission Tags ═══════ */
+.ac-perm-section {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+.ac-perm-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+.ac-perm-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.ac-perm-tag {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid var(--border-dim);
+  color: var(--text-secondary);
+  background: transparent;
+  user-select: none;
+}
+.ac-perm-tag.active {
+  background: #10b981;
+  border-color: #10b981;
+  color: #fff;
+}
+.ac-perm-tag:hover:not(.active) {
+  border-color: rgba(255,255,255,0.15);
+  color: var(--text-primary);
+}
+
+/* ═══════ Long Task Mode ═══════ */
+
+/* Status Bar */
+.ac-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: linear-gradient(135deg, var(--bg-elevated), var(--bg-surface));
+  position: relative;
+  overflow: hidden;
+}
+.ac-status::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 2px;
+  background: linear-gradient(90deg, var(--accent-emerald), transparent);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.ac-status.running::before { opacity: 1; animation: status-glow 2s ease-in-out infinite; }
+@keyframes status-glow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.ac-status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-dim);
+  transition: all 0.3s;
+}
+.ac-status.running .ac-status-dot {
+  background: var(--accent-emerald);
+  box-shadow: 0 0 8px var(--accent-emerald-glow);
+  animation: dot-pulse 2s ease-in-out infinite;
+}
+.ac-status.paused .ac-status-dot {
+  background: var(--accent-amber);
+  box-shadow: 0 0 6px var(--accent-amber-dim);
+}
+@keyframes dot-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+}
+.ac-status-text {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+}
+.ac-status-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-emerald);
+  background: var(--accent-emerald-dim);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+/* Queue */
+.ac-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ac-queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ac-queue-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.ac-queue-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.05);
+  color: var(--text-secondary);
+}
+.ac-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ac-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  position: relative;
+}
+.ac-queue-item:hover { border-color: var(--border-dim); }
+.ac-queue-item.active {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: var(--accent-emerald-dim);
+}
+.ac-queue-item.active::before {
+  content: '▸';
+  position: absolute;
+  left: -10px;
+  color: var(--accent-emerald);
+  font-size: 10px;
+}
+.ac-queue-idx {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  width: 14px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.ac-queue-text {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-mono);
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+.ac-queue-text:focus { background: rgba(255,255,255,0.04); }
+.ac-queue-del {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: var(--accent-red);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+.ac-queue-item:hover .ac-queue-del { opacity: 0.5; }
+.ac-queue-del:hover { opacity: 1 !important; background: var(--accent-red-dim); }
+.ac-queue-add {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+.ac-queue-add input {
+  flex: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  font-family: var(--font-mono);
+  transition: border-color 0.2s;
+}
+.ac-queue-add input:focus { border-color: var(--accent-emerald); }
+.ac-queue-add input::placeholder { color: var(--text-dim); }
+.ac-queue-add button {
+  padding: 5px 10px;
+  background: #10b981;
+  border: none;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ac-queue-add button:hover {
+  background: #059669;
+}
+
+/* Params Row */
+.ac-params {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 14px;
+}
+.ac-param {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+.ac-param-name {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.ac-param-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  width: 36px;
+  text-align: right;
+  outline: none;
+}
+.ac-param-unit {
+  font-size: 9px;
+  color: var(--text-dim);
+  margin-left: 2px;
+}
+
+/* Options inline */
+.ac-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.ac-opt-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+.ac-opt-chip.active {
+  color: #fff;
+  border-color: #10b981;
+  background: #10b981;
+}
+.ac-opt-chip:hover:not(.active) {
+  border-color: var(--border-dim);
+}
+.ac-opt-check {
+  width: 10px; height: 10px;
+  border-radius: 2px;
+  border: 1.5px solid currentColor;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ac-opt-chip.active .ac-opt-check::after {
+  content: '';
+  width: 5px; height: 5px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+/* Controls Bar */
+.ac-controls {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.ac-ctrl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+  flex: 1;
+}
+.ac-ctrl:active { transform: scale(0.97); }
+.ac-ctrl-start {
+  background: #10b981;
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(16, 185, 129, 0.3);
+}
+.ac-ctrl-start:hover {
+  background: #059669;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+  transform: translateY(-1px);
+}
+.ac-ctrl-pause {
+  background: #f59e0b;
+  border: none;
+  color: #1a1a1a;
+}
+.ac-ctrl-pause:hover { background: #d97706; }
+.ac-ctrl-stop {
+  background: #ef4444;
+  border: none;
+  color: #fff;
+}
+.ac-ctrl-stop:hover { background: #dc2626; }
+.ac-ctrl-ghost {
+  background: #3f3f5a;
+  border: none;
+  color: var(--text-primary);
+}
+.ac-ctrl-ghost:hover { background: #4a4a66; }
+
+/* ═══════ Error Recovery Engine ═══════ */
+.ac-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-dim), transparent);
+  margin: 2px 0;
+}
+.ac-engine {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+.ac-engine-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.ac-engine-head:hover { background: rgba(255,255,255,0.02); }
+.ac-engine-icon-box {
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(240, 136, 62, 0.1);
+  color: #f0883e;
+  flex-shrink: 0;
+}
+.ac-engine-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.ac-engine-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+.ac-engine-status-text {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-emerald);
+}
+.ac-engine-chevron {
+  color: var(--text-dim);
+  transition: transform 0.25s;
+  font-size: 10px;
+}
+.ac-engine.open .ac-engine-chevron { transform: rotate(180deg); }
+
+/* Rules */
+.ac-rules {
+  border-top: 1px solid var(--border-subtle);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ac-rule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ac-rule:hover { background: rgba(255,255,255,0.02); }
+.ac-rule-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ac-rule-dot.net { background: var(--accent-blue); }
+.ac-rule-dot.quota { background: var(--accent-amber); }
+.ac-rule-dot.model { background: var(--accent-violet); }
+.ac-rule-dot.other { background: var(--text-dim); }
+.ac-rule-name {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 500;
+}
+.ac-rule-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+  color: var(--text-secondary);
+}
+.ac-rule-badge.retry { color: #fff; background: #3b82f6; }
+.ac-rule-badge.switch { color: #1a1a1a; background: #f59e0b; }
+.ac-rule-badge.model { color: #fff; background: #8b5cf6; }
+.ac-rule-arrow {
+  font-size: 8px;
+  color: var(--text-dim);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.ac-rule:hover .ac-rule-arrow { opacity: 1; }
+
+/* Log */
+.ac-log-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+.ac-log-bar:hover { background: rgba(255,255,255,0.02); }
+.ac-log-label {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.ac-log-count-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(240, 136, 62, 0.15);
+  color: #f0883e;
+}
+
+/* ═══════ Utilities ═══════ */
+.hidden { display: none !important; }
+
+/* Stagger animation */
+.ac-strip:nth-child(1) { animation: strip-in 0.3s ease-out 0.05s both; }
+.ac-strip:nth-child(2) { animation: strip-in 0.3s ease-out 0.1s both; }
+.ac-strip:nth-child(3) { animation: strip-in 0.3s ease-out 0.15s both; }
+.ac-strip:nth-child(4) { animation: strip-in 0.3s ease-out 0.2s both; }
+@keyframes strip-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+</style>
+</head>
+<body>
+
+<div class="preview-wrapper">
+
+  <!-- ═══════ Header (模拟，不改动) ═══════ -->
+  <div class="ac-header">
+    <svg class="ac-header-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M12 17h.01"/></svg>
+    <span class="ac-header-title">自动继续</span>
+    <span class="ac-header-arrow">▶</span>
+    <div class="ac-header-toggle active" onclick="this.classList.toggle('active')"></div>
+  </div>
+
+  <!-- ═══════ Body ═══════ -->
+  <div class="ac-main">
+
+    <!-- Off State (默认隐藏) -->
+    <div class="ac-off hidden" id="offState">
+      <div class="ac-off-dot"></div>
+      <span class="ac-off-text">自动化引擎已休眠，开启开关以激活</span>
+    </div>
+
+    <!-- Segmented Control -->
+    <div class="ac-segment" id="segmentCtrl">
+      <input type="radio" name="mode" id="modeGuardian" checked>
+      <label for="modeGuardian" class="ac-segment-label">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span>守护模式</span>
+      </label>
+      <input type="radio" name="mode" id="modeLongTask">
+      <label for="modeLongTask" class="ac-segment-label">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        <span>长任务</span>
+      </label>
+      <div class="ac-segment-slider" id="slider"></div>
+    </div>
+
+    <!-- ═══════ Guardian Panel ═══════ -->
+    <div class="ac-panel" id="panelGuardian">
+      <div class="ac-strips">
+        <div class="ac-strip">
+          <div class="ac-strip-band emerald"></div>
+          <div class="ac-strip-info">
+            <span class="ac-strip-name">自动续写</span>
+            <span class="ac-strip-desc">AI 中断时自动点击「继续回复」</span>
+          </div>
+          <div class="ac-mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="ac-strip">
+          <div class="ac-strip-band blue"></div>
+          <div class="ac-strip-info">
+            <span class="ac-strip-name">自动重试</span>
+            <span class="ac-strip-desc">网络超时或生成失败时自动重试</span>
+          </div>
+          <div class="ac-mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="ac-strip">
+          <div class="ac-strip-band violet"></div>
+          <div class="ac-strip-info">
+            <span class="ac-strip-name">突破限制</span>
+            <span class="ac-strip-desc">工具调用上限时自动发送 continue</span>
+          </div>
+          <div class="ac-mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="ac-strip">
+          <div class="ac-strip-band amber"></div>
+          <div class="ac-strip-info">
+            <span class="ac-strip-name">清除干扰</span>
+            <span class="ac-strip-desc">自动关闭「文件损坏」等系统弹窗</span>
+          </div>
+          <div class="ac-mini-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+      </div>
+
+      <!-- Permissions -->
+      <div class="ac-perm-section">
+        <div class="ac-perm-label">自动批准权限</div>
+        <div class="ac-perm-tags">
+          <div class="ac-perm-tag active" onclick="this.classList.toggle('active')">Web 访问</div>
+          <div class="ac-perm-tag active" onclick="this.classList.toggle('active')">终端执行</div>
+          <div class="ac-perm-tag active" onclick="this.classList.toggle('active')">文件写入</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ Long Task Panel ═══════ -->
+    <div class="ac-panel hidden" id="panelLongTask">
+      <!-- Status -->
+      <div class="ac-status running" id="ltStatus">
+        <div class="ac-status-dot"></div>
+        <span class="ac-status-text">运行中 · 循环执行</span>
+        <span class="ac-status-count">12 轮</span>
+      </div>
+
+      <!-- Queue -->
+      <div class="ac-queue">
+        <div class="ac-queue-header">
+          <span class="ac-queue-title">指令队列</span>
+          <span class="ac-queue-badge">3 条 · 循环</span>
+        </div>
+        <div class="ac-queue-list">
+          <div class="ac-queue-item active">
+            <span class="ac-queue-idx">1</span>
+            <input type="text" class="ac-queue-text" value="继续">
+            <button class="ac-queue-del">✕</button>
+          </div>
+          <div class="ac-queue-item">
+            <span class="ac-queue-idx">2</span>
+            <input type="text" class="ac-queue-text" value="检查所有测试是否通过">
+            <button class="ac-queue-del">✕</button>
+          </div>
+          <div class="ac-queue-item">
+            <span class="ac-queue-idx">3</span>
+            <input type="text" class="ac-queue-text" value="修复失败的测试">
+            <button class="ac-queue-del">✕</button>
+          </div>
+        </div>
+        <div class="ac-queue-add">
+          <input type="text" placeholder="添加新指令...">
+          <button>+ 添加</button>
+        </div>
+      </div>
+
+      <!-- Params -->
+      <div class="ac-params">
+        <div class="ac-param">
+          <span class="ac-param-name">等待</span>
+          <div>
+            <input type="number" class="ac-param-value" value="2">
+            <span class="ac-param-unit">秒</span>
+          </div>
+        </div>
+        <div class="ac-param">
+          <span class="ac-param-name">上限</span>
+          <div>
+            <input type="number" class="ac-param-value" value="100">
+            <span class="ac-param-unit">轮</span>
+          </div>
+        </div>
+        <div class="ac-param">
+          <span class="ac-param-name">重试</span>
+          <div>
+            <input type="number" class="ac-param-value" value="10">
+            <span class="ac-param-unit">次</span>
+          </div>
+        </div>
+        <div class="ac-param">
+          <span class="ac-param-name">选项</span>
+          <div style="display:flex;gap:3px">
+            <span class="ac-param-unit" style="color:var(--accent-emerald)">⟳</span>
+            <span class="ac-param-unit" style="color:var(--accent-red)">⊘</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Options chips -->
+      <div class="ac-opts">
+        <div class="ac-opt-chip active" onclick="this.classList.toggle('active')">
+          <div class="ac-opt-check"></div>
+          <span>循环队列</span>
+        </div>
+        <div class="ac-opt-chip active" onclick="this.classList.toggle('active')">
+          <div class="ac-opt-check"></div>
+          <span>错误时停止</span>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="ac-controls">
+        <button class="ac-ctrl ac-ctrl-pause">⏸ 暂停</button>
+        <button class="ac-ctrl ac-ctrl-stop">⏹ 停止</button>
+      </div>
+    </div>
+
+    <!-- ═══════ Divider ═══════ -->
+    <div class="ac-divider"></div>
+
+    <!-- ═══════ Error Recovery Engine ═══════ -->
+    <div class="ac-engine open" id="engine">
+      <div class="ac-engine-head" onclick="document.getElementById('engine').classList.toggle('open');document.getElementById('engineBody').classList.toggle('hidden')">
+        <div class="ac-engine-icon-box">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+        </div>
+        <div class="ac-engine-meta">
+          <span class="ac-engine-name">错误恢复核心</span>
+          <span class="ac-engine-status-text">● 监控中</span>
+        </div>
+        <span class="ac-engine-chevron">▼</span>
+      </div>
+      <div class="ac-rules" id="engineBody">
+        <div class="ac-rule">
+          <span class="ac-rule-dot net"></span>
+          <span class="ac-rule-name">网络超时 / 通信异常</span>
+          <span class="ac-rule-badge retry">重试×3</span>
+          <span class="ac-rule-arrow">›</span>
+        </div>
+        <div class="ac-rule">
+          <span class="ac-rule-dot quota"></span>
+          <span class="ac-rule-name">额度耗尽 / 访问限流</span>
+          <span class="ac-rule-badge switch">切号</span>
+          <span class="ac-rule-arrow">›</span>
+        </div>
+        <div class="ac-rule">
+          <span class="ac-rule-dot model"></span>
+          <span class="ac-rule-name">模型过载 / 暂不可用</span>
+          <span class="ac-rule-badge model">换模型</span>
+          <span class="ac-rule-arrow">›</span>
+        </div>
+        <div class="ac-rule">
+          <span class="ac-rule-dot other"></span>
+          <span class="ac-rule-name">截断 / 权限 / 自定义</span>
+          <span class="ac-rule-badge">接续</span>
+          <span class="ac-rule-arrow">›</span>
+        </div>
+      </div>
+      <div class="ac-log-bar">
+        <span class="ac-log-label">恢复执行日志</span>
+        <span class="ac-log-count-badge">7</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// Tab switching
+const modeGuardian = document.getElementById('modeGuardian');
+const modeLongTask = document.getElementById('modeLongTask');
+const slider = document.getElementById('slider');
+const panelGuardian = document.getElementById('panelGuardian');
+const panelLongTask = document.getElementById('panelLongTask');
+
+function switchTab() {
+  if (modeLongTask.checked) {
+    slider.classList.add('right');
+    panelGuardian.classList.add('hidden');
+    panelLongTask.classList.remove('hidden');
+    panelLongTask.style.animation = 'none';
+    panelLongTask.offsetHeight;
+    panelLongTask.style.animation = '';
+  } else {
+    slider.classList.remove('right');
+    panelLongTask.classList.add('hidden');
+    panelGuardian.classList.remove('hidden');
+    panelGuardian.style.animation = 'none';
+    panelGuardian.offsetHeight;
+    panelGuardian.style.animation = '';
+  }
+}
+
+modeGuardian.addEventListener('change', switchTab);
+modeLongTask.addEventListener('change', switchTab);
+
+// Status demo cycling
+const statusEl = document.getElementById('ltStatus');
+const states = ['running', 'paused', ''];
+let stateIdx = 0;
+// Uncomment to demo state cycling:
+// setInterval(() => { stateIdx = (stateIdx + 1) % states.length; statusEl.className = 'ac-status ' + states[stateIdx]; }, 3000);
+</script>
+
+</body>
+</html>

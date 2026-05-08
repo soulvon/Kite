@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{TITLE}}</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <style>
+        :root {
+            --bg: #0a0a0c;
+            --accent: #00AEEF;
+            --text-main: #ffffff;
+            --text-dim: #a1a1aa;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+            scroll-snap-type: y mandatory;
+        }
+
+        section {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 10%;
+            scroll-snap-align: start;
+            position: relative;
+        }
+
+        .grid-bg {
+            position: fixed;
+            inset: 0;
+            background-image: radial-gradient(var(--accent) 0.5px, transparent 0.5px);
+            background-size: 40px 40px;
+            opacity: 0.1;
+            z-index: -1;
+        }
+
+        .module-id {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent);
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+        }
+
+        h1,
+        h2 {
+            font-size: clamp(3rem, 10vw, 8rem);
+            font-weight: 900;
+            letter-spacing: -4px;
+            margin-bottom: 2rem;
+        }
+
+        .content-card {
+            background: rgba(255, 255, 255, 0.02);
+            border-left: 4px solid var(--accent);
+            padding: 2rem;
+            max-width: 800px;
+            font-size: 1.5rem;
+            line-height: 1.6;
+            color: var(--text-dim);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grid-bg"></div>
+    <main id="app">
+        <!-- Content will be injected here -->
+    </main>
+    <script>
+        // Animation logic
+        document.addEventListener('DOMContentLoaded', () => {
+            anime({
+                targets: 'section h2, .content-card',
+                translateY: [50, 0],
+                opacity: [0, 1],
+                delay: anime.stagger(200),
+                easing: 'easeOutQuart'
+            });
+        });
+    </script>
+</body>
+
+</html>

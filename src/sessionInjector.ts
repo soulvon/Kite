@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { StoredAccount } from './types';
+import { writeFileWithElevation, copyFileWithElevation, ElevationError } from './elevatedFs';
 
 /**
  * Session 注入器
@@ -126,7 +127,7 @@ export function applyI18nOnly(): boolean {
     const content = fs.readFileSync(targetPath, 'utf8');
     const { content: newContent, changed } = applyI18n(content);
     if (!changed) return false;
-    fs.writeFileSync(targetPath, newContent, 'utf8');
+    writeFileWithElevation(targetPath, newContent, 'utf8');
     return true;
   } catch {
     return false;
@@ -283,8 +284,8 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
       }
       if (i18nResult.changed || exportAdded) {
         const backupPath = targetPath + '.backup_' + Date.now();
-        fs.copyFileSync(targetPath, backupPath);
-        fs.writeFileSync(targetPath, content, 'utf8');
+        copyFileWithElevation(targetPath, backupPath);
+        writeFileWithElevation(targetPath, content, 'utf8');
         const parts: string[] = [];
         if (i18nResult.changed) parts.push('已更新欢迎语汉化');
         if (exportAdded) parts.push('已添加当前账户导出命令');
@@ -342,7 +343,7 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
 
     // 创建备份
     const backupPath = targetPath + '.backup_' + Date.now();
-    fs.copyFileSync(targetPath, backupPath);
+    copyFileWithElevation(targetPath, backupPath);
 
     // 插入 handleAuthTokenWithShit 方法
     content = content.substring(0, insertPoint) + fullPatchedMethod + content.substring(insertPoint);
@@ -389,16 +390,30 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
     if (exportRes.changed) content = exportRes.content;
 
     // 写回文件
-    fs.writeFileSync(targetPath, content, 'utf8');
+    writeFileWithElevation(targetPath, content, 'utf8');
 
     vscode.window.showInformationMessage(
       `补丁已应用成功！备份保存在: ${path.basename(backupPath)}。请重启 Windsurf 使补丁生效。`
     );
     return true;
   } catch (err) {
-    vscode.window.showErrorMessage(
-      `补丁应用失败: ${err instanceof Error ? err.message : String(err)}`
-    );
+    if (err instanceof ElevationError) {
+      const actions = err.userDenied
+        ? ['重试（需点击"是"）', '以管理员身份运行']
+        : ['以管理员身份运行'];
+      vscode.window.showErrorMessage(err.message, ...actions).then(action => {
+        if (action === '重试（需点击"是"）') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        } else if (action === '以管理员身份运行') {
+          vscode.env.clipboard.writeText('Start-Process windsurf -Verb RunAs');
+          vscode.window.showInformationMessage('PowerShell 命令已复制到剪贴板，请在终端中粘贴运行。');
+        }
+      });
+    } else {
+      vscode.window.showErrorMessage(
+        `补丁应用失败: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
     return false;
   }
 }

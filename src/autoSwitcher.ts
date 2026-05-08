@@ -3,6 +3,7 @@ import * as accountStore from './accountStore';
 import { fetchUsage } from './usageService';
 import { StoredAccount, UsageSnapshot } from './types';
 import { getCurrentInstanceTag } from './instanceManager';
+import { getOtherLockedEmails, acquireLock, releaseLock } from './accountLock';
 
 // ─── 类型 ───────────────────────────────────────────────
 
@@ -342,14 +343,16 @@ export class AutoSwitcher implements vscode.Disposable {
       const findScore = hardExhausted ? 0 : curScore;
       const cand = this._findBest(curEmail, s.threshold, s.scoreMode, findScore);
       if (!cand) {
-        const log = `[${ts()}] ${curEmail} ${reason} 低于阈值，无可用候选`;
-        this._onSwitchEvent?.(log, `${curEmail} ${reason} 低于阈值，无可用候选`, 'warn');
+        const noHint = hardExhausted ? '低于额度下限' : '低于阈值';
+        const log = `[${ts()}] ${curEmail} ${reason} ${noHint}，无可用候选`;
+        this._onSwitchEvent?.(log, `${curEmail} ${reason} ${noHint}，无可用候选`, 'warn');
         console.log(`[autoSwitch] ${curEmail} curScore=${Math.round(curScore)} d=${Math.round(dPct)} w=${Math.round(wPct)} no candidates`);
         return;
       }
 
       const log = `[${ts()}] ${curEmail} ${reason} → ${cand.email}`;
-      this._onSwitchEvent?.(log, `${reason} 低于 ${s.threshold}%，切换至 ${cand.email}`, '');
+      const triggerHint = hardExhausted ? `低于额度下限 ${minQ}%` : `低于阈值 ${s.threshold}%`;
+      this._onSwitchEvent?.(log, `${reason} ${triggerHint}，切换至 ${cand.email}`, '');
 
       const accounts = await accountStore.readAccounts(this._ctx);
       const acct = accounts.find(a => a.email === cand.email);
@@ -361,6 +364,9 @@ export class AutoSwitcher implements vscode.Disposable {
         this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
         this._lastSwitchedFrom = curEmail;
         this._lastSwitchedAt = Date.now();
+        // 跨窗口锁：释放旧号，锁定新号
+        releaseLock(curEmail);
+        acquireLock(cand.email);
         await accountStore.setCurrentAccount(this._ctx, cand.email);
         this._onRefreshUI?.();
         // 通知 bridge → windsurf-better.js 显示通知 + 重试消息
@@ -383,6 +389,11 @@ export class AutoSwitcher implements vscode.Disposable {
    * @returns 切换成功返回新账号 email，失败返回 null
    */
   async forceSwitch(reason: string): Promise<{ email: string } | null> {
+    // 自动切号关闭时，信号触发的切号也不执行
+    if (!this.settings.enabled) {
+      console.log('[autoSwitch] forceSwitch skip: disabled');
+      return null;
+    }
     // 如果定时器正在切号，等最多 5s（避免信号被白白丢弃）
     if (this._switching) {
       for (let i = 0; i < 10; i++) {
@@ -429,6 +440,10 @@ export class AutoSwitcher implements vscode.Disposable {
       this._lastSwitchedFrom = curEmail;
       this._lastSwitchedAt = Date.now();
 
+      // 跨窗口锁：释放旧号，锁定新号
+      releaseLock(curEmail);
+      acquireLock(cand.email);
+
       await accountStore.setCurrentAccount(this._ctx, cand.email);
       this._onRefreshUI?.();
 
@@ -474,17 +489,24 @@ export class AutoSwitcher implements vscode.Disposable {
     const effectiveThreshold = Math.max(threshold, curScore);
     let rejectedDueToThreshold = 0;
     let rejectedDueToMinQ = 0;
+    let rejectedDueToFree = 0;
+    let rejectedDueToLock = 0;
+
+    // 跨窗口锁：获取被其他窗口占用的账号
+    const lockedByOthers = getOtherLockedEmails();
 
     for (const [email, entry] of this._cache.entries()) {
       if (email === curEmail) continue;
       if (disabledSet.has(email)) continue;
       if (poolEmails && !poolEmails.has(email)) continue;
+      // 跨窗口锁：跳过被其他窗口占用的账号
+      if (lockedByOthers.has(email)) { rejectedDueToLock++; continue; }
       // 防止来回切：5 分钟内不回切到刚离开的号
       if (email === this._lastSwitchedFrom && Date.now() - this._lastSwitchedAt < ANTI_BOUNCE_MS) continue;
       if (!entry.snapshot) continue;
       // 跳过 Free 计划的账号
       const plan = (entry.snapshot.planName || '').toLowerCase();
-      if (plan.includes('free')) continue;
+      if (plan.includes('free')) { rejectedDueToFree++; continue; }
 
       const dPct = clamp(entry.snapshot.dailyRemainingPercent);
       const wPct = clamp(entry.snapshot.weeklyRemainingPercent);
@@ -503,7 +525,7 @@ export class AutoSwitcher implements vscode.Disposable {
     }
 
     if (candidates.length === 0) {
-      console.log(`[autoSwitch] findBest: no candidates (checked ${this._cache.size}, rejected minQ=${rejectedDueToMinQ} threshold=${rejectedDueToThreshold}, effectiveThreshold=${effectiveThreshold})`);
+      console.log(`[autoSwitch] findBest: no candidates (checked ${this._cache.size}, rejected free=${rejectedDueToFree} minQ=${rejectedDueToMinQ} threshold=${rejectedDueToThreshold} locked=${rejectedDueToLock}, effectiveThreshold=${effectiveThreshold})`);
       return null;
     }
 

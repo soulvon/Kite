@@ -1,0 +1,67 @@
+{
+  "profile_version": "1.0",
+  "name": "用户语言特征特征提取规范",
+  "description": "用于精细化模仿用户语言风格的结构化特征模型",
+  "schema": {
+    "core_identity": {
+      "persona_summary": "一句话描述用户给人的整体印象（如：雷厉风行的极客、亲切的兄长、严谨的学者）",
+      "energy_level": "数值 1-10，用户回复的能量感（1 为死气沉沉，10 为极度兴奋）",
+      "formality_score": "数值 1-10，正式度（1 为极度碎嘴/俚语，10 为官方公文风格）"
+    },
+    "lexical_features": {
+      "high_frequency_words": ["用户最常使用的词汇列表"],
+      "signature_phrases": ["具有辨识度的短语，如：'兄弟'、'稳了'、'整一个'"],
+      "slang_and_idioms": ["习惯使用的俚语、成语或特定圈子黑话"],
+      "jargon_preference": "技术词汇的使用深度（浅显易懂 vs. 深度专业）",
+      "filler_words": ["习惯性的语气词，如：'就'、'大概'、'其实'"],
+      "forbidden_words": ["用户明显回避或从不使用的词汇类型"]
+    },
+    "syntactic_patterns": {
+      "sentence_length": {
+        "preference": "倾向于长句还是短句",
+        "distribution": "短:中:长的比例估算"
+      },
+      "complexity": "句式复杂度（简单句 vs. 复合从句）",
+      "ending_particles": ["句末语气助词，如：'哈'、'滴'、'啦'、'。'（是否存在缺失标点的习惯）"],
+      "pacing_style": "叙述节奏（快节奏跳跃 vs. 慢节奏铺垫）"
+    },
+    "punctuation_and_symbols": {
+      "punctuation_habits": {
+        "frequency": "标点使用频率（吝啬 vs. 泛滥）",
+        "unique_usage": "特殊的标点用法（如连续感叹号 !!!，或者用空格代替标点）"
+      },
+      "emoji_style": {
+        "usage_frequency": "数值 1-10",
+        "favorite_emojis": ["核心表情列表"],
+        "placement_logic": "出现位置（句首、句中强关联、句末固定点缀）"
+      },
+      "capitalization_style": "（针对英文/混合）全小写、大小写混杂、严谨首字母大写"
+    },
+    "formatting_logic": {
+      "line_break_frequency": "换行习惯（段落式 vs. 每一句话都换行）",
+      "list_preference": "是否喜欢使用有序/无序列表（1. 2. 3.）",
+      "markdown_habits": ["对粗体、代码块、标题的使用偏好"]
+    },
+    "tone_and_voice": {
+      "emotional_base": "情绪基准（冷静、热情、焦虑、幽默）",
+      "humor_type": "幽默风格（冷幽默、自嘲、吐槽、无幽默感）",
+      "address_forms": ["对他人的称呼习惯，如：'兄弟'、'您'、'大佬'"],
+      "politeness_level": "礼貌程度（极简主义 vs. 冗余客套）"
+    },
+    "interaction_quirks": {
+      "reaction_to_errors": "遇到错误时的反应语气（宽容、暴躁、探究、无所谓）",
+      "instruction_style": "下达指令的方式（祈使句为主 vs. 商量口吻）",
+      "feedback_loops": "是否习惯在开头确认进度，或在结尾表示感谢"
+    }
+  },
+  "example_profile": {
+    "persona_summary": "充满活力的邻家大哥，沟通直接且极具感染力",
+    "signature_phrases": ["兄弟", "搞起来", "妥了"],
+    "ending_particles": ["哈", "！"],
+    "emoji_style": {
+      "favorite_emojis": ["🚀", "🔥", "🤝"],
+      "placement_logic": "通常在回复的末尾，成对出现"
+    },
+    "line_break_frequency": "高，喜欢短句成行"
+  }
+}

@@ -1,130 +1,168 @@
-# Windsurf 号池管理
+<div align="center">
 
-Windsurf 无感换号：在编辑器侧栏内集中管理多个账号，一键切换、自动注入会话，实时显示每日 / 每周配额与会员期限。免退出、免重启。
+# Windsurf Pool — 号池管理
 
-> 仅供本地账号管理与个人学习使用。请遵守 Windsurf 官方服务条款。
+**让 AI 编程永不断流的 Windsurf 多账号管理引擎**
 
-## 功能特性
+无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
 
-- **多账号管理**：邮箱密码登录、批量导入（文本 / JSON / Devin Token）、从当前已登录账户一键导入（依赖补丁注入命令，无需密码）。
-- **实时配额显示**：每日 / 每周配额百分比、重置倒计时、Flex 余额、会员计划与到期日。
-- **号池汇总**：总账号数、本日 / 本周配额总量与百分比一目了然；无数据时显示占位，不隐藏面板。
-- **一键切换**：保留当前会话的前提下注入目标账号 Session，无需重启 Windsurf。
-- **自动切号**：当前账号 `min(日%, 周%)` 低于阈值时自动切换到候选最优账号；30 s 冷却 + 批量导入期间自动让位，避免误切。
-- **多实例分身**：同时开多个 Windsurf 窗口，每个窗口登不同账号，可以同时用同一个项目。支持从 Cockpit Tools 导入实例。
-- **配额排序**：综合配额 / 日配额 / 周配额 / 会员到期日 / 邮箱 / 默认顺序，多种排序方式。
-- **批量导入进度弹窗**：webview 内模态弹窗实时进度条、成功 / 失败 / 跳过标签统计、失败明细列表、完成按钮关闭。
-- **统一 webview 弹窗**：所有操作反馈（登录成功/失败、切换、添加账号等）均使用 webview 内模态弹窗，不再弹出 VS Code 原生对话框。
-- **直连模式**：配额查询与登录请求绕过 VS Code 全局代理，避免代理未启动时请求失败。
-- **无闪烁刷新**：账号卡片与实例列表刷新时原地更新 DOM，结构不变时不重建，消除视觉闪烁。
-- **失败重试与限流**：自动重试瞬时错误、相邻请求最小间隔、单项超时兜底。
-- **重复账号去重**：批量导入时自动跳过号池已存在的邮箱。
-- **Windsurf 增强脚本**：注入 windsurf-better.js，提供界面汉化、回复建议气泡、自动恢复、完成提醒等功能。
-- **校验值自动修复**：补丁/增强会修改 `workbench.html` 等被 Electron 校验的核心文件，默认启用 `fixChecksums` 后自动重算 product.json 中的 SHA256 哈希，**从根本消除"installation appears corrupt"提示**（无需依赖 DOM 自动点掉通知的兜底）。
-- **自动恢复（AutoRecovery）**：错误分类检测（A 类重试 / B 类切号 / C 类继续 / D 类通知），自动重试与信号桥切号。
-- **完成提醒**：AI 回复完成时播放提示音和/或弹桌面通知，支持多种铃声和触发条件。
-- **切号策略**：最低非零优先（推荐）/ 满额度优先，自动跳过 Free 账号，可配置额度下限和已用号阈值。
-- **切号范围**：全部账号 / 按标签筛选 / 当前实例分组，三种切号范围模式。
-- **账号启用/禁用**：单个或批量启用、禁用账号；禁用的账号自动切号时自动跳过。
-- **批量操作**：多选模式下支持批量加标签、启用、禁用、删除。
-- **实例标签分组**：每个实例可绑定一个标签，切号范围选「当前实例分组」时只在该标签账号中轮换。
-- **分组筛选**：按标签 / 套餐 / 状态 / 会员等级 / 用量水平 / 到期状态 / 域名，7 种维度。
-- **分页浏览**：账号列表支持分页显示（10/20/50/全部），适配大量账号场景。
+[![Version](https://img.shields.io/badge/version-5.4.0-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
-## 使用方法
+</div>
 
-1. 在活动栏点击 **Windsurf 号池管理** 图标打开侧栏。
-2. 通过 **单个登录** / **批量导入** / **已登录账户** 任一方式添加账号。
-3. 点击账号卡片的「切换」即可注入 Session 到当前 Windsurf。
-4. 在「自动切号」面板开启自动切换、调整阈值（默认 10%）。
-5. 通过卡片右上角的排序按钮选择排序方式。
+---
 
-## 系统要求
+> 如果这个工具帮你省了时间，欢迎请我喝杯咖啡。
+
+<p align="center">
+  <a href=""><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me a Coffee"></a>&nbsp;
+  <a href=""><img src="https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>&nbsp;
+  <a href=""><img src="https://img.shields.io/badge/爱发电-946CE6?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyTDIgN2wxMCA1IDEwLTV6TTIgMTdsMTAgNSAxMC01TTIgMTJsMTAgNSAxMC01Ii8+PC9zdmc+&logoColor=white" alt="爱发电"></a>
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/soulvon/windsurf-pool-releases/main/wechat-reward.jpg" width="180" alt="微信赞赏码">
+</p>
+
+<p align="center"><sub>微信赞赏</sub></p>
+
+---
+
+## 它解决什么问题？
+
+Windsurf 的 AI 配额用完就得等重置，手动切号要退出登录、重启编辑器，**正在进行的对话直接丢失**。多开窗口还会互相踢号。
+
+Windsurf Pool 在 **不退出、不重启、不丢失会话** 的前提下，把多个账号变成一个无限额度的池子：配额快用完 → 自动切到最优账号 → 接着上次进度继续 → 你甚至感知不到发生了什么。
+
+## 核心能力
+
+### 🔄 无感换号引擎
+- **Session 热注入** — 修补 Windsurf 内置扩展的认证方法，直接覆盖 Session Token，保留当前对话上下文
+- **智能切号策略** — 最低非零优先 / 满额度优先，自动跳过 Free 账号，可配置额度下限与已用号阈值
+- **30s 冷却 + 防误切** — 批量导入期间自动让位，避免并发冲突
+
+### 🛡️ 自动恢复（AutoRecovery）
+- **四级错误分类** — A 类自动重试 / B 类自动切号 / C 类发送 continue / D 类通知用户
+- **30+ 错误模式识别** — 覆盖配额耗尽、模型不可达、网络超时、流式中断、认证失效、上下文超限等
+- **切号后自动续接** — 切号成功后自动发送「继续」，AI 接着上次进度走，不重做工作
+- **双语兼容** — 汉化后仍能准确匹配英文错误模式（`data-ws-orig` 原文保留机制）
+
+### 🤖 长任务自动化
+- **长任务模式** — AI 停止后自动发送消息队列，支持循环发送，让 AI 持续工作
+- **守护模式** — 自动点击「继续回复」+ 自动重试 + 工具上限自动 continue + 权限自动批准
+- **智能跳过** — 检测到权限提示时暂停，AI 生成中不计时，全局冷却防冲突
+
+### 📊 配额可视化
+- **实时仪表盘** — 每日 / 每周配额百分比、重置倒计时、Flex 余额、会员计划与到期日
+- **号池汇总** — 总账号数、本日 / 本周配额总量一目了然
+- **7 维筛选** — 标签 / 套餐 / 状态 / 会员等级 / 用量水平 / 到期状态 / 域名
+- **智能排序** — 综合推荐 / 日配额 / 周配额 / 到期日 / 邮箱 / 添加时间，支持升降序
+
+### 🖥️ 多实例分身
+- 同时开多个 Windsurf 窗口，每个窗口独立账号，可以同时用同一个项目
+- 实例标签分组，每个实例绑定标签，切号范围限定在分组内轮换
+- 跨平台支持：Windows / macOS（`osascript`）/ Linux（`xdotool` / `wmctrl`）
+
+### 🌐 Windsurf 增强
+- **界面汉化** — 实时中英文切换，关闭后即时还原（`WeakMap` 原文记录 + attribute 双向备份）
+- **回复建议气泡** — 多主题多形状，实时切换
+- **完成提醒** — 提示音 + 桌面通知，支持 4 种铃声和多种触发条件
+- **SHA256 校验值修复** — 自动重算 `product.json` 哈希，从根本消除 "installation appears corrupt" 提示
+
+## 技术亮点
+
+> 这不是一个简单的配置管理工具。以下是开发过程中攻克的几个硬核问题：
+
+| 问题 | 方案 |
+|------|------|
+| **跨 origin 通信失效** | Webview（`vscode-webview://`）与 workbench（`vscode-file://`）origin 不同，`localStorage` 事件不跨 origin 触发。自建 localhost HTTP 桥（token 鉴权 + CORS preflight 缓存 + 端口持久化复用），彻底替代旧方案 |
+| **Electron 文件校验** | 修改 `workbench.html` 后 Electron 校验 SHA256 失败弹 corrupt 提示。启动时自动重算所有 checksums 并写回 `product.json`，算法与 VS Code 内置一致 |
+| **汉化与错误识别冲突** | 汉化替换 DOM 文本后，30+ 条英文正则全部失效。翻译时将原文存入 `data-ws-orig` 属性，错误检测时拼接原文 + 可见文本，双语共存 |
+| **注入版本判断** | 以前靠手动维护 VERSION 常量决定是否重注入，多次遗漏导致用户装了新版不生效。改用脚本内容 SHA1 前 10 位作为版本标识，内容变 → hash 变 → 自动重注入 |
+| **设置实时生效** | 侧栏改设置 → 扩展宿主写盘 → HTTP 桥推送 `apply-settings` 命令 → 注入脚本热更新 observer 开关，全链路无需 reload |
+| **Windows UAC 合并** | 补丁注入 + 增强注入 + 校验值修复三步写操作合并为一次 UAC 提权弹窗，用户体验从弹 3 次变弹 1 次 |
+
+## 快速开始
+
+1. 下载最新 [`.vsix` 发布包](https://github.com/soulvon/windsurf-pool-releases)
+2. 命令面板 → `Extensions: Install from VSIX...` → 选择文件
+3. 侧栏点击 **Windsurf 号池管理** 图标 → 添加账号（登录 / 批量导入 / 从当前账户一键导入）
+4. 点击「切换」或开启自动切号 → 完成
+
+### 系统要求
 
 | 平台 | 最低版本 | 备注 |
 |------|----------|------|
 | **Windows** | v1.x+ | 完整支持 |
-| **macOS** | **v4.13.2+** | 依赖跨平台适配（旧版本会报 `APPDATA 环境变量不存在`） |
-| **Linux** | **v4.13.2+** | 同上；多实例窗口聚焦需额外安装 `xdotool` 或 `wmctrl` |
+| **macOS** | v4.13.2+ | 旧版本会报 `APPDATA 环境变量不存在` |
+| **Linux** | v4.13.2+ | 多实例窗口聚焦需 `xdotool` 或 `wmctrl` |
 
-> ⚠️ **macOS / Linux 用户请务必使用 v4.13.2+**。早期版本未适配跨平台路径，在非 Windows 系统上启动会直接报错。
+<details>
+<summary><b>macOS / Linux 首次使用补充</b></summary>
 
-## 安装
-
-1. 下载最新的 `.vsix` 包。
-2. VS Code / Windsurf：命令面板 → `Extensions: Install from VSIX...`，选择该文件。
-3. 首次切号时会自动提示应用 Session 注入补丁；按提示重启 Windsurf 即可。
-
-### macOS / Linux 首次使用补充
-
-Windsurf 主体安装在 `/Applications/`（macOS）或 `/usr/share/windsurf/`、`/opt/windsurf/`（Linux）时，需要写权限才能应用补丁。扩展检测到不可写时会自动弹提示并提供一键复制的 `chmod` 命令：
+Windsurf 安装在系统目录时需要写权限。扩展检测到不可写会自动弹提示并提供一键复制的 `chmod` 命令：
 
 ```bash
-# 示例（实际路径以提示为准）
 sudo chmod -R a+w "/Applications/Windsurf.app"        # macOS
 sudo chmod -R a+w "/usr/share/windsurf"               # Linux .deb
 sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 ```
 
-执行完重启 Windsurf 即可；用户级安装（`~/.local/opt/windsurf/`）无需此步骤。
+用户级安装（`~/.local/opt/windsurf/`）无需此步骤。
+</details>
 
 ## 安全与隐私
 
-- 账号 Session、API Key 与密码均仅存储在 **VS Code `ExtensionContext.secrets`**（操作系统密钥库），不会上传任何远端。
-- 配额查询直接调用 Windsurf 官方 API；除此之外不发起任何外部请求。
-- 不收集遥测，不写日志到磁盘。
-- 切号通过修补 Windsurf 内置扩展的认证方法注入 Session，仅在本机生效。
+- **本地存储** — Session、API Key、密码存储在 VS Code `ExtensionContext.secrets`（操作系统密钥库），不上传任何远端
+- **零遥测** — 不收集任何数据，不写日志到磁盘
+- **最小外部请求** — 仅调用 Windsurf 官方 API 查询配额，无其他外部请求
+- **本机生效** — 切号通过修补本机 Windsurf 内置扩展实现，不影响其他设备
 
-## 项目结构
+> 仅供本地账号管理与个人学习使用。请遵守 Windsurf 官方服务条款。
 
-```
-windsurf-pool/
-├── package.json
-├── tsconfig.json
-├── src/
-│   ├── extension.ts
-│   ├── accountStore.ts
-│   ├── loginService.ts
-│   ├── usageService.ts
-│   ├── sessionInjector.ts
-│   ├── sidebarProvider.ts
-│   ├── instanceManager.ts
-│   ├── autoSwitcher.ts
-│   ├── signalBridge.ts
-│   └── types.ts
-└── resources/
-    ├── icon.png / icon.svg
-    ├── windsurf-better.js
-    └── webview/
-        ├── main.js
-        └── main.css
-```
+<details>
+<summary><h2>更新日志（点击展开）</h2></summary>
 
-## 开发
+### v5.0.3
+- **Windows 提权批处理（`elevatedFs.ts`）**：新增 `elevatedFs` 模块，将启动阶段所有安装目录写操作（补丁注入、增强注入、校验值修复）合并为一次 UAC 弹窗；用户拒绝时提供「重试」或「以管理员身份运行」选项，不再每个文件单独报错。
+- **长任务模式增强**：
+  - 新增「发送重试次数」设置：输入框残留检测到连续 N 次发送失败后自动停止长任务（默认 3 次）。
+  - 新增「遇到不可恢复错误时自动停止」选项。
+  - **强制停止按钮**：发送 `force-stop` 命令到注入脚本，立即清除定时器 + 清空输入框残留 + 重置所有计数。
+  - 停止原因显示：侧栏状态文本展示具体停止原因（达到最大次数 / 发送失败 / 队列消费完 / 切换到守护模式）。
+  - 长任务运行中切换到守护 Tab 时弹确认对话框，防止误操作。
+  - 每次成功发送后通过桥推送计数到侧栏，实时显示已发送次数和内容。
+- **自动切号改进**：
+  - `forceSwitch` 在自动切号关闭时不再执行（之前信号桥触发的强制切号不受开关限制，可能意外切号）。
+  - 候选排除日志增加 Free 账号拒绝计数，方便排查"无可用候选"原因。
+  - 切号提示文案区分"低于额度下限"与"低于阈值"，更精确。
+  - 信号桥切号增加耗时统计和缓存大小，便于诊断延迟问题。
+- **桥服务器启动集成**：增强启用时在扩展激活阶段自动启动桥服务器（复用上次 port/token），不再需要首次 reload。`deactivate` 时关闭桥。
+- **CSP connect-src 自动添加**：`ensureConnectSrc` 在注入 workbench.html 时自动添加 `http://127.0.0.1:* http://localhost:*`，免手动配置。
+- **注入版本 marker 格式更新**：格式改为 `<!-- ws-better-v1.0.0-a1b2c3d4e5 -->`（含 SHA1 hash），正则同步更新为匹配 `[\d.]+-[a-f0-9]+`。
+- **scoreMode 提示优化**：daily / weekly 模式说明补充"若任一配额 ≤ 额度下限仍会强制切号"。
+- **`brainlessMaxConsecutive` 语义修正**：`0` 表示无限（之前 0 被错误转换为 99999）。
 
-```bash
-npm install
-npm run compile      # 或 npx tsc
-npm run package      # 生成 vsix
-```
+### v5.0.2
+- **切号策略默认值调整**：默认策略从「最低非零优先」改为「满额度优先」。
+- **🔴 修复切号选中不可用账号**：新增硬约束——候选账号日/周任一维度 ≤1% 时绝对不选（不受 `minQuota` 配置值影响）。修复 `scoreMode=daily` 时可能选中「周 0% 日 100%」等实际不可用账号的问题。
+- **🔴 修复重启自动发「继续」**：插件重启后不再自动进入长任务（brainless）模式发送继续消息。根因是 `collectEnhSettings()` 在长任务 tab 选中时总返回 `continueMode: 'brainless'`，持久化后重启即触发。
+  - `collectEnhSettings()` 现在只在长任务实际运行时（`_ltRunning === true`）才返回 `brainless`，否则始终为 `smart`。
+  - 长任务控制按钮改为通过 `saveLtMode()` 直接推送 `continueMode` 变更，走 `enhSave` → bridge `apply-settings` 正规链路。
+  - `init()` 增加安全检查：检测到残留 `brainless` 状态时自动重置为 `smart` 并保存。
+- **修复暂停后设置变更意外恢复 brainless**：暂停时未重置 `_ltRunning` 标志，导致修改其他设置时 `collectEnhSettings()` 仍返回 `brainless`。现在暂停/恢复正确切换 `_ltRunning` 状态。
+- **清理 ~200 行死代码**：移除已迁移至侧栏的旧浮动设置面板（`injectPanelStyles` + `createSettingsUI`），减小 VSIX 体积。
+- **批量导入选项居中修复**：radio 按钮改用 `padding` + `min-height` + `line-height: normal` 替代固定 `height` + `line-height: 1`，修复中文字符垂直不居中问题。
 
-按 `F5` 启动扩展开发宿主进行调试。
-
-## 更新日志
+### v5.0.1
+- **设置哈希稳定性**：嵌套对象（如 `longTask`）递归排序 key 后再 hash，避免字段顺序不同导致无意义重注入。
+- **重载 banner 插入位置修复**：「已实时应用」banner 改为插入到 body 末尾，避免被其他元素遮挡。
+- **实例标签占位符改名**：未绑定标签的实例显示为「未分配标签分组号池」，语义更清晰。
 
 ### v5.0.0
 - **Devin Token 批量导入**：新增「Devin Token」导入格式，支持粘贴 `devin-session-token$` 或纯 JWT（自动补前缀），自动去重、标签分组。
 - **自动继续面板 UI 统一**：「自动继续」与「自动切号」面板头部样式统一（图标颜色、折叠箭头位置、开关样式），使用 `as-top-*` 系列 class，移除冗余的 `ac-summary` / `ac-icon-box` 等旧样式。
-- **🔴 修复重启自动发「继续」**：插件重启后不再自动进入长任务（brainless）模式发送继续消息。根因是 `collectEnhSettings()` 在长任务 tab 选中时总返回 `continueMode: 'brainless'`，持久化后重启即触发。
-  - `collectEnhSettings()` 现在只在长任务实际运行时（`_ltRunning === true`）才返回 `brainless`，否则始终为 `smart`。
-  - 长任务控制按钮改为通过 `saveLtMode()` 直接推送 `continueMode` 变更，走 `enhSave` → bridge `apply-settings` 正规链路（原 `bridgeCommand` 消息类型在后端未处理，从未生效）。
-  - `init()` 增加安全检查：检测到残留 `brainless` 状态时自动重置为 `smart` 并保存。
-  - 显式写入 `brainlessModeEnabled: false` 清除旧字段，防止 `loadSettings` 迁移逻辑重新激活。
-- **修复暂停后设置变更意外恢复 brainless**：暂停时未重置 `_ltRunning` 标志，导致修改其他设置时 `collectEnhSettings()` 仍返回 `brainless`。现在暂停/恢复正确切换 `_ltRunning` 状态。
-- **清理 ~200 行死代码**：移除已迁移至侧栏的旧浮动设置面板（`injectPanelStyles` + `createSettingsUI`），减小 VSIX 体积。
-- **🔴 修复切号选中不可用账号**：新增硬约束——候选账号日/周任一维度 ≤1% 时绝对不选（不受 `minQuota` 配置值影响）。修复 `scoreMode=daily` 时可能选中「周 0% 日 100%」等实际不可用账号的问题。
-- **切号策略默认值调整**：默认策略从「最低非零优先」改为「满额度优先」。
-- **批量导入选项居中修复**：radio 按钮改用 `padding` + `min-height` + `line-height: normal` 替代固定 `height` + `line-height: 1`，修复中文字符垂直不居中问题。
+- **长任务模式（brainless → longTask）重构**：从旧的 `brainlessModeEnabled` 迁移到结构化的 `longTask` 对象（含 `continueQueue` / `loop` / `idleSeconds` / `maxContinueCount`），支持多条消息队列循环发送。
+- **守护模式（guardian）**：自动点击「继续回复」按钮 + 自动重试 + 工具上限自动发 continue + 权限自动批准 + 自动关闭 corrupt 提示，可逐项配置。
 
 ### v4.20.2
 - **修复 `injectBubblesStyles` 冗余 DOM 操作**：`document.head.appendChild(style)` 在 `if (!style)` 块外无条件执行，每次调用都会多一次 DOM move。已移除。
@@ -424,3 +462,21 @@ npm run package      # 生成 vsix
 ## 免责声明
 
 本扩展为社区工具，与 Windsurf 官方无关。使用本扩展产生的任何后果由使用者自行承担。
+
+</details>
+
+---
+
+<div align="center">
+
+**Windsurf Pool** — 一个人的全栈工程，从 Electron 逆向到 DOM 注入到跨进程通信。
+
+如果它让你的 AI 编程体验更流畅，Star ⭐ 或赞赏就是最大的动力。
+
+<a href=""><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me a Coffee"></a>&nbsp;
+<a href=""><img src="https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>&nbsp;
+<a href=""><img src="https://img.shields.io/badge/爱发电-946CE6?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyTDIgN2wxMCA1IDEwLTV6TTIgMTdsMTAgNSAxMC01TTIgMTJsMTAgNSAxMC01Ii8+PC9zdmc+&logoColor=white" alt="爱发电"></a>
+
+<sub>MIT License · Made with ❤️ by soulvon</sub>
+
+</div>

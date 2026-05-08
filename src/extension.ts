@@ -4,13 +4,17 @@ import * as fs from 'fs';
 import { SidebarProvider } from './sidebarProvider';
 import { applyPatch, applyI18nOnly } from './sessionInjector';
 import * as accountStore from './accountStore';
-import { readBindMark, getCurrentUserDataDir } from './instanceManager';
+import { readBindMark, getCurrentUserDataDir, getCurrentInstanceName } from './instanceManager';
 import { AutoSwitcher } from './autoSwitcher';
 import { checkForUpdates, autoCheckOnStartup } from './updater';
 import { ensureEnhancement, restoreWorkbench } from './enhancementInjector';
 import { ensureBubbleRules, injectBubbleRules, removeBubbleRules, hasBubbleRules } from './rulesInjector';
 import { fixChecksums, restoreProductJson, getChecksumStatus } from './checksumFixer';
+import { startBridgeServer, stopBridgeServer } from './bridgeServer';
+import { initAccountLock, acquireLock, releaseLock, startHeartbeat, stopHeartbeat } from './accountLock';
+import { mergeEnhSettings, readEnhSettings } from './enhSettingsStore';
 import { isWindows, isMac, isWritable } from './utils';
+import { beginElevatedBatch, flushElevatedBatch, cancelElevatedBatch, ElevationError } from './elevatedFs';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
@@ -19,6 +23,9 @@ export function activate(context: vscode.ExtensionContext) {
   // 多实例：检测绑定标记并自动切号
   autoSwitchByBindMark(context);
 
+  // 批量模式：将启动阶段所有安装目录写操作合并，需要提权时仅弹一次 UAC
+  beginElevatedBatch();
+
   // 静默应用汉化（不影响扩展启动）
   applyI18nOnly();
 
@@ -26,6 +33,12 @@ export function activate(context: vscode.ExtensionContext) {
   autoSwitcher = new AutoSwitcher(context);
   context.subscriptions.push(autoSwitcher);
   autoSwitcher.start();
+
+  // 跨窗口账号锁：初始化并锁定当前账号
+  initAccountLock(`pid-${process.pid}`, getCurrentInstanceName());
+  const curEmail = context.globalState.get<string>('lastEmail');
+  if (curEmail) acquireLock(curEmail);
+  startHeartbeat();
 
   // 自动检查更新（延迟 30 秒）
   autoCheckOnStartup();
@@ -182,6 +195,34 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(checkUpdatesCmd);
 
+  // [Bridge] 启动跨 origin 桥（HTTP localhost）—— 仅当增强已启用时才启动
+  // 关键：复用上次的 port/token，使 windsurf-better.js 用上次嵌入值连接也能成功
+  // （否则每次 Windsurf 启动都要 reload 才能用桥功能）
+  const _enhEnabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
+  if (_enhEnabled) {
+    const _lastSettings = readEnhSettings();
+    const lastBridge: { preferredPort?: number; preferredToken?: string } = {
+      preferredPort: typeof _lastSettings.__bridgePort === 'number' ? _lastSettings.__bridgePort : undefined,
+      preferredToken: typeof _lastSettings.__bridgeToken === 'string' ? _lastSettings.__bridgeToken : undefined,
+    };
+    startBridgeServer(lastBridge).then(info => {
+      // 端口或 token 变化才更新 enh-settings，避免每次启动都触发 hash 变化
+      if (info.port !== lastBridge.preferredPort || info.token !== lastBridge.preferredToken) {
+        try {
+          mergeEnhSettings({ __bridgePort: info.port, __bridgeToken: info.token });
+          ensureEnhancement();
+          // bridge 回调在 flush 之后异步执行，workbench.html 已直接写入磁盘，
+          // 必须同步修复 checksums 否则下次启动校验失败
+          autoFixChecksums();
+        } catch (err) {
+          console.warn('[windsurf-pool] bridge inject failed:', err);
+        }
+      }
+    }).catch(err => {
+      console.warn('[windsurf-pool] bridge server failed to start:', err);
+    });
+  }
+
   // [Windsurf 增强] 自动注入 DOM 增强脚本到 workbench.html
   try {
     const result = ensureEnhancement();
@@ -199,10 +240,31 @@ export function activate(context: vscode.ExtensionContext) {
     console.error('[windsurf-pool] Enhancement injection failed:', err);
   }
 
-  // 统一在 ensureEnhancement 之后执行 checksum 修复：
-  // - 增强注入后：workbench.html 哈希已变，需要重算写回
-  // - 未注入时：检测到无需修改则直接跳过，开销忽略不计（~几十 ms 一次性）
-  // - Windsurf 升级覆盖 product.json 后：此处会再次自动修复
+  // 提交所有启动阶段的文件写操作（无需提权时零开销；需要时仅一次 UAC）
+  try {
+    flushElevatedBatch();
+  } catch (err) {
+    cancelElevatedBatch();
+    if (err instanceof ElevationError) {
+      const actions = err.userDenied
+        ? ['重试（需点击"是"）', '以管理员身份运行']
+        : ['以管理员身份运行'];
+      vscode.window.showErrorMessage(err.message, ...actions).then(action => {
+        if (action === '重试（需点击"是"）') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        } else if (action === '以管理员身份运行') {
+          vscode.env.clipboard.writeText('Start-Process windsurf -Verb RunAs');
+          vscode.window.showInformationMessage('PowerShell 命令已复制到剪贴板，请在终端中粘贴运行。');
+        }
+      });
+    } else {
+      console.error('[windsurf-pool] Elevated batch flush failed:', err);
+    }
+  }
+
+  // 统一在 flushElevatedBatch 之后执行 checksum 修复：
+  // 必须在 flush 之后，因为 flush 才真正把新 workbench.html 写入磁盘，
+  // 此时 computeChecksum 读到的才是最新文件内容
   try { autoFixChecksums(); } catch (err) { console.error('[windsurf-pool] Checksum fix failed:', err); }
 
   // [Windsurf 增强] 恢复原始 workbench.html 命令（一并恢复 product.json）
@@ -370,7 +432,7 @@ async function autoSwitchByBindMark(context: vscode.ExtensionContext) {
  * 不可写时弹一次提示，记住用户选择
  */
 function checkInstallPermission(context: vscode.ExtensionContext): void {
-  // Windows 不需要：用户级安装目录默认可写
+  // Windows: 提权已由 elevatedFs 自动处理（UAC 弹窗），无需手动提示
   if (isWindows) return;
 
   // 已提示过则跳过
@@ -434,5 +496,7 @@ function autoFixChecksums(): void {
 }
 
 export function deactivate() {
-  /* noop */
+  try { stopHeartbeat(); } catch {}
+  try { releaseLock(); } catch {}
+  try { stopBridgeServer(); } catch {}
 }

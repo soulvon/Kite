@@ -16,11 +16,14 @@
   let autoSwitchPreferUsedThreshold = 50;
   let autoSwitchPoolScope = 'all';
   let autoSwitchPoolTag = '';
+  let autoSwitchRefreshMin = 5;
   let autoSwitchSynced = false; // 是否已收到后端同步
   let pageSize = 20; // 每页显示数量，0=全部
   let currentPage = 1;
   let refreshInterval = null;
   let externalAccount = ''; // Windsurf 当前登录但不在号池中的账户
+  let lockedEmails = new Set(); // 被其他窗口占用的账号
+  let lockedEmailsMap = {}; // email → { instanceName }
 
   // ==================== 工具函数 ====================
   const _escDiv = document.createElement('div');
@@ -142,6 +145,8 @@
   const enhLtLoop = $('#enhLtLoop');
   const enhLtIdleSeconds = $('#enhLtIdleSeconds');
   const enhLtMaxContinue = $('#enhLtMaxContinue');
+  const enhLtMaxSendRetries = $('#enhLtMaxSendRetries');
+  const enhLtStopOnIntervention = $('#enhLtStopOnIntervention');
   const acStartBtn = $('#acStartBtn');
   const acPauseBtn = $('#acPauseBtn');
   const acResumeBtn = $('#acResumeBtn');
@@ -408,12 +413,16 @@
 
     if (selectMode) card.classList.add('is-select-mode');
     if (account.disabled) card.classList.add('is-disabled');
+    const lockInfo = !isActive && lockedEmailsMap[account.email];
+    if (lockInfo) card.classList.add('is-locked');
     card.innerHTML = `
+      ${lockInfo ? `<div class="grid-lock-overlay"><div class="grid-lock-overlay-inner"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>${escHtml(lockInfo.instanceName)} 使用中</span></div></div>` : ''}
       ${selectMode ? `<div class="grid-check-col"><input type="checkbox" class="grid-check-input" data-email="${escHtml(account.email)}" ${selectedEmails.has(account.email) ? 'checked' : ''}></div>` : ''}
       <div class="grid-card-body">
       <div class="grid-card-head">
         <div class="grid-card-email" title="${escHtml(account.email)}">${escHtml(account.email)}</div>
         ${isActive ? '<span class="grid-active-tag">当前</span>' : ''}
+        ${!isActive && lockedEmails.has(account.email) ? '<span class="grid-locked-tag" title="被其他窗口占用中">🔒 占用</span>' : ''}
         ${account.disabled ? '<span class="grid-disabled-tag">已禁用</span>' : ''}
       </div>
       <div class="grid-card-meta">
@@ -1390,8 +1399,8 @@
 
   const SCORE_MODE_HINTS = {
     min: '取 min(日配额, 周配额) 作为评分，任一配额低于阈值即触发切号。',
-    daily: '仅以日配额作为评分，日配额低于阈值即触发切号，忽略周配额。',
-    weekly: '仅以周配额作为评分，周配额低于阈值即触发切号，忽略日配额。',
+    daily: '以日配额作为评分，日配额低于阈值即触发切号。注意：若任一配额 ≤ 额度下限仍会强制切号。',
+    weekly: '以周配额作为评分，周配额低于阈值即触发切号。注意：若任一配额 ≤ 额度下限仍会强制切号。',
   };
   function updateScoreModeHint() {
     const el = document.getElementById('asHint');
@@ -1571,6 +1580,8 @@
     const msg = event.data;
     switch (msg.type) {
       case 'accountsChanged':
+        lockedEmails = new Set(msg.lockedEmails || []);
+        lockedEmailsMap = msg.lockedEmailsMap || {};
         handleAccountsChanged(msg.accounts, msg.lastEmail, msg.externalAccount);
         // 批量模式下，accountsChanged 仅刷新 UI，不再驱动队列推进
         // 队列推进改由后端的 batchResult 消息驱动（更准确）
@@ -1644,6 +1655,7 @@
         autoSwitchPreferUsedThreshold = msg.preferUsedThreshold ?? 50;
         autoSwitchPoolScope = msg.poolScope || 'all';
         autoSwitchPoolTag = msg.poolTag || '';
+        autoSwitchRefreshMin = msg.refreshMin || 5;
         autoSwitchSynced = true;
         syncAutoSwitchUI();
         syncStrategyUI();
@@ -1688,7 +1700,10 @@
 
       case 'ltStateUpdate': {
         // 长任务状态更新（从 bridge/扩展侧推送）
-        updateLtState(msg.state || 'idle', { label: msg.label, count: msg.count, action: msg.action });
+        if (msg.state === 'stopped' || msg.state === 'idle') {
+          _ltRunning = false;
+        }
+        updateLtState(msg.state || 'idle', { label: msg.label, count: msg.count, action: msg.action, reason: msg.reason });
         break;
       }
     }
@@ -2007,15 +2022,15 @@
     acQueueList.innerHTML = '';
     (queue || ['继续']).forEach((text, idx) => {
       const item = document.createElement('div');
-      item.className = 'ac-queue-item';
+      item.className = 'v2-queue-item';
+      if (idx === 0) item.classList.add('is-active');
       item.dataset.idx = idx;
-      item.innerHTML = '<span class="ac-queue-handle">⠿</span>'
-        + '<input type="text" class="ac-queue-input" value="' + (text || '').replace(/"/g, '&quot;') + '" placeholder="继续文字...">'
-        + '<button class="ac-queue-del" title="删除">✕</button>';
+      item.innerHTML = '<span class="v2-queue-idx">' + (idx + 1) + '</span>'
+        + '<input type="text" class="v2-queue-text ac-queue-input" value="' + (text || '').replace(/"/g, '&quot;') + '" placeholder="输入指令...">'
+        + '<button class="ac-queue-del" title="删除" style="font-size:10px;opacity:0.5;cursor:pointer;background:none;border:none;color:inherit">✕</button>';
       item.querySelector('.ac-queue-del').addEventListener('click', () => {
         item.remove();
-        // 如果删到空，重新渲染 fallback 项
-        if (!acQueueList.querySelector('.ac-queue-item')) renderQueueList(['继续']);
+        if (!acQueueList.querySelector('.v2-queue-item')) renderQueueList(['继续']);
         saveEnhanceSettings();
       });
       item.querySelector('.ac-queue-input').addEventListener('blur', saveEnhanceSettings);
@@ -2027,6 +2042,9 @@
   function switchAcTab(tab) {
     if (acPanelGuardian) acPanelGuardian.style.display = tab === 'guardian' ? '' : 'none';
     if (acPanelLongTask) acPanelLongTask.style.display = tab === 'long-task' ? '' : 'none';
+    // V2 segment slider
+    const slider = $('#acSegmentSlider');
+    if (slider) { tab === 'long-task' ? slider.classList.add('right') : slider.classList.remove('right'); }
   }
 
   // 切换总开关显示
@@ -2040,8 +2058,10 @@
   function updateLtState(state, extra) {
     const dotClasses = { idle: 'ac-dot-idle', running: 'ac-dot-running', paused: 'ac-dot-paused', stopped: 'ac-dot-stopped', handling: 'ac-dot-handling' };
     const labels = { idle: '就绪', running: '运行中', paused: '已暂停', stopped: '已停止', handling: '处理中断' };
-    if (acStatusDot) { acStatusDot.className = 'ac-status-dot ' + (dotClasses[state] || 'ac-dot-idle'); }
-    if (acStatusText) acStatusText.textContent = (extra && extra.label) || labels[state] || '就绪';
+    // V2: 保留 v2-lt-dot 基础类 + 状态类
+    if (acStatusDot) { acStatusDot.className = 'v2-lt-dot ' + (dotClasses[state] || 'ac-dot-idle'); }
+    const reason = extra && extra.reason;
+    if (acStatusText) acStatusText.textContent = (extra && extra.label) || (state === 'stopped' && reason ? '已停止: ' + reason : labels[state]) || '就绪';
     // 计数
     if (acStatusCount) acStatusCount.style.display = (state === 'idle') ? 'none' : '';
     if (acContinueCount && extra && extra.count !== undefined) acContinueCount.textContent = extra.count;
@@ -2051,8 +2071,8 @@
     const show = (el, v) => { if (el) el.style.display = v ? '' : 'none'; };
     if (state === 'idle' || state === 'stopped') {
       show(acStartBtn, true); show(acPauseBtn, false); show(acResumeBtn, false); show(acStopBtn, false);
-      if (state === 'stopped' && acStartBtn) acStartBtn.textContent = '▶ 重新开始';
-      else if (acStartBtn) acStartBtn.textContent = '▶ 开始';
+      if (state === 'stopped' && acStartBtn) acStartBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 9-14 9V3z"/></svg> 重新开始';
+      else if (acStartBtn) acStartBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 9-14 9V3z"/></svg> 开始运行';
     } else if (state === 'running' || state === 'handling') {
       show(acStartBtn, false); show(acPauseBtn, true); show(acResumeBtn, false); show(acStopBtn, true);
     } else if (state === 'paused') {
@@ -2101,6 +2121,8 @@
       if (enhLtLoop) enhLtLoop.checked = lt.loop !== false;
       if (enhLtIdleSeconds) enhLtIdleSeconds.value = lt.idleSeconds || s.brainlessIdleSeconds || 8;
       if (enhLtMaxContinue) enhLtMaxContinue.value = lt.maxContinueCount !== undefined ? lt.maxContinueCount : (s.brainlessMaxConsecutive || 0);
+      if (enhLtMaxSendRetries) enhLtMaxSendRetries.value = lt.maxSendRetries !== undefined ? lt.maxSendRetries : 3;
+      if (enhLtStopOnIntervention) enhLtStopOnIntervention.checked = lt.stopOnUserIntervention !== false;
 
       // 兼容旧字段
       if (enhAutoSwitchOnQuota) enhAutoSwitchOnQuota.checked = s.autoSwitchOnQuota !== false;
@@ -2136,7 +2158,27 @@
       if (enhAudioFile && s.audioFile) enhAudioFile.value = s.audioFile;
       if (enhCustomToneRow) enhCustomToneRow.style.display = (s.notifyTone === 'custom') ? 'flex' : 'none';
       if (enhAudioFileRow) enhAudioFileRow.style.display = (s.notifyTone === 'file') ? 'flex' : 'none';
+
+      // V2: 同步视觉状态到 toggle/tag/strategy
+      syncV2VisualState();
     } catch {}
+  }
+
+  // 将 hidden checkbox 状态同步到 V2 可视组件
+  function syncV2VisualState() {
+    document.querySelectorAll('.v2-mini-toggle[data-target]').forEach(toggle => {
+      const cb = document.getElementById(toggle.dataset.target);
+      if (cb) toggle.classList.toggle('is-on', cb.checked);
+    });
+    document.querySelectorAll('.v2-tag[data-target]').forEach(tag => {
+      const cb = document.getElementById(tag.dataset.target);
+      if (cb) tag.classList.toggle('is-on', cb.checked);
+    });
+    // Strategy cards
+    document.querySelectorAll('.v2-strategy[data-value]').forEach(card => {
+      const radio = card.parentElement.querySelector('input[type="radio"][value="' + card.dataset.value + '"]');
+      if (radio) card.classList.toggle('is-active', radio.checked);
+    });
   }
 
   // 启动时向后端拉取真相源；失败则回退到本地缓存
@@ -2153,7 +2195,7 @@
   // 从队列 DOM 收集文本数组
   function getQueueFromDOM() {
     if (!acQueueList) return ['继续'];
-    const items = acQueueList.querySelectorAll('.ac-queue-input');
+    const items = acQueueList.querySelectorAll('.ac-queue-input, .v2-queue-text');
     const arr = [];
     items.forEach(inp => { const v = (inp.value || '').trim(); if (v) arr.push(v); });
     return arr.length ? arr : ['继续'];
@@ -2198,6 +2240,8 @@
         maxContinueCount: maxCount,
         continueQueue: queue,
         loop: enhLtLoop ? enhLtLoop.checked : true,
+        maxSendRetries: enhLtMaxSendRetries ? Math.max(1, parseInt(enhLtMaxSendRetries.value) || 3) : 3,
+        stopOnUserIntervention: enhLtStopOnIntervention ? enhLtStopOnIntervention.checked : true,
       },
       // 兼容旧脚本 windsurf-better.js 直接读取的顶层字段
       dismissCorruptEnabled: dismissCorrupt,
@@ -2205,7 +2249,7 @@
       autoSwitchOnRateLimit: enhAutoSwitchOnRateLimit ? enhAutoSwitchOnRateLimit.checked : true,
       brainlessModeEnabled: false, // 清除旧字段，防止 loadSettings 迁移逻辑重新激活 brainless
       brainlessIdleSeconds: idleSec,
-      brainlessMaxConsecutive: maxCount || 99999,
+      brainlessMaxConsecutive: maxCount,  // 0 = 无限
       autoRecoveryEnabled: enhAutoRecoveryEnabled ? enhAutoRecoveryEnabled.checked : true,
       continueText: queue[0] || 'continue',
       recoveryRules: collectRecoveryRules(),
@@ -3227,6 +3271,7 @@
         threshold: autoSwitchThreshold,
         checkSec: autoSwitchCheckSec,
         cooldownSec: autoSwitchCooldownSec,
+        refreshMin: autoSwitchRefreshMin,
         scoreMode: autoSwitchScoreMode,
         switchStrategy: autoSwitchStrategy,
         minQuota: autoSwitchMinQuota,
@@ -3303,6 +3348,8 @@
       const prefUsedEl = document.getElementById('asPreferUsedThreshold');
       if (minQuotaEl) minQuotaEl.value = autoSwitchMinQuota;
       if (prefUsedEl) prefUsedEl.value = autoSwitchPreferUsedThreshold;
+      // V2: 同步策略卡片视觉状态
+      if (typeof syncV2VisualState === 'function') syncV2VisualState();
     }
     const strategyRadios = document.querySelectorAll('input[name="asSwitchStrategy"]');
     strategyRadios.forEach(r => {
@@ -3505,6 +3552,17 @@
     // ── 自动继续：Tab 切换（只切换面板，不立即变更 continueMode，避免杀掉运行中的长任务） ──
     [acTabGuardian, acTabLongTask].forEach(radio => {
       if (radio) radio.addEventListener('change', () => {
+        // G7: 长任务运行中切换到守护 Tab 时确认
+        if (_ltRunning && radio.value === 'guardian') {
+          if (!confirm('长任务正在运行中，切换将停止长任务。确定切换？')) {
+            // 恢复 Tab 选中状态
+            if (acTabLongTask) acTabLongTask.checked = true;
+            return;
+          }
+          _ltRunning = false;
+          updateLtState('stopped', { reason: '切换到守护模式' });
+          saveLtMode('smart');
+        }
         switchAcTab(radio.value);
         // 只保存 Tab 偏好，不强制同步 continueMode — 让用户通过控制按钮显式操作
         try {
@@ -3522,7 +3580,7 @@
       enhGdAutoContinueBtn, enhGdAutoRetry, enhGdAutoSendOnToolLimit,
       enhGdApproveWeb, enhGdApproveTerminal, enhGdApproveFile, enhGdDismissCorrupt,
       // 长任务模式
-      enhLtLoop, enhLtIdleSeconds, enhLtMaxContinue,
+      enhLtLoop, enhLtIdleSeconds, enhLtMaxContinue, enhLtMaxSendRetries, enhLtStopOnIntervention,
       // 兼容旧
       enhAutoSwitchOnQuota, enhAutoSwitchOnRateLimit, enhAutoRecoveryEnabled,
       // 通知
@@ -3575,6 +3633,8 @@
       _ltRunning = false;
       updateLtState('idle');
       saveLtMode('smart');
+      // G5: 发送 force-stop 命令清空输入框 + 取消待执行操作
+      vscode.postMessage({ type: 'enhForceStop' });
     });
     // 辅助函数：保存设置并强制覆盖 continueMode
     function saveLtMode(mode) {
@@ -3821,6 +3881,38 @@
     restoreState();
     startAutoRefresh();
     checkBatchResume();
+
+    // ── V2 组件交互初始化 ──
+
+    // V2 Mini Toggle: 点击时同步隐藏 checkbox，触发 change 事件
+    document.querySelectorAll('.v2-mini-toggle[data-target]').forEach(toggle => {
+      toggle.addEventListener('click', () => {
+        toggle.classList.toggle('is-on');
+        const cb = document.getElementById(toggle.dataset.target);
+        if (cb) { cb.checked = toggle.classList.contains('is-on'); cb.dispatchEvent(new Event('change', {bubbles:true})); }
+      });
+    });
+
+    // V2 Tag Chip: 点击时同步隐藏 checkbox
+    document.querySelectorAll('.v2-tag[data-target]').forEach(tag => {
+      tag.addEventListener('click', () => {
+        tag.classList.toggle('is-on');
+        const cb = document.getElementById(tag.dataset.target);
+        if (cb) { cb.checked = tag.classList.contains('is-on'); cb.dispatchEvent(new Event('change', {bubbles:true})); }
+      });
+    });
+
+    // V2 Strategy: 点击时同步隐藏 radio
+    window.v2SelectStrategy = function(el) {
+      const parent = el.parentElement;
+      parent.querySelectorAll('.v2-strategy').forEach(s => s.classList.remove('is-active'));
+      el.classList.add('is-active');
+      const val = el.dataset.value;
+      if (val) {
+        const radio = parent.querySelector('input[type="radio"][value="' + val + '"]');
+        if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change', {bubbles:true})); }
+      }
+    };
 
     // 初始加载后延迟拉配额
     setTimeout(() => {

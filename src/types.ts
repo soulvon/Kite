@@ -74,7 +74,9 @@ export type WebviewMessageType =
   | 'playNotifySound'
   | 'browseAudioFile'
   | 'enhLoad'
-  | 'enhSave';
+  | 'enhSave'
+  | 'enhCommand'
+  | 'enhForceStop';
 
 /**
  * Webview 消息
@@ -105,6 +107,7 @@ export interface WebviewMessage {
   tag?: string;
   assignedTag?: string;
   settings?: Record<string, any>;
+  payload?: Record<string, any>;
 }
 
 /**
@@ -123,7 +126,8 @@ export type BackendMessageType =
   | 'autoSwitchSettingsSync'
   | 'audioFileSelected'
   | 'enhLoaded'
-  | 'enhSaved';
+  | 'enhSaved'
+  | 'enhCommandResult';
 
 export interface UsageMessage {
   type: 'usage';
@@ -137,6 +141,8 @@ export interface AccountsChangedMessage {
   accounts: StoredAccount[];
   lastEmail: string;
   externalAccount?: string; // Windsurf 当前登录但不在号池中的账户邮箱
+  lockedEmails?: string[];  // 被其他窗口占用的账号邮箱列表
+  lockedEmailsMap?: Record<string, { instanceName: string }>; // 邮箱 → 占用实例名
 }
 
 export interface BatchResultMessage {
@@ -193,6 +199,11 @@ export interface AutoSwitchSettingsSyncMessage {
   cooldownSec: number;
   refreshMin: number;
   scoreMode: string;
+  switchStrategy: string;
+  minQuota: number;
+  preferUsedThreshold: number;
+  poolScope: string;
+  poolTag?: string;
 }
 
 export type BackendMessage = UsageMessage | AccountsChangedMessage | BatchResultMessage | InstanceListResultMessage | InstanceProgressMessage | InstanceErrorMessage | CockpitListResultMessage | ShowAlertMessage | AutoSwitchEventMessage | AutoSwitchSettingsSyncMessage;

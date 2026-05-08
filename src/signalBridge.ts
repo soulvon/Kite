@@ -106,31 +106,37 @@ export async function handlePoolSignal(
   autoSwitcher: AutoSwitcher,
   respond: (result: PoolResult) => void
 ): Promise<void> {
+  const t0 = Date.now();
   console.log('[signalBridge] 收到信号:', signal.type);
 
   // 先通知 DOM 正在处理
-  respond({ type: 'retrying', ts: Date.now() });
+  respond({ type: 'retrying', ts: t0 });
 
   try {
     const switched = await autoSwitcher.forceSwitch(signal.type);
+    const elapsed = Date.now() - t0;
     if (switched) {
+      console.log(`[signalBridge] 切号成功 → ${switched.email} (${elapsed}ms)`);
       respond({
         type: 'switched',
         ts: Date.now(),
         email: switched.email,
       });
     } else {
+      console.log(`[signalBridge] 切号失败: 无可用账号 (${elapsed}ms, cache=${autoSwitcher.cacheSize})`);
       respond({
         type: 'switch-failed',
         ts: Date.now(),
-        error: '无可用账号',
+        error: `无可用账号(缓存${autoSwitcher.cacheSize}个, 耗时${elapsed}ms)`,
       });
     }
   } catch (err) {
+    const elapsed = Date.now() - t0;
+    console.error(`[signalBridge] 切号异常 (${elapsed}ms):`, err);
     respond({
       type: 'switch-failed',
       ts: Date.now(),
-      error: String(err),
+      error: `异常: ${String(err)} (${elapsed}ms)`,
     });
   }
 }

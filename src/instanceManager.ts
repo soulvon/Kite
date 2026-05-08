@@ -330,6 +330,13 @@ export function getCurrentInstanceTag(): string | undefined {
   return inst?.assignedTag;
 }
 
+export function getCurrentInstanceName(): string {
+  const store = loadStore();
+  const currentDir = normalizePath(getCurrentUserDataDir());
+  const inst = store.instances.find(i => normalizePath(i.userDataDir) === currentDir);
+  return inst?.name || '默认实例';
+}
+
 // ─── 启动 / 停止 ───────────────────────────────────────
 
 // Windsurf.exe 路径检测结果缓存（进程内）

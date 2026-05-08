@@ -145,12 +145,70 @@ async function loginFirebase(email: string, password: string): Promise<LoginResu
 }
 
 /**
+ * 通过 devin session token 直接导入（已是最终 session token，无需 PostAuth）
+ */
+async function loginBySessionToken(sessionToken: string): Promise<LoginResult> {
+  sessionToken = sessionToken.trim();
+  if (!sessionToken) {
+    return { ok: false, error: '空 session token' };
+  }
+
+  try {
+    // 用 sessionToken 查询邮箱（GetUserStatus）
+    const ur = await post(
+      'https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetUserStatus',
+      {
+        metadata: {
+          apiKey: sessionToken,
+          ideName: 'windsurf',
+          ideVersion: '0.0.0',
+          extensionName: 'windsurf-next',
+          extensionVersion: '1.0.0',
+          locale: 'en'
+        }
+      },
+      { 'Connect-Protocol-Version': '1', Accept: 'application/json' }
+    );
+
+    let email = '';
+    let name = '';
+    if (ur.status === 200) {
+      const ud = safeJsonParse(ur.body);
+      email = ud?.userStatus?.email || ud?.userStatus?.userName || '';
+      name = ud?.userStatus?.name || ud?.userStatus?.userName || '';
+    }
+
+    if (!email) {
+      email = 'session_' + sessionToken.substring(0, 12) + '...';
+    }
+
+    return {
+      ok: true,
+      value: {
+        email,
+        apiKey: sessionToken,
+        apiServerUrl: 'https://server.self-serve.windsurf.com',
+        name: name || email.split('@')[0]
+      }
+    };
+  } catch (err) {
+    return { ok: false, error: 'Session Token导入出错:' + (err instanceof Error ? err.message : String(err)) };
+  }
+}
+
+/**
  * 通过 auth1 token 直接导入账号（无需邮箱密码）
  */
 export async function loginByAuth1Token(auth1Token: string): Promise<LoginResult> {
   auth1Token = auth1Token.trim();
   if (!auth1Token) {
     return { ok: false, error: '空 token' };
+  }
+
+  // devin-session-token$ 前缀 → 已经是 session token，跳过 PostAuth 直接入库
+  const SESSION_PREFIX = 'devin-session-token$';
+  if (auth1Token.startsWith(SESSION_PREFIX)) {
+    return loginBySessionToken(auth1Token.substring(SESSION_PREFIX.length));
   }
 
   try {
