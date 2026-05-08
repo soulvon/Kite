@@ -312,12 +312,13 @@ details > summary::marker { display: none; content: ''; }
     transition: all 0.15s;
 }
 .inst-card:hover { border-color: color-mix(in srgb, var(--vscode-foreground) 15%, transparent); }
-.inst-card.is-current { border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.04); }
+.inst-card.current { border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.04); }
 .inst-status-dot {
     width: 8px; height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
 }
+.inst-status-dot.current { background: var(--ac-emerald); box-shadow: 0 0 6px rgba(16, 185, 129, 0.4); }
 .inst-status-dot.running { background: var(--ac-emerald); box-shadow: 0 0 6px rgba(16, 185, 129, 0.4); }
 .inst-status-dot.stopped { background: var(--gh-gray); }
 .inst-card-name { font-size: 12px; font-weight: 600; white-space: nowrap; }
@@ -353,8 +354,15 @@ details > summary::marker { display: none; content: ''; }
 }
 .inst-card-btn:hover { background: var(--hover-bg); }
 .inst-card-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.inst-card-btn.start { color: var(--ac-emerald); border-color: rgba(16, 185, 129, 0.3); }
+.inst-card-btn.start:hover { background: rgba(16, 185, 129, 0.08); }
+.inst-card-btn.stop { color: var(--ac-red); border-color: rgba(239, 68, 68, 0.3); }
+.inst-card-btn.stop:hover { background: rgba(239, 68, 68, 0.08); }
+.inst-card-btn.current { color: var(--ac-emerald); opacity: 0.7; }
 .inst-card-btn.danger { color: var(--ac-red); border-color: rgba(239, 68, 68, 0.3); }
 .inst-card-btn.danger:hover { background: rgba(239, 68, 68, 0.08); }
+.inst-source-badge.default { background: rgba(59, 130, 246, 0.12); color: var(--ac-blue); }
+.icon-btn.focus { color: var(--ac-blue); }
 
 /* ─── List Panel (Accounts) ─── */
 .list-details { border: none; }
@@ -2398,3 +2406,78 @@ body.vscode-light .modal-box { background: var(--vscode-editorWidget-background,
     color: var(--muted);
     font-family: var(--vscode-editor-font-family, monospace);
 }
+
+/* ═══════ Filter Section (container) ═══════ */
+.filter-section { margin-bottom: 2px; }
+
+/* ═══════ Grid: Current Label ═══════ */
+.grid-current-label {
+    font-size: 10px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--ac-emerald);
+}
+
+/* ═══════ Group Header Elements ═══════ */
+.group-check { display: flex; align-items: center; flex-shrink: 0; }
+.group-name { font-weight: 600; }
+.group-count {
+    font-size: 9px;
+    color: var(--muted);
+    font-family: var(--vscode-editor-font-family, monospace);
+    margin-left: 4px;
+}
+
+/* ═══════ Instance Card Header & Tags ═══════ */
+.inst-card-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.inst-tag-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(139, 92, 246, 0.1);
+    color: var(--ac-violet);
+    cursor: pointer;
+}
+.inst-tag-badge:hover { background: rgba(139, 92, 246, 0.18); }
+.inst-tag-none {
+    font-size: 10px;
+    cursor: pointer;
+}
+
+/* ═══════ Batch Import Counts ═══════ */
+.count-ok { color: var(--ac-emerald); margin-right: 8px; }
+.count-fail { color: var(--ac-red); margin-right: 8px; }
+.count-skip { color: var(--muted); margin-right: 8px; }
+.fail-item {
+    font-size: 11px;
+    color: var(--ac-red);
+    padding: 2px 0;
+    word-break: break-word;
+}
+
+/* ═══════ Batch Text Area Container ═══════ */
+.batch-text-area { display: flex; flex-direction: column; gap: 8px; }
+
+/* ═══════ Account Picker List ═══════ */
+.ap-list {
+    position: absolute;
+    z-index: 100;
+    width: 100%;
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--vscode-editorWidget-background, var(--card-bg));
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    margin-top: 2px;
+}
+
+/* ═══════ Pager Total ═══════ */
+.pager-total { font-size: 10px; color: var(--muted); }
