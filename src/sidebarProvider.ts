@@ -8,13 +8,14 @@ import { fetchUsage } from './usageService';
 import { injectSession } from './sessionInjector';
 import * as instanceManager from './instanceManager';
 import { AutoSwitcher } from './autoSwitcher';
-import { getSignalBridgeScript, handlePoolSignal, PoolSignal } from './signalBridge';
+import { getSignalBridgeScript, getBridgeRelayScript, handlePoolSignal, PoolSignal } from './signalBridge';
 import { getInjectionStatus, ensureEnhancement } from './enhancementInjector';
 import { readEnhSettings, writeEnhSettings, mergeEnhSettings } from './enhSettingsStore';
-import { enqueueCommand, onBridgeResult } from './bridgeServer';
+import { enqueueCommand, onBridgeResult, getBridgeInfo } from './bridgeServer';
 import { hasBubbleRules } from './rulesInjector';
 import { playSystemSound } from './soundPlayer';
 import { getOtherLockedEmails, getOtherLockedEmailsMap } from './accountLock';
+import { UsageTracker } from './usageTracker';
 
 /**
  * 侧栏 Webview 提供器
@@ -26,8 +27,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _startTs = Date.now();
   private _logFilePath: string;
   private _autoSwitcher: AutoSwitcher;
+  private _usageTracker: UsageTracker;
 
-  constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext, autoSwitcher: AutoSwitcher) {
+  constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext, autoSwitcher: AutoSwitcher, usageTracker: UsageTracker) {
+    this._usageTracker = usageTracker;
     // 日志文件：globalStorage/windsurf-pool.log（保留最近 500KB）
     try {
       fs.mkdirSync(this._context.globalStorageUri.fsPath, { recursive: true });
@@ -49,6 +52,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._autoSwitcher = autoSwitcher;
     this._autoSwitcher.onUsageUpdate = (email, snapshot, error) => {
       this.postMessage({ type: 'usage', email, snapshot, error } as any);
+      this._pushUsageStats();
     };
     this._autoSwitcher.onSwitchEvent = (log, status, statusType) => {
       this.postMessage({ type: 'autoSwitchEvent', log, status, statusType } as any);
@@ -77,6 +81,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       try {
         if (result && result.type === 'pool-signal' && result.signal) {
           this.log(`[bridge ←] pool-signal type=${result.signal.type}`);
+          this._usageTracker.recordPoolSignal();
           handlePoolSignal(result.signal as PoolSignal, this._autoSwitcher, (poolResult) => {
             // 通过 enqueueCommand 反向把切号结果送回 windsurf-better.js
             // windsurf-better.js 收到 action='pool-result' 命令 → 写 localStorage 触发原处理逻辑
@@ -119,6 +124,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /** 主动通知 webview 刷新 Windsurf 增强状态（供外部命令在修改文件/配置后调用） */
   public refreshEnhancementStatus(): void {
     this._pushEnhancementStatus();
+  }
+
+  /**
+   * 推送 bridge 端口/token 到 sidebar webview，由 webview 转发给同进程的
+   * workbench renderer（window.top.postMessage）。
+   * 多实例关键：此通道是"同进程 sidebar iframe ↔ workbench 顶层 frame"，天然隔离。
+   */
+  public refreshBridgeInfo(): void {
+    const info = getBridgeInfo();
+    if (!info) return;
+    this._view?.webview.postMessage({ type: 'bridgeInfo', port: info.port, token: info.token } as any);
   }
 
   /**
@@ -230,6 +246,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this._view = webviewView;
 
+    // 动态设置标题，包含版本号（容器已提供"Windsurf 号池管理:"前缀）
+    const extPkg = this._context.extension.packageJSON;
+    webviewView.title = extPkg.version || '';
+
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [
@@ -238,6 +258,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     };
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+
+    // bridge 信息首次推送（webview 会转发给 workbench renderer）
+    setTimeout(() => this.refreshBridgeInfo(), 500);
 
     // 初始加载：先用 poolLastEmail 快速渲染，5s 后做 auth 检测
     setTimeout(() => this.refresh(true), 300);
@@ -251,6 +274,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._pushCachedUsage();
       this._pushAutoSwitchSettings();
       this._pushEnhancementStatus();
+      this._pushUsageStats();
     }, 600);
 
     // 监听 auth session 变化（Windsurf 登录/登出时触发）
@@ -291,6 +315,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.refresh();
         this._pushAutoSwitchSettings();
         this._pushEnhancementStatus();
+        this._pushUsageStats();
+        this.refreshBridgeInfo();
       }
     });
 
@@ -305,6 +331,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     for (const [email, entry] of this._autoSwitcher.getAllCached()) {
       this.postMessage({ type: 'usage', email, snapshot: entry.snapshot, error: entry.error } as any);
     }
+  }
+
+  /** 推送用量统计给 webview */
+  private _pushUsageStats(): void {
+    const summary = this._usageTracker.getSummary();
+    this.postMessage({ type: 'usageStatsSync', ...summary } as any);
   }
 
   /** 推送 Windsurf 增强状态给 webview */
@@ -331,10 +363,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     } catch {}
   }
 
-  /** 推送自动切号设置给 webview */
+  /** 推送自动切号设置给 webview + 同步 enabled 状态到 windsurf-better.js */
   private _pushAutoSwitchSettings(): void {
     const s = this._autoSwitcher.settings;
     this.postMessage({ type: 'autoSwitchSettingsSync', ...s } as any);
+    // 同步 autoSwitchEnabled 给 DOM 侧，关闭时 windsurf-better.js 不再发送切号信号
+    try {
+      enqueueCommand({ id: Date.now(), action: 'apply-settings', payload: { autoSwitchEnabled: s.enabled } });
+    } catch {}
   }
 
   /**
@@ -346,6 +382,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // webview 启动时拉取磁盘上的真相源
         const settings = readEnhSettings();
         this.postMessage({ type: 'enhLoaded', settings } as any);
+        return;
+      }
+      case 'requestBridgeInfo': {
+        // sidebar webview 启动后主动拉取，避免与 extension 推送竞态
+        this.refreshBridgeInfo();
         return;
       }
       case 'enhCommand': {
@@ -383,6 +424,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
         // 回传保存结果（webview 显示"已实时应用"toast）
         this.postMessage({ type: 'enhSaved', settings: merged } as any);
+        // 通知状态栏重新读取配置并重绘
+        try { vscode.commands.executeCommand('windsurfPool.statusBarRefresh'); } catch { /* ignore */ }
         return;
       }
       case 'enhForceStop': {
@@ -438,6 +481,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'switch': {
         const { email } = message;
         if (!email) return;
+        this.log(`[switch][trigger] 手动切号(webview): → ${email}`);
 
         const accounts = await accountStore.readAccounts(this._context);
         const account = accounts.find(a => a.email === email);
@@ -448,6 +492,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         const success = await injectSession(this._context, account);
         if (success) {
+          this._usageTracker.recordSwitch(email);
           await accountStore.setCurrentAccount(this._context, email);
           // 无感切号：成功不弹任何提示，UI 高亮自动转移即为反馈
           this.refresh();
@@ -539,6 +584,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
 
+      case 'getUsageStats': {
+        this._pushUsageStats();
+        break;
+      }
+
       case 'autoSwitchSettings': {
         const m = message as any;
         await this._autoSwitcher.updateSettings({
@@ -552,7 +602,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           minQuota: m.minQuota,
           preferUsedThreshold: m.preferUsedThreshold,
           poolScope: m.poolScope,
-          poolTag: m.poolTag,
+          poolTags: m.poolTags,
         });
         this._pushAutoSwitchSettings();
         break;
@@ -675,7 +725,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const currentEmail = this._context.globalState.get<string>('lastEmail') || '';
           if (currentEmail) {
             const myInst = instances.find(i => i.current);
-            if (myInst && myInst.bindEmail !== currentEmail) {
+            if (myInst && myInst.bindEmail !== currentEmail && myInst.bindEmail !== '__auto__') {
               myInst.bindEmail = currentEmail;
               instanceManager.syncCurrentInstanceEmail(currentEmail);
             }
@@ -689,20 +739,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
 
       case 'instanceCreate': {
-        const { instanceName, email } = message;
+        const { instanceName, email, assignedTag } = message;
         if (!instanceName || !email) {
           this.postMessage({ type: 'instanceError', error: '名称和绑定账号不能为空' });
           return;
         }
         try {
           this.postMessage({ type: 'instanceProgress', message: '正在复制 Windsurf 数据目录…' });
-          await instanceManager.createInstance({
+          const newInst = await instanceManager.createInstance({
             name: instanceName,
             bindEmail: email,
             onProgress: (msg) => {
               this.postMessage({ type: 'instanceProgress', message: msg });
             }
           });
+          if (assignedTag) {
+            try { instanceManager.updateInstanceTag(newInst.id, assignedTag); } catch (e) { console.warn('[instanceCreate] set tag failed:', e); }
+          }
           this.postMessage({ type: 'instanceProgress', message: '实例创建完成', done: true });
           // 刷新列表
           const instances = await instanceManager.listInstances();
@@ -822,6 +875,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const d = (message as any).data || {};
         const tone = d.tone || 'funk';
         const repeat = d.repeat || 2;
+        console.log('[Notify] 收到 playNotifySound 信号: sound=' + (d.sound !== false) + ', desktop=' + !!d.desktop + ', tone=' + tone + ', repeat=' + repeat + ', file=' + (d.audioFile || ''));
         if (d.sound !== false) {
           playSystemSound(tone, repeat, d.customTone, d.audioFile);
         }
@@ -1030,8 +1084,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           activeEmail = poolMatch.email;
         }
 
+        // 仅当 poolLastEmail 不在号池中（账号被删除等）时才允许覆盖
+        // 否则信任号池的 lastEmail（启动时已 re-inject，Windsurf 旧 auth 状态不应覆盖号池）
         if (activeEmail && poolLastEmail !== activeEmail) {
-          await accountStore.setCurrentAccount(this._context, activeEmail);
+          if (!poolMatch) {
+            await accountStore.setCurrentAccount(this._context, activeEmail);
+          } else {
+            // 号池 lastEmail 仍有效，保持不变，用号池的值
+            activeEmail = poolLastEmail;
+          }
         }
       }
     }
@@ -1058,6 +1119,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (myInst && !myInst.bindEmail) {
           myInst.bindEmail = activeEmail;
         }
+        // __auto__ 模式下不覆盖显示值（卡片会显示"自动切号"）
         this.postMessage({ type: 'instanceListResult', instances });
       } catch {}
     }
@@ -1067,9 +1129,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    * 生成 webview HTML
    */
   private _getHtmlForWebview(webview: vscode.Webview): string {
-    const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.css'));
-    const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.js'));
     const extVersion = vscode.extensions.getExtension('local.windsurf-pool')?.packageJSON?.version || '0.0.0';
+    const cssUri = `${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.css'))}?v=${extVersion}`;
+    const jsUri = `${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.js'))}?v=${extVersion}`;
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1119,6 +1181,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <!-- 回复建议提示设置 -->
           <div>
             <div class="v2-section-title">回复建议提示</div>
+            <div class="v2-note" style="margin:4px 0 10px;padding:8px 12px;background:var(--vscode-textBlockQuote-background,rgba(127,127,127,.1));border-radius:6px;font-size:12px;line-height:1.6;color:var(--vscode-descriptionForeground,#888)">
+              <b>⚠️ 使用前提：</b>需要在 Windsurf 的 <b>Global Rules</b>（全局提示词）中添加气泡规则，AI 才会在回复末尾输出 <code>:::bubbles</code> 标记。<br>
+              点击上方「修改提示词」即可一键注入规则到全局提示词文件（<code>~/.windsurfrules</code>）。
+            </div>
             <div class="v2-strip">
               <div class="v2-strip-band c-emerald"></div>
               <div class="v2-strip-info">
@@ -1180,6 +1246,64 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
             <div class="v2-mini-toggle is-on" id="enhLocalizationEnabledToggle" data-target="enhLocalizationEnabled"></div>
             <input type="checkbox" id="enhLocalizationEnabled" checked hidden>
+          </div>
+
+          <div class="v2-divider"></div>
+
+          <!-- 底部状态栏 -->
+          <div>
+            <div class="v2-section-title">底部状态栏</div>
+            <div class="v2-strip">
+              <div class="v2-strip-band c-green"></div>
+              <div class="v2-strip-info">
+                <span class="v2-strip-name">启用状态栏显示</span>
+                <span class="v2-strip-desc">VS Code 底部显示当前账号、额度、号池、自动切号状态</span>
+              </div>
+              <div class="v2-mini-toggle is-on" id="enhStatusBarEnabledToggle" data-target="enhStatusBarEnabled"></div>
+              <input type="checkbox" id="enhStatusBarEnabled" checked hidden>
+            </div>
+            <div class="v2-opt-row" style="margin-top:6px">
+              <span class="v2-opt-label">位置</span>
+              <select class="v2-sel" id="enhStatusBarPosition" style="flex:1" title="状态栏显示位置">
+                <option value="left">← 左侧</option>
+                <option value="right" selected>→ 右侧（默认）</option>
+              </select>
+            </div>
+            <div class="v2-opt-row" style="margin-top:6px">
+              <span class="v2-opt-label">样式</span>
+              <select class="v2-sel" id="enhStatusBarStyle" style="flex:1" title="状态栏左段显示格式">
+                <option value="dot">🟢 — 仅圆点</option>
+                <option value="percent">75% — 仅百分比</option>
+                <option value="compact">🟢 75% — 圆点 + 百分比</option>
+                <option value="dual">🟢 75% / 87% — 日 / 周</option>
+                <option value="labeled" selected>日剩余 🟡 75% 周剩余 87% — 标签式（默认）</option>
+                <option value="full">sox · 🟢 日剩余75% 周剩余87% — 完整</option>
+              </select>
+            </div>
+            <div class="v2-opt-row" style="margin-top:6px;flex-wrap:wrap;gap:4px">
+              <span class="v2-opt-label">右段</span>
+              <div style="flex:1"></div>
+              <span class="v2-tag is-on" id="enhSbPoolTag" data-target="enhSbShowPool" title="显示号池可用账号数">池计数</span>
+              <span class="v2-tag is-on" id="enhSbAutoTag" data-target="enhSbShowAutoSwitch" title="显示自动切号开关状态 / 冷却倒计时">自动状态</span>
+              <span class="v2-tag is-on" id="enhSbInstTag" data-target="enhSbShowInstance" title="多实例开多个 Windsurf 时区分当前实例">实例名</span>
+              <input type="checkbox" id="enhSbShowPool" checked hidden>
+              <input type="checkbox" id="enhSbShowAutoSwitch" checked hidden>
+              <input type="checkbox" id="enhSbShowInstance" checked hidden>
+            </div>
+            <!-- 额度刷新频率 -->
+            <div style="margin-top:8px">
+              <div class="v2-param-grid">
+                <div class="v2-param-cell">
+                  <span class="v2-param-label">当前账号</span>
+                  <div><input type="number" class="v2-param-val" id="enhRefreshCurrent" value="5" min="3" max="60"><span class="v2-param-unit">秒</span></div>
+                </div>
+                <div class="v2-param-cell">
+                  <span class="v2-param-label">全部账号</span>
+                  <div><input type="number" class="v2-param-val" id="enhRefreshAll" value="5" min="1" max="30"><span class="v2-param-unit">分钟</span></div>
+                </div>
+              </div>
+              <div class="v2-hint" style="margin-top:4px">当前账号：状态栏额度数字的刷新频率。全部账号：号池候选额度的刷新频率。</div>
+            </div>
           </div>
 
           <div class="v2-divider"></div>
@@ -1254,33 +1378,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           </label>
         </summary>
         <div class="as-body" id="asBody" style="flex-direction:column;gap:12px;padding-top:14px">
-          <!-- 参数网格 -->
-          <div class="v2-param-grid">
-            <div class="v2-param-cell">
-              <span class="v2-param-label">阈值</span>
-              <div><input type="number" class="v2-param-val" id="asThreshold" value="10" min="1" max="99"><span class="v2-param-unit">%</span></div>
-            </div>
-            <div class="v2-param-cell">
-              <span class="v2-param-label">检查</span>
-              <div><input type="number" class="v2-param-val" id="asCheckInterval" value="60" min="10" max="600"><span class="v2-param-unit">秒</span></div>
-            </div>
-            <div class="v2-param-cell">
-              <span class="v2-param-label">冷却</span>
-              <div><input type="number" class="v2-param-val" id="asCooldown" value="30" min="5" max="300"><span class="v2-param-unit">秒</span></div>
-            </div>
-            <div class="v2-param-cell">
-              <span class="v2-param-label">评分</span>
-              <div>
-                <select class="v2-sel" id="asScoreMode" style="padding:2px 20px 2px 6px;font-size:10px">
-                  <option value="min">智能</option>
-                  <option value="daily">仅日</option>
-                  <option value="weekly">仅周</option>
-                </select>
-              </div>
-            </div>
+
+          <!-- ★ 核心设置：一句话说清楚 -->
+          <div class="as-main-setting">
+            <span>额度低于</span>
+            <input type="number" class="as-inline-num" id="asThreshold" value="15" min="1" max="99">
+            <span class="v2-param-unit">%</span>
+            <span>时自动换号</span>
           </div>
 
-          <!-- 范围 -->
+          <!-- 范围（多标签用户常用） -->
           <div class="v2-opt-row">
             <span class="v2-opt-label">范围</span>
             <select class="v2-sel" id="asPoolScope" style="flex:1">
@@ -1288,53 +1395,58 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               <option value="tag">按标签</option>
               <option value="instance">当前实例分组</option>
             </select>
-            <select class="v2-sel" id="asPoolTag" style="display:none">
-              <!-- 动态填充标签列表 -->
-            </select>
+          </div>
+          <!-- 标签多选区（按标签时显示） -->
+          <div id="asTagPicker" style="display:none">
+            <div class="as-tag-options" id="asTagOptions">
+              <!-- JS 动态填充可选标签 -->
+            </div>
+            <div class="as-tag-selected" id="asTagSelected">
+              <!-- JS 动态填充已选标签 chips -->
+            </div>
           </div>
 
-          <div class="v2-hint" id="asHint">取 min(日配额, 周配额) 作为评分，任一配额低于阈值即触发切号。</div>
+          <div class="v2-hint" id="asHint">取日/周配额中较低者为准。例：日100% 周0% → 实际不可用，自动切到额度最充足的号。</div>
 
-          <div class="v2-divider"></div>
+          <!-- ★ 高级设置（默认折叠） -->
+          <details class="as-adv-details" id="asAdvancedDetails">
+            <summary class="as-adv-summary">高级设置</summary>
+            <div class="as-adv-body">
 
-          <!-- 切号策略 -->
-          <div>
-            <div class="v2-section-title">切号策略</div>
-            <div class="v2-strategy is-active" onclick="v2SelectStrategy(this)" data-value="highestFirst">
-              <div class="v2-strategy-radio"></div>
-              <div class="v2-strategy-info">
-                <div class="v2-strategy-name">满额度优先（推荐）</div>
-                <div class="v2-strategy-desc">优先用额度最高的号</div>
+              <!-- 运行参数 -->
+              <div class="v2-param-grid">
+                <div class="v2-param-cell">
+                  <span class="v2-param-label">切号冷却</span>
+                  <div><input type="number" class="v2-param-val" id="asCooldown" value="15" min="5" max="300"><span class="v2-param-unit">秒</span></div>
+                </div>
               </div>
+              <!-- 切号策略 -->
+              <div class="v2-opt-row">
+                <span class="v2-opt-label">策略</span>
+                <select class="v2-sel" id="asSwitchStrategy" style="flex:1">
+                  <option value="highestFirst">满额度优先（推荐）</option>
+                  <option value="lowestNonZero">先用完再换新</option>
+                </select>
+              </div>
+              <div class="v2-hint" id="asStrategyHint">优先选额度最充足的号切入，保证可用时间最长</div>
+
+              <div class="v2-divider"></div>
+
+              <!-- 门槛参数 -->
+              <div class="v2-param-grid">
+                <div class="v2-param-cell">
+                  <span class="v2-param-label">废号下限</span>
+                  <div><input type="number" class="v2-param-val" id="asMinQuota" value="10" min="0" max="50"><span class="v2-param-unit">%</span></div>
+                </div>
+                <div class="v2-param-cell" id="asPreferUsedCell">
+                  <span class="v2-param-label">已用阈值</span>
+                  <div><input type="number" class="v2-param-val" id="asPreferUsedThreshold" value="50" min="10" max="90"><span class="v2-param-unit">%</span></div>
+                </div>
+              </div>
+              <div class="v2-hint" style="margin-top:4px" id="asThresholdHint">废号下限：日/周任一配额低于此值的号不会被选中。</div>
+
             </div>
-            <div class="v2-strategy" onclick="v2SelectStrategy(this)" data-value="lowestNonZero">
-              <div class="v2-strategy-radio"></div>
-              <div class="v2-strategy-info">
-                <div class="v2-strategy-name">最低非零优先</div>
-                <div class="v2-strategy-desc">先消耗低额度号，保留满额度号</div>
-              </div>
-            </div>
-            <input type="radio" name="asSwitchStrategy" value="highestFirst" checked hidden>
-            <input type="radio" name="asSwitchStrategy" value="lowestNonZero" hidden>
-          </div>
-
-          <div class="v2-divider"></div>
-
-          <!-- 门槛参数 -->
-          <div>
-            <div class="v2-section-title">门槛参数</div>
-            <div class="v2-param-grid">
-              <div class="v2-param-cell">
-                <span class="v2-param-label">额度下限</span>
-                <div><input type="number" class="v2-param-val" id="asMinQuota" value="10" min="0" max="50"><span class="v2-param-unit">%</span></div>
-              </div>
-              <div class="v2-param-cell">
-                <span class="v2-param-label">已用阈值</span>
-                <div><input type="number" class="v2-param-val" id="asPreferUsedThreshold" value="50" min="10" max="90"><span class="v2-param-unit">%</span></div>
-              </div>
-            </div>
-            <div class="v2-hint" style="margin-top:4px">≤ 额度下限视为"耗尽"；≤ 已用阈值视为"在用中"优先消耗完。</div>
-          </div>
+          </details>
 
           <div id="autoSwitchStatus" class="as-status" hidden></div>
           <pre id="autoSwitchLog" class="as-log" hidden></pre>
@@ -1436,7 +1548,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               <div style="margin-top:12px">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
                   <span class="v2-section-title" style="margin:0">指令队列</span>
-                  <span style="font-family:var(--vscode-editor-font-family,monospace);font-size:9px;color:var(--muted)">循环</span>
+                  <span style="font-family:var(--vscode-editor-font-family,monospace);font-size:11px;color:var(--muted)">循环</span>
                 </div>
                 <div class="v2-queue-list" id="acQueueList">
                   <div class="v2-queue-item is-active" data-idx="0">
@@ -1604,9 +1716,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     </div>
                     <div style="margin-top:8px">
                       <div class="v2-sub-label">可用模型优先级</div>
-                      <button class="v2-btn-sm" id="fetchModelsBtn">刷新列表</button>
+                      <button class="v2-btn-sm" id="fetchModelsBtn">获取可用模型列表</button>
                       <div id="modelPriorityList" class="ac-tag-list"></div>
-                      <div id="availableModelsList" style="display:none"></div>
+                      <div id="availableModelsList" style="display:none;flex-direction:column;gap:2px;max-height:200px;overflow-y:auto"></div>
                       <div style="display:flex;gap:4px;margin-top:4px">
                         <input type="text" class="v2-input-field" id="modelPriorityInput" placeholder="手动输入模型名..." style="flex:1">
                         <button class="v2-btn-sm" id="modelPriorityAdd">添加</button>
@@ -1727,6 +1839,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <input type="text" id="instCreateName" placeholder="例如：工作号、测试号">
           <label>绑定账号</label>
           <div id="instCreateAccount" class="account-picker"></div>
+          <label>自动切号标签分组</label>
+          <select id="instCreateTag" class="as-select" style="width:100%">
+            <option value="">不限（全部账号）</option>
+          </select>
           <div class="inst-create-hint">新实例将复制当前 Windsurf 环境，启动后自动登录所选账号</div>
           <div id="instCreateError" class="inst-error" hidden></div>
           <button class="primary inst-create-submit" id="instCreateSubmit">创建实例</button>
@@ -1806,63 +1922,103 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
 
-    <!-- 额度汇总面板 -->
-    <div class="card summary-card" id="summaryCard" hidden>
-      <div class="summary-header">
-        <div class="summary-title-wrap">
-          <svg class="summary-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-          <span class="summary-title">号池汇总</span>
-        </div>
-        <span class="summary-count" id="summaryCount">0 账号</span>
-      </div>
-      <div class="summary-stats">
-        <div class="summary-stat" id="summaryDailyStat">
-          <div class="summary-stat-head">
-            <svg class="summary-stat-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-            <span class="summary-stat-label">本日</span>
-            <span class="summary-stat-pct" id="summaryDailyPct">0%</span>
-          </div>
-          <div class="summary-bar"><div class="summary-bar-fill" id="summaryDailyBar" style="width:0%"></div></div>
-          <div class="summary-stat-footer">
-            <span class="summary-stat-num" id="summaryDailyNum">0</span>
-            <span class="summary-stat-max" id="summaryDailyMax">/ 0</span>
-          </div>
-        </div>
-        <div class="summary-stat" id="summaryWeeklyStat">
-          <div class="summary-stat-head">
-            <svg class="summary-stat-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            <span class="summary-stat-label">本周</span>
-            <span class="summary-stat-pct" id="summaryWeeklyPct">0%</span>
-          </div>
-          <div class="summary-bar"><div class="summary-bar-fill" id="summaryWeeklyBar" style="width:0%"></div></div>
-          <div class="summary-stat-footer">
-            <span class="summary-stat-num" id="summaryWeeklyNum">0</span>
-            <span class="summary-stat-max" id="summaryWeeklyMax">/ 0</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 外部账户提示条 -->
-    <div id="externalBanner" class="external-banner" hidden>
-      <span class="external-banner-text">
-        当前 Windsurf 登录的账户 <strong id="externalEmail"></strong> 不在号池中
-      </span>
-      <button class="external-banner-btn" id="externalAddBtn">加入号池</button>
-    </div>
-
-    <!-- 账号列表区域 -->
+    <!-- 我的账号（含汇总 + 账号列表） -->
     <div class="card list-card">
       <details class="list-details" id="listDetails" open>
         <summary class="list-summary">
           <svg class="list-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           <h3>我的账号</h3>
-          <span class="grid-count" id="gridCount">0 个</span>
           <span class="list-arrow"></span>
           <div style="flex:1"></div>
+          <span class="grid-count" id="gridCount">0 个</span>
           <button class="add-account-btn" id="addAccountBtn">添加账号</button>
         </summary>
         <div class="list-body">
+      <!-- 汇总统计 -->
+      <div id="summaryCard">
+        <div class="summary-stats">
+          <div class="summary-stat" id="summaryDailyStat">
+            <div class="summary-stat-head">
+              <svg class="summary-stat-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+              <span class="summary-stat-label">本日</span>
+              <span class="summary-stat-pct" id="summaryDailyPct">0%</span>
+            </div>
+            <div class="summary-bar"><div class="summary-bar-fill" id="summaryDailyBar" style="width:0%"></div></div>
+            <div class="summary-stat-footer">
+              <span class="summary-stat-num" id="summaryDailyNum">0</span>
+              <span class="summary-stat-max" id="summaryDailyMax">/ 0</span>
+            </div>
+          </div>
+          <div class="summary-stat" id="summaryWeeklyStat">
+            <div class="summary-stat-head">
+              <svg class="summary-stat-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span class="summary-stat-label">本周</span>
+              <span class="summary-stat-pct" id="summaryWeeklyPct">0%</span>
+            </div>
+            <div class="summary-bar"><div class="summary-bar-fill" id="summaryWeeklyBar" style="width:0%"></div></div>
+            <div class="summary-stat-footer">
+              <span class="summary-stat-num" id="summaryWeeklyNum">0</span>
+              <span class="summary-stat-max" id="summaryWeeklyMax">/ 0</span>
+            </div>
+          </div>
+        </div>
+        <div class="summary-status-grid" id="summaryStatusGrid">
+          <div class="summary-status-row"><span class="summary-status-label">活跃 / 禁用</span><span class="summary-status-val" id="summaryActiveDisabled">0 / 0</span></div>
+          <div class="summary-status-row"><span class="summary-status-label">满额度账号</span><span class="summary-status-val ok" id="summaryHighQuota">0 个（≥ 80%）</span></div>
+          <div class="summary-status-row"><span class="summary-status-label">低额度账号</span><span class="summary-status-val warn" id="summaryLowQuota">0 个（≤ 30%）</span></div>
+          <div class="summary-status-row"><span class="summary-status-label">最近刷新</span><span class="summary-status-val off" id="summaryLastRefresh">--</span></div>
+        </div>
+        <!-- 用量统计 -->
+        <details class="usage-stats-details" id="usageStatsDetails">
+          <summary class="usage-stats-summary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            <span>用量统计</span>
+            <span class="usage-stats-date" id="usageStatsDate"></span>
+          </summary>
+          <div class="usage-stats-body">
+            <div class="usage-stats-grid">
+              <div class="usage-stat-cell">
+                <div class="usage-stat-num" id="statPoolSignals">0</div>
+                <div class="usage-stat-label">请求信号</div>
+              </div>
+              <div class="usage-stat-cell">
+                <div class="usage-stat-num" id="statSwitches">0</div>
+                <div class="usage-stat-label">切号次数</div>
+              </div>
+              <div class="usage-stat-cell">
+                <div class="usage-stat-num" id="statRefreshes">0</div>
+                <div class="usage-stat-label">配额检查</div>
+              </div>
+              <div class="usage-stat-cell">
+                <div class="usage-stat-num" id="statAvgDailyUsed">0%</div>
+                <div class="usage-stat-label">平均日用量</div>
+              </div>
+            </div>
+            <div class="usage-stats-bar-section">
+              <div class="usage-stats-bar-row">
+                <span class="usage-stats-bar-label">日总用量</span>
+                <div class="usage-stats-bar"><div class="usage-stats-bar-fill daily" id="statDailyBar" style="width:0%"></div></div>
+                <span class="usage-stats-bar-val" id="statDailyVal">0</span>
+              </div>
+              <div class="usage-stats-bar-row">
+                <span class="usage-stats-bar-label">周总用量</span>
+                <div class="usage-stats-bar"><div class="usage-stats-bar-fill weekly" id="statWeeklyBar" style="width:0%"></div></div>
+                <span class="usage-stats-bar-val" id="statWeeklyVal">0</span>
+              </div>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div class="panel-divider"></div>
+
+      <!-- 外部账户提示条 -->
+      <div id="externalBanner" class="external-banner" hidden>
+        <span class="external-banner-text">
+          当前 Windsurf 登录的账户 <strong id="externalEmail"></strong> 不在号池中
+        </span>
+        <button class="external-banner-btn" id="externalAddBtn">加入号池</button>
+      </div>
       <!-- 搜索栏 -->
       <div class="search-bar" id="searchBar">
         <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -2140,6 +2296,7 @@ devin-session-token$eyJhbGciOiJIUzI1NiIs...</pre>
 
   <script>const vscode = acquireVsCodeApi();</script>
   <script>${getSignalBridgeScript()}</script>
+  <script>${getBridgeRelayScript()}</script>
   <script src="${jsUri}"></script>
 </body>
 </html>`;

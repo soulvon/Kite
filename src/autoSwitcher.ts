@@ -4,6 +4,8 @@ import { fetchUsage } from './usageService';
 import { StoredAccount, UsageSnapshot } from './types';
 import { getCurrentInstanceTag } from './instanceManager';
 import { getOtherLockedEmails, acquireLock, releaseLock } from './accountLock';
+import * as diskCache from './usageDiskCache';
+import { UsageTracker } from './usageTracker';
 
 // ─── 类型 ───────────────────────────────────────────────
 
@@ -29,7 +31,7 @@ export interface AutoSwitchSettings {
   minQuota: number;             // 低于此值视为“额度耗尽”，挑号时排除
   preferUsedThreshold: number;  // ≤此值视为“已经在用”，先消耗完它
   poolScope: PoolScope;         // 切号范围
-  poolTag?: string;             // poolScope='tag' 时指定标签
+  poolTags?: string[];           // poolScope='tag' 时指定标签（可多选）
 }
 
 type UsageUpdateCb = (email: string, snapshot: UsageSnapshot | null, error?: string) => void;
@@ -41,28 +43,31 @@ type AutoSwitchDoneCb = (newEmail: string, reason: string) => void;
 
 const DEFAULTS: AutoSwitchSettings = {
   enabled: true,
-  threshold: 10,
-  checkSec: 60,
-  cooldownSec: 30,
+  threshold: 15,
+  checkSec: 5,
+  cooldownSec: 15,
   scoreMode: 'min' as ScoreMode,
   refreshMin: 5,
   switchStrategy: 'highestFirst' as SwitchStrategy,
   minQuota: 10,
   preferUsedThreshold: 50,
   poolScope: 'all' as PoolScope,
-  poolTag: undefined,
+  poolTags: [],
 };
 
 const THROTTLE_MS = 2000;
 const ERROR_BACKOFF_MS = 5000;
-const CURRENT_TTL_MS = 60_000;
+// CURRENT_TTL_MS 不再硬编码，跟随 checkSec 设置（见 _checkAndSwitch）
 const ANTI_BOUNCE_MS = 5 * 60_000;
 
 // ─── AutoSwitcher ───────────────────────────────────────
 
 export class AutoSwitcher implements vscode.Disposable {
   private _ctx: vscode.ExtensionContext;
+  private _tracker: UsageTracker;
   private _cache = new Map<string, UsageCacheEntry>();
+  /** 进程内并发去重：同账号正在刷新的不重复发请求 */
+  private _inflight = new Set<string>();
   private _refreshTimer: NodeJS.Timeout | null = null;
   private _checkTimer: NodeJS.Timeout | null = null;
   private _refreshing = false;
@@ -76,8 +81,13 @@ export class AutoSwitcher implements vscode.Disposable {
   private _onRefreshUI: RefreshUICb | null = null;
   private _onAutoSwitchDone: AutoSwitchDoneCb | null = null;
 
-  constructor(ctx: vscode.ExtensionContext) {
+  /** 通用更新事件：额度刷新、切号完成等时触发，供状态栏等多订阅者使用 */
+  private _didUpdate = new vscode.EventEmitter<void>();
+  readonly onDidUpdate = this._didUpdate.event;
+
+  constructor(ctx: vscode.ExtensionContext, tracker: UsageTracker) {
     this._ctx = ctx;
+    this._tracker = tracker;
   }
 
   // ── 设置 ──
@@ -94,7 +104,7 @@ export class AutoSwitcher implements vscode.Disposable {
       minQuota: this._ctx.globalState.get('as.minQuota', DEFAULTS.minQuota),
       preferUsedThreshold: this._ctx.globalState.get('as.preferUsedThreshold', DEFAULTS.preferUsedThreshold),
       poolScope: this._ctx.globalState.get('as.poolScope', DEFAULTS.poolScope) as PoolScope,
-      poolTag: this._ctx.globalState.get<string>('as.poolTag', DEFAULTS.poolTag as any),
+      poolTags: this._ctx.globalState.get<string[]>('as.poolTags') || this._migratePoolTag(),
     };
   }
 
@@ -109,8 +119,21 @@ export class AutoSwitcher implements vscode.Disposable {
     if (p.minQuota !== undefined) await this._ctx.globalState.update('as.minQuota', p.minQuota);
     if (p.preferUsedThreshold !== undefined) await this._ctx.globalState.update('as.preferUsedThreshold', p.preferUsedThreshold);
     if (p.poolScope !== undefined) await this._ctx.globalState.update('as.poolScope', p.poolScope);
-    if (p.poolTag !== undefined) await this._ctx.globalState.update('as.poolTag', p.poolTag);
+    if (p.poolTags !== undefined) await this._ctx.globalState.update('as.poolTags', p.poolTags);
     this._restartTimers();
+  }
+
+  /** 迁移旧版单标签 poolTag → 新版多标签 poolTags */
+  private _migratePoolTag(): string[] {
+    const old = this._ctx.globalState.get<string>('as.poolTag');
+    if (old) {
+      const arr = [old];
+      this._ctx.globalState.update('as.poolTags', arr);
+      this._ctx.globalState.update('as.poolTag', undefined);
+      console.log(`[autoSwitch] 迁移 poolTag "${old}" → poolTags`);
+      return arr;
+    }
+    return [];
   }
 
   // ── 回调 ──
@@ -123,13 +146,64 @@ export class AutoSwitcher implements vscode.Disposable {
   // ── 生命周期 ──
 
   start(): void {
+    // v6.1.3 迁移：将旧默认值覆盖为新的无感默认值
+    const migrationKey = 'as._migrated_v613';
+    if (!this._ctx.globalState.get<boolean>(migrationKey)) {
+      const migrations: [string, any, any[]][] = [
+        // [key, newDefault, oldDefaults to overwrite]
+        ['as.checkSec', DEFAULTS.checkSec, [60, 30, 10]],
+        ['as.cooldownSec', DEFAULTS.cooldownSec, [30]],
+        ['as.threshold', DEFAULTS.threshold, [10]],
+      ];
+      for (const [key, newVal, oldVals] of migrations) {
+        const cur = this._ctx.globalState.get(key);
+        if (cur === undefined || oldVals.includes(cur)) {
+          this._ctx.globalState.update(key, newVal);
+        }
+      }
+      this._ctx.globalState.update(migrationKey, true);
+      console.log('[autoSwitch] v6.1.3 迁移完成：已更新默认参数');
+    }
+
+    const s = this.settings;
+    console.log(`[autoSwitch][trigger] start() 启动自动切号引擎: enabled=${s.enabled}, threshold=${s.threshold}, checkSec=${s.checkSec}, cooldownSec=${s.cooldownSec}, refreshMin=${s.refreshMin}, scoreMode=${s.scoreMode}, strategy=${s.switchStrategy}, minQuota=${s.minQuota}, poolScope=${s.poolScope}`);
+
+    // 启动时从磁盘加载历史缓存（其他窗口可能刚刷过）
+    try {
+      const disk = diskCache.loadAll();
+      let loaded = 0;
+      for (const [email, entry] of disk.entries()) {
+        this._cache.set(email, entry);
+        this._onUsageUpdate?.(email, entry.snapshot ?? null, entry.error);
+        loaded++;
+      }
+      if (loaded > 0) console.log(`[autoSwitch] 从磁盘缓存加载 ${loaded} 条额度记录`);
+    } catch (err) {
+      console.warn('[autoSwitch] disk cache load failed:', err);
+    }
+
     this._restartTimers();
+
+    // 磁盘缓存已加载，立即用缓存数据判断是否需要切号（0 延迟）
+    if (this._cache.size > 0 && this.settings.enabled) {
+      console.log(`[autoSwitch][trigger] start() 基于磁盘缓存立即检查切号 (cacheSize=${this._cache.size})`);
+      this._checkAndSwitch();
+    }
+
+    // 3s 后再发网络请求刷新最新额度
+    console.log(`[autoSwitch][trigger] start() 将在 3s 后执行首次 refreshAll`);
     setTimeout(() => this.refreshAll(), 3000);
   }
 
   dispose(): void {
     if (this._refreshTimer) { clearInterval(this._refreshTimer); this._refreshTimer = null; }
     if (this._checkTimer) { clearInterval(this._checkTimer); this._checkTimer = null; }
+    this._didUpdate.dispose();
+  }
+
+  /** 切号冷却剩余毫秒；无冷却返回 0 */
+  get cooldownRemainingMs(): number {
+    return Math.max(0, this._cooldownUntil - Date.now());
   }
 
   // ── 缓存访问 ──
@@ -157,7 +231,14 @@ export class AutoSwitcher implements vscode.Disposable {
       // 过滤需要刷新的账号
       const toRefresh = accounts.filter(acct => {
         if (acct.disabled) return false;
-        const cached = this._cache.get(acct.email);
+        // 优先使用磁盘和内存中较新的那条（其他窗口可能刚刷过）
+        const memEntry = this._cache.get(acct.email);
+        const diskEntry = diskCache.readEntry(acct.email);
+        const cached = diskCache.pickNewer(memEntry, diskEntry);
+        if (cached && cached !== memEntry) {
+          this._cache.set(acct.email, cached);
+          this._onUsageUpdate?.(acct.email, cached.snapshot ?? null, cached.error);
+        }
         // 额度耗尽的号始终跳过（不论 force），等重置时间到再查
         if (cached?.skipUntil && Date.now() < cached.skipUntil) return false;
         // force 时跳过 TTL 检查，否则遵守 TTL
@@ -194,6 +275,7 @@ export class AutoSwitcher implements vscode.Disposable {
       }
 
       // 全量刷新完成后检查自动切号
+      console.log(`[autoSwitch][trigger] refreshAll 完成，触发 _checkAndSwitch (source=refreshAll, force=${force})`);
       this._checkAndSwitch();
     } finally {
       this._refreshing = false;
@@ -217,37 +299,73 @@ export class AutoSwitcher implements vscode.Disposable {
     this._refreshTimer = setInterval(() => this.refreshAll(true), s.refreshMin * 60_000);
     // 自动切号检查（仅启用时）
     if (s.enabled) {
-      this._checkTimer = setInterval(() => this._checkAndSwitch(), s.checkSec * 1000);
+      this._checkTimer = setInterval(() => {
+        console.log(`[autoSwitch][trigger] 定时器触发 _checkAndSwitch (interval=${s.checkSec}s)`);
+        this._checkAndSwitch();
+      }, s.checkSec * 1000);
     }
   }
 
   // ── 内部：单账号刷新 ──
 
   private async _refreshOne(acct: StoredAccount, force = false): Promise<void> {
+    // 进程内并发去重：同账号正在刷新则直接返回
+    if (this._inflight.has(acct.email)) {
+      console.log(`[autoSwitch] _refreshOne skip (inflight): ${acct.email}`);
+      return;
+    }
     if (!force && this._shouldSkip(acct.email)) return;
 
-    const { snapshot, error } = await fetchUsage(acct);
-    const entry: UsageCacheEntry = { snapshot, error, ts: Date.now() };
-
-    // 智能跳过：额度耗尽时设置 skipUntil 为重置时间
-    if (snapshot) {
-      const d = snapshot.dailyRemainingPercent;
-      const w = snapshot.weeklyRemainingPercent;
-      if (d <= 0 && w <= 0) {
-        const reset = Math.min(
-          snapshot.dailyResetAtUnix || Infinity,
-          snapshot.weeklyResetAtUnix || Infinity
-        );
-        if (reset !== Infinity) entry.skipUntil = reset * 1000;
-      } else if (d <= 0 && snapshot.dailyResetAtUnix) {
-        entry.skipUntil = snapshot.dailyResetAtUnix * 1000;
-      } else if (w <= 0 && snapshot.weeklyResetAtUnix) {
-        entry.skipUntil = snapshot.weeklyResetAtUnix * 1000;
+    // 跨窗口去重：先看磁盘，其他窗口可能刚刷过更新数据
+    const memEntry = this._cache.get(acct.email);
+    const diskEntry = diskCache.readEntry(acct.email);
+    const newer = diskCache.pickNewer(memEntry, diskEntry);
+    if (newer && newer !== memEntry) {
+      this._cache.set(acct.email, newer);
+      this._onUsageUpdate?.(acct.email, newer.snapshot ?? null, newer.error);
+      // 磁盘版本仍在 TTL 内 → 复用，跳过网络
+      const ttlMs = this.settings.refreshMin * 60_000;
+      if (Date.now() - newer.ts < ttlMs) {
+        console.log(`[autoSwitch] _refreshOne use disk cache: ${acct.email} (age ${Math.round((Date.now() - newer.ts) / 1000)}s)`);
+        return;
       }
     }
 
-    this._cache.set(acct.email, entry);
-    this._onUsageUpdate?.(acct.email, snapshot, error);
+    this._inflight.add(acct.email);
+    try {
+      const { snapshot, error } = await fetchUsage(acct);
+      const entry: UsageCacheEntry = { snapshot, error, ts: Date.now() };
+
+      // 智能跳过：额度耗尽时设置 skipUntil 为重置时间
+      if (snapshot) {
+        const d = snapshot.dailyRemainingPercent;
+        const w = snapshot.weeklyRemainingPercent;
+        if (d <= 0 && w <= 0) {
+          const reset = Math.min(
+            snapshot.dailyResetAtUnix || Infinity,
+            snapshot.weeklyResetAtUnix || Infinity
+          );
+          if (reset !== Infinity) entry.skipUntil = reset * 1000;
+        } else if (d <= 0 && snapshot.dailyResetAtUnix) {
+          entry.skipUntil = snapshot.dailyResetAtUnix * 1000;
+        } else if (w <= 0 && snapshot.weeklyResetAtUnix) {
+          entry.skipUntil = snapshot.weeklyResetAtUnix * 1000;
+        }
+      }
+
+      this._cache.set(acct.email, entry);
+      // 双写磁盘（队列化、atomic、跨窗口共享）
+      diskCache.writeEntry(acct.email, entry);
+      this._onUsageUpdate?.(acct.email, snapshot, error);
+      this._didUpdate.fire();
+      // 记录用量统计
+      if (snapshot) {
+        this._tracker.recordUsage(acct.email, snapshot.dailyRemainingPercent, snapshot.weeklyRemainingPercent);
+      }
+      this._tracker.recordRefresh();
+    } finally {
+      this._inflight.delete(acct.email);
+    }
   }
 
   // ── 内部：跳过判断 ──
@@ -285,27 +403,30 @@ export class AutoSwitcher implements vscode.Disposable {
 
   private async _checkAndSwitch(): Promise<void> {
     const s = this.settings;
-    if (!s.enabled) { console.log('[autoSwitch] skip: disabled'); return; }
-    if (this._switching) { console.log('[autoSwitch] skip: already switching'); return; }
+    const callStack = new Error().stack?.split('\n').slice(1, 4).map(l => l.trim()).join(' <- ') || 'unknown';
+    console.log(`[autoSwitch][trigger] _checkAndSwitch 入口, caller: ${callStack}`);
+    if (!s.enabled) { console.log('[autoSwitch][trigger] skip: disabled'); return; }
+    if (this._switching) { console.log('[autoSwitch][trigger] skip: already switching'); return; }
     if (Date.now() < this._cooldownUntil) {
-      console.log(`[autoSwitch] skip: cooldown ${Math.ceil((this._cooldownUntil - Date.now()) / 1000)}s`);
+      console.log(`[autoSwitch][trigger] skip: cooldown ${Math.ceil((this._cooldownUntil - Date.now()) / 1000)}s`);
       return;
     }
     this._switching = true;
     try {
       const curEmail = this._ctx.globalState.get<string>('lastEmail');
-      if (!curEmail) { console.log('[autoSwitch] skip: no current account'); return; }
+      if (!curEmail) { console.log('[autoSwitch][trigger] skip: no current account'); return; }
 
-      // 当前号缓存过期则先刷新
+      // 当前号缓存过期则先刷新（TTL = checkSec，保证每轮检查都拿最新数据）
+      const curTtlMs = s.checkSec * 1000;
       const curEntry = this._cache.get(curEmail);
-      if (!curEntry || Date.now() - curEntry.ts > CURRENT_TTL_MS) {
+      if (!curEntry || Date.now() - curEntry.ts > curTtlMs) {
         await this.refreshSingle(curEmail, true);
       }
 
       const freshEntry = this._cache.get(curEmail);
       const snap = freshEntry?.snapshot;
       if (!snap) {
-        console.log(`[autoSwitch] skip: no snapshot for ${curEmail}${freshEntry?.error ? ' err=' + freshEntry.error : ''}`);
+        console.log(`[autoSwitch][trigger] skip: no snapshot for ${curEmail}${freshEntry?.error ? ' err=' + freshEntry.error : ''} (cacheSize=${this._cache.size}, cacheAge=${freshEntry ? Math.round((Date.now() - freshEntry.ts) / 1000) + 's' : 'N/A'})`);
         return;
       }
 
@@ -321,8 +442,12 @@ export class AutoSwitcher implements vscode.Disposable {
 
       if (!hardExhausted && curScore > s.threshold) {
         // 当前号额度充足，无需切换
+        console.log(`[autoSwitch][trigger] 当前号额度充足，不切换: ${curEmail} curScore=${Math.round(curScore)} d=${Math.round(dPct)}% w=${Math.round(wPct)}% threshold=${s.threshold}`);
         return;
       }
+
+      // ★ 决定要切号了，记录详细触发原因
+      console.log(`[autoSwitch][trigger] ★ 决定切号! curEmail=${curEmail}, curScore=${Math.round(curScore)}, d=${Math.round(dPct)}%, w=${Math.round(wPct)}%, threshold=${s.threshold}, minQuota=${minQ}, hardExhausted=${hardExhausted}, minPct=${Math.round(minPct)}`);
 
       // 确定瓶颈原因
       let reason: string;
@@ -338,11 +463,11 @@ export class AutoSwitcher implements vscode.Disposable {
         reason = `周配额 ${Math.round(wPct)}%`;
       }
 
-      // 寻找最佳候选
+      // ── 惰性验证策略：按缓存分数排序候选，逐个验证后切号 ──
       // hardExhausted 时放宽阈值（当前号某个维度已耗尽，候选只需比 0 好即可）
       const findScore = hardExhausted ? 0 : curScore;
-      const cand = this._findBest(curEmail, s.threshold, s.scoreMode, findScore);
-      if (!cand) {
+      const candidates = this._findAllCandidates(curEmail, s.threshold, s.scoreMode, findScore);
+      if (candidates.length === 0) {
         const noHint = hardExhausted ? '低于额度下限' : '低于阈值';
         const log = `[${ts()}] ${curEmail} ${reason} ${noHint}，无可用候选`;
         this._onSwitchEvent?.(log, `${curEmail} ${reason} ${noHint}，无可用候选`, 'warn');
@@ -350,13 +475,64 @@ export class AutoSwitcher implements vscode.Disposable {
         return;
       }
 
-      const log = `[${ts()}] ${curEmail} ${reason} → ${cand.email}`;
+      // 逐个验证：缓存新鲜的直接信任，过期的发 1 次 API 验证
+      const cacheFreshMs = s.refreshMin * 60_000;
+      const maxVerify = Math.min(5, candidates.length);
+      let verified: { email: string; score: number } | null = null;
+
+      for (let i = 0; i < maxVerify; i++) {
+        const cand = candidates[i];
+        const candEntry = this._cache.get(cand.email);
+
+        // 缓存足够新鲜（< refreshMin），直接信任
+        if (candEntry && Date.now() - candEntry.ts < cacheFreshMs) {
+          console.log(`[autoSwitch][verify] #${i + 1} ${cand.email} 缓存新鲜 (${Math.round((Date.now() - candEntry.ts) / 1000)}s), 直接信任 score=${Math.round(cand.score)}`);
+          verified = cand;
+          break;
+        }
+
+        // 缓存过期，发 API 验证
+        console.log(`[autoSwitch][verify] #${i + 1} ${cand.email} 缓存过期 (${candEntry ? Math.round((Date.now() - candEntry.ts) / 1000) + 's' : 'N/A'}), API 验证中...`);
+        await this.refreshSingle(cand.email, true);
+        const freshEntry = this._cache.get(cand.email);
+        if (!freshEntry?.snapshot) {
+          console.log(`[autoSwitch][verify] #${i + 1} ${cand.email} 验证失败: 无 snapshot`);
+          continue;
+        }
+
+        const vd = clamp(freshEntry.snapshot.dailyRemainingPercent);
+        const vw = clamp(freshEntry.snapshot.weeklyRemainingPercent);
+        if (vd <= 1 || vw <= 1 || Math.min(vd, vw) <= minQ) {
+          console.log(`[autoSwitch][verify] #${i + 1} ${cand.email} 验证失败: d=${Math.round(vd)}% w=${Math.round(vw)}% (耗尽)`);
+          continue;
+        }
+        const vScore = calcScore(vd, vw, s.scoreMode);
+        if (vScore <= findScore) {
+          console.log(`[autoSwitch][verify] #${i + 1} ${cand.email} 验证失败: score=${Math.round(vScore)} ≤ findScore=${Math.round(findScore)}`);
+          continue;
+        }
+
+        console.log(`[autoSwitch][verify] #${i + 1} ${cand.email} 验证通过: d=${Math.round(vd)}% w=${Math.round(vw)}% score=${Math.round(vScore)}`);
+        verified = { email: cand.email, score: vScore };
+        break;
+      }
+
+      if (!verified) {
+        const noHint = hardExhausted ? '低于额度下限' : '低于阈值';
+        const log = `[${ts()}] ${curEmail} ${reason} ${noHint}，${maxVerify} 个候选均验证失败`;
+        this._onSwitchEvent?.(log, `${reason} ${noHint}，候选验证失败`, 'warn');
+        console.log(`[autoSwitch] ${curEmail} 所有候选验证失败 (tried=${maxVerify}, total=${candidates.length})`);
+        return;
+      }
+
+      const log = `[${ts()}] ${curEmail} ${reason} → ${verified.email}`;
       const triggerHint = hardExhausted ? `低于额度下限 ${minQ}%` : `低于阈值 ${s.threshold}%`;
-      this._onSwitchEvent?.(log, `${reason} ${triggerHint}，切换至 ${cand.email}`, '');
+      this._onSwitchEvent?.(log, `${reason} ${triggerHint}，切换至 ${verified.email}`, '');
 
       const accounts = await accountStore.readAccounts(this._ctx);
-      const acct = accounts.find(a => a.email === cand.email);
+      const acct = accounts.find(a => a.email === verified!.email);
       if (!acct) return;
+      console.log(`[autoSwitch][trigger] 执行切号: ${curEmail} → ${verified.email} (score=${Math.round(verified.score)})`);
       const { injectSession } = await import('./sessionInjector');
       const ok = await injectSession(this._ctx, acct, { silent: true });
       if (ok) {
@@ -364,17 +540,21 @@ export class AutoSwitcher implements vscode.Disposable {
         this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
         this._lastSwitchedFrom = curEmail;
         this._lastSwitchedAt = Date.now();
+        console.log(`[autoSwitch][trigger] ✓ 切号成功: ${curEmail} → ${verified.email}, cooldown=${s.cooldownSec}s`);
+        // 记录切号统计
+        this._tracker.recordSwitch(verified.email);
         // 跨窗口锁：释放旧号，锁定新号
         releaseLock(curEmail);
-        acquireLock(cand.email);
-        await accountStore.setCurrentAccount(this._ctx, cand.email);
+        acquireLock(verified.email);
+        await accountStore.setCurrentAccount(this._ctx, verified.email);
         this._onRefreshUI?.();
+        this._didUpdate.fire();
         // 通知 bridge → windsurf-better.js 显示通知 + 重试消息
-        this._onAutoSwitchDone?.(cand.email, reason);
+        this._onAutoSwitchDone?.(verified.email, reason);
         // 后台异步刷新新旧账号配额（不阻塞切号流程）
-        this._refreshAndPush(curEmail, cand.email).catch(() => {});
+        this._refreshAndPush(curEmail, verified.email).catch(() => {});
       } else {
-        console.warn(`[autoSwitch] injectSession 失败: ${cand.email}`);
+        console.warn(`[autoSwitch][trigger] ✗ injectSession 失败: ${verified.email}`);
       }
     } catch (err) {
       console.warn('[autoSwitch] switch error:', err);
@@ -386,12 +566,15 @@ export class AutoSwitcher implements vscode.Disposable {
   /**
    * 强制立即切号（由信号桥触发，跳过定时器和冷却期）
    * @param reason 触发原因（如 quota-exhausted）
+   * @param opts.force 测试按钮触发时为 true，绕过 enabled 总开关
    * @returns 切换成功返回新账号 email，失败返回 null
    */
-  async forceSwitch(reason: string): Promise<{ email: string } | null> {
-    // 自动切号关闭时，信号触发的切号也不执行
-    if (!this.settings.enabled) {
-      console.log('[autoSwitch] forceSwitch skip: disabled');
+  async forceSwitch(reason: string, opts?: { force?: boolean }): Promise<{ email: string } | null> {
+    const force = !!(opts && opts.force);
+    console.log(`[autoSwitch][trigger] forceSwitch 入口: reason=${reason}, switching=${this._switching}, cacheSize=${this._cache.size}, force=${force}`);
+    // 自动切号关闭时，信号触发的切号也不执行（测试按钮 force=true 时绕过）
+    if (!this.settings.enabled && !force) {
+      console.log('[autoSwitch][trigger] forceSwitch skip: disabled');
       return null;
     }
     // 如果定时器正在切号，等最多 5s（避免信号被白白丢弃）
@@ -424,7 +607,10 @@ export class AutoSwitcher implements vscode.Disposable {
         }
       }
 
-      if (!cand || cand.score <= 0) return null;
+      if (!cand || cand.score <= 0) {
+        console.log(`[autoSwitch][trigger] forceSwitch: 无可用候选 (reason=${reason}, curEmail=${curEmail})`);
+        return null;
+      }
 
       // ── 第 3 步：执行切换 ──
       const accounts = await accountStore.readAccounts(this._ctx);
@@ -446,6 +632,9 @@ export class AutoSwitcher implements vscode.Disposable {
 
       await accountStore.setCurrentAccount(this._ctx, cand.email);
       this._onRefreshUI?.();
+      this._didUpdate.fire();
+      // 记录切号统计
+      this._tracker.recordSwitch(cand.email);
 
       const log = `[${ts()}] 信号切号(${reason}): ${curEmail} → ${cand.email}`;
       this._onSwitchEvent?.(log, `${reason} → ${cand.email}`, '');
@@ -459,9 +648,12 @@ export class AutoSwitcher implements vscode.Disposable {
     }
   }
 
-  private _findBest(curEmail: string, threshold: number, mode: ScoreMode, curScore: number = 0): { email: string; score: number } | null {
+  /**
+   * 返回按策略排序的全部候选列表（纯缓存，无 API 调用）
+   */
+  private _findAllCandidates(curEmail: string, threshold: number, mode: ScoreMode, curScore: number = 0): { email: string; score: number }[] {
     const s = this.settings;
-    const strategy = s.switchStrategy || 'lowestNonZero';
+    const strategy = s.switchStrategy || 'highestFirst';
     const minQ = s.minQuota ?? 10;
     const prefUsed = s.preferUsedThreshold ?? 50;
 
@@ -474,8 +666,9 @@ export class AutoSwitcher implements vscode.Disposable {
 
     // 根据 poolScope 构建允许的邮箱集合
     let poolEmails: Set<string> | null = null; // null = 不限制
-    if (s.poolScope === 'tag' && s.poolTag) {
-      poolEmails = new Set(allAccounts.filter(a => a.tag === s.poolTag).map(a => a.email));
+    if (s.poolScope === 'tag' && s.poolTags && s.poolTags.length > 0) {
+      const tagSet = new Set(s.poolTags);
+      poolEmails = new Set(allAccounts.filter(a => a.tag && tagSet.has(a.tag)).map(a => a.email));
     } else if (s.poolScope === 'instance') {
       const instTag = getCurrentInstanceTag();
       if (instTag) {
@@ -525,30 +718,32 @@ export class AutoSwitcher implements vscode.Disposable {
     }
 
     if (candidates.length === 0) {
-      console.log(`[autoSwitch] findBest: no candidates (checked ${this._cache.size}, rejected free=${rejectedDueToFree} minQ=${rejectedDueToMinQ} threshold=${rejectedDueToThreshold} locked=${rejectedDueToLock}, effectiveThreshold=${effectiveThreshold})`);
-      return null;
+      console.log(`[autoSwitch] findAllCandidates: 0 candidates (checked ${this._cache.size}, rejected free=${rejectedDueToFree} minQ=${rejectedDueToMinQ} threshold=${rejectedDueToThreshold} locked=${rejectedDueToLock}, effectiveThreshold=${effectiveThreshold})`);
+      return [];
     }
 
+    // 按策略排序
     if (strategy === 'lowestNonZero') {
       // 分两组：已用号（score ≤ prefUsed）和满额号（score > prefUsed）
       const used = candidates.filter(c => c.score <= prefUsed);
       const fresh = candidates.filter(c => c.score > prefUsed);
-      // 优先选已用号中额度最低的（消耗完再换新号）
-      if (used.length > 0) {
-        used.sort((a, b) => a.score - b.score);
-        return used[0];
-      }
-      // 没有已用号，选满额号中额度最低的
+      // 优先选已用号中额度最低的（消耗完再换新号），然后是满额号
+      used.sort((a, b) => a.score - b.score);
       fresh.sort((a, b) => a.score - b.score);
-      return fresh[0];
+      return [...used, ...fresh];
     } else {
-      // highestFirst：旧策略，选额度最高的
-      let best: Cand | null = null;
-      for (const c of candidates) {
-        if (!best || c.score > best.score) best = c;
-      }
-      return best;
+      // highestFirst：选额度最高的
+      candidates.sort((a, b) => b.score - a.score);
+      return candidates;
     }
+  }
+
+  /**
+   * 从缓存中选出最佳候选（不验证，用于 forceSwitch 等需要极速响应的场景）
+   */
+  private _findBest(curEmail: string, threshold: number, mode: ScoreMode, curScore: number = 0): { email: string; score: number } | null {
+    const all = this._findAllCandidates(curEmail, threshold, mode, curScore);
+    return all.length > 0 ? all[0] : null;
   }
 }
 

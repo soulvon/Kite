@@ -76,7 +76,9 @@ export type WebviewMessageType =
   | 'enhLoad'
   | 'enhSave'
   | 'enhCommand'
-  | 'enhForceStop';
+  | 'enhForceStop'
+  | 'requestBridgeInfo'
+  | 'getUsageStats';
 
 /**
  * Webview 消息
@@ -127,7 +129,8 @@ export type BackendMessageType =
   | 'audioFileSelected'
   | 'enhLoaded'
   | 'enhSaved'
-  | 'enhCommandResult';
+  | 'enhCommandResult'
+  | 'usageStatsSync';
 
 export interface UsageMessage {
   type: 'usage';
@@ -206,7 +209,22 @@ export interface AutoSwitchSettingsSyncMessage {
   poolTag?: string;
 }
 
-export type BackendMessage = UsageMessage | AccountsChangedMessage | BatchResultMessage | InstanceListResultMessage | InstanceProgressMessage | InstanceErrorMessage | CockpitListResultMessage | ShowAlertMessage | AutoSwitchEventMessage | AutoSwitchSettingsSyncMessage;
+export interface UsageStatsSyncMessage {
+  type: 'usageStatsSync';
+  totalSwitches: number;
+  totalPoolSignals: number;
+  totalRefreshes: number;
+  avgDailyUsedPct: number;
+  avgWeeklyUsedPct: number;
+  totalDailyUsed: number;
+  totalWeeklyUsed: number;
+  accountCount: number;
+  sessionStartTs: number;
+  date: string;
+  perAccount: Record<string, { switchToCount: number; dailyUsedPct: number; weeklyUsedPct: number; lastCheckTs: number }>;
+}
+
+export type BackendMessage = UsageMessage | AccountsChangedMessage | BatchResultMessage | InstanceListResultMessage | InstanceProgressMessage | InstanceErrorMessage | CockpitListResultMessage | ShowAlertMessage | AutoSwitchEventMessage | AutoSwitchSettingsSyncMessage | UsageStatsSyncMessage;
 
 /**
  * 批量导入账号

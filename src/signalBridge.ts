@@ -12,6 +12,8 @@ export interface PoolSignal {
   lastMessage?: string;
   conversationId?: string;
   retryCount?: number;
+  /** 强制执行（测试按钮触发时为 true，绕过 autoSwitchEnabled 等总开关） */
+  force?: boolean;
 }
 
 export interface PoolResult {
@@ -44,17 +46,20 @@ export function getSignalBridgeScript(): string {
           // 只处理 60s 内的信号，避免处理过期信号
           if (Date.now() - signal.ts > 60000) { lastSignalTs = signal.ts; return; }
           lastSignalTs = signal.ts;
-          // 根据设置过滤信号
-          try {
-            const settingsRaw = localStorage.getItem('ws-better-settings');
-            if (settingsRaw) {
-              const s = JSON.parse(settingsRaw);
-              const isQuota = signal.type === 'quota-exhausted' || signal.type === 'quota-daily-exhausted';
-              const isRate = signal.type === 'rate-limited' || signal.type === 'provider-overloaded' || signal.type === 'provider-unavailable';
-              if (isQuota && s.autoSwitchOnQuota === false) return;
-              if (isRate && s.autoSwitchOnRateLimit === false) return;
-            }
-          } catch(ex) {}
+          // 根据设置过滤信号（signal.force=true 时绕过所有开关，用于测试按钮）
+          if (!signal.force) {
+            try {
+              const settingsRaw = localStorage.getItem('ws-better-settings');
+              if (settingsRaw) {
+                const s = JSON.parse(settingsRaw);
+                if (s.autoSwitchEnabled === false) return;
+                const isQuota = signal.type === 'quota-exhausted' || signal.type === 'quota-daily-exhausted';
+                const isRate = signal.type === 'rate-limited' || signal.type === 'provider-overloaded' || signal.type === 'provider-unavailable';
+                if (isQuota && s.autoSwitchOnQuota === false) return;
+                if (isRate && s.autoSwitchOnRateLimit === false) return;
+              }
+            } catch(ex) {}
+          }
           // 通知扩展
           vscode.postMessage({ type: 'poolSignal', data: signal });
         } catch(e) {
@@ -113,7 +118,7 @@ export async function handlePoolSignal(
   respond({ type: 'retrying', ts: t0 });
 
   try {
-    const switched = await autoSwitcher.forceSwitch(signal.type);
+    const switched = await autoSwitcher.forceSwitch(signal.type, { force: !!signal.force });
     const elapsed = Date.now() - t0;
     if (switched) {
       console.log(`[signalBridge] 切号成功 → ${switched.email} (${elapsed}ms)`);
@@ -139,4 +144,53 @@ export async function handlePoolSignal(
       error: `异常: ${String(err)} (${elapsed}ms)`,
     });
   }
+}
+
+/**
+ * Bridge 中继脚本：sidebar webview（在 workbench 的 iframe 中）把当前进程的
+ * bridge port/token 通过 window.top.postMessage 转发给 workbench 顶层 frame。
+ *
+ * 为什么这样做：
+ * - workbench.html 是所有 Windsurf 实例共享的物理文件，无法在注入时区分实例；
+ * - 每个实例的 extension host 拥有自己的 sidebar webview，webview 的 iframe
+ *   天然嵌在"本进程"的 workbench 顶层 frame 内；
+ * - cross-origin window.top.postMessage 是 Web 标准允许的 API，不会跨进程串号。
+ *
+ * workbench 侧（windsurf-better.js）监听 message 事件拿到 port/token，
+ * 之后只连自己这一份 bridge。
+ */
+export function getBridgeRelayScript(): string {
+  return `
+    (function() {
+      let lastBridge = null;
+      function relay(port, token) {
+        if (!port || !token) return;
+        lastBridge = { port, token };
+        // 同时 post 到 top 和 parent，兼容 VSCode webview 嵌套 iframe（outer shell + inner sandbox）
+        const payload = { type: 'ws-pool-bridge', port, token };
+        try { window.top && window.top.postMessage(payload, '*'); } catch (e) {}
+        try { window.parent && window.parent !== window && window.parent.postMessage(payload, '*'); } catch (e) {}
+      }
+      // 扩展宿主推送 bridgeInfo 时中继
+      window.addEventListener('message', e => {
+        const d = e && e.data;
+        if (d && d.type === 'bridgeInfo' && typeof d.port === 'number' && typeof d.token === 'string') {
+          relay(d.port, d.token);
+        }
+      });
+      // 主动请求 bridge 信息：消除"webview 监听器未挂上而 extension 先推送"的竞态
+      function requestBridgeInfo() {
+        try { vscode.postMessage({ type: 'requestBridgeInfo' }); } catch (e) {}
+      }
+      // 立即请求 + 没拿到时退避重试（最多 ~30s）
+      requestBridgeInfo();
+      let retries = 0;
+      const reqTimer = setInterval(() => {
+        if (lastBridge || retries++ > 15) { clearInterval(reqTimer); return; }
+        requestBridgeInfo();
+      }, 2000);
+      // 定时重播：保证 workbench 脚本即使晚于 sidebar 启动也能收到
+      setInterval(() => { if (lastBridge) relay(lastBridge.port, lastBridge.token); }, 5000);
+    })();
+  `;
 }

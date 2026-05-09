@@ -32,7 +32,14 @@ export function readEnhSettings(): Record<string, any> {
     if (!fs.existsSync(p)) return {};
     const raw = fs.readFileSync(p, 'utf8');
     const obj = JSON.parse(raw);
-    return obj && typeof obj === 'object' ? obj : {};
+    if (!obj || typeof obj !== 'object') return {};
+    // 兼容：旧版本在此文件里写了 __bridgePort/__bridgeToken（多实例会互相覆盖）。
+    // 新版本 bridge 信息改由 sidebar postMessage 广播，这里剥离掉避免污染 hash。
+    if ('__bridgePort' in obj || '__bridgeToken' in obj) {
+      delete obj.__bridgePort;
+      delete obj.__bridgeToken;
+    }
+    return obj;
   } catch {
     return {};
   }

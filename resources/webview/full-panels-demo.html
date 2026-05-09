@@ -158,12 +158,25 @@ html, body {
 }
 .panel-head:hover { background: rgba(255,255,255,0.015); }
 .panel-head-icon { color: var(--text-secondary); flex-shrink: 0; }
-.panel-head-title { font-size: 13px; font-weight: 600; flex: 1; }
+.panel-head-title { font-size: 13px; font-weight: 600; }
 .panel-head-sub { font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); margin-right: 6px; }
+.panel-head-badge {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #8b5cf6, #ec4899);
+  color: #fff;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 6px rgba(139, 92, 246, 0.4);
+}
 .panel-head-arrow {
   font-size: 8px; color: var(--text-dim);
   transform: rotate(90deg);
   transition: transform 0.2s;
+  margin-right: auto;
 }
 .panel-card.collapsed .panel-head-arrow { transform: rotate(0deg); }
 .panel-card.collapsed .panel-body { display: none; }
@@ -654,33 +667,110 @@ html, body {
 
 .hidden { display: none !important; }
 
-/* ═══════ Instance Cards ═══════ */
+/* ═══════ Instance Cards (参照 main.css 原版) ═══════ */
 .inst-list { display: flex; flex-direction: column; gap: 8px; }
-.inst-item {
-  display: flex; align-items: center; gap: 10px;
+.inst-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 10px;
+  row-gap: 3px;
   padding: 10px 12px;
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   transition: all 0.15s;
+  align-items: center;
 }
-.inst-item:hover { border-color: var(--border-dim); }
-.inst-item.current { border-color: rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.04); }
-.inst-avatar {
-  width: 32px; height: 32px;
-  border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 700;
+.inst-card:hover { border-color: var(--border-dim); }
+.inst-card.current { border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.04); }
+.inst-card-header {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.inst-status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
   flex-shrink: 0;
 }
-.inst-avatar.g1 { background: linear-gradient(135deg, #10b981, #06b6d4); color: #fff; }
-.inst-avatar.g2 { background: linear-gradient(135deg, #8b5cf6, #ec4899); color: #fff; }
-.inst-avatar.g3 { background: linear-gradient(135deg, #f59e0b, #ef4444); color: #fff; }
-.inst-avatar.g4 { background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: #fff; }
-.inst-meta { flex: 1; min-width: 0; }
-.inst-name { font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.inst-email { font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inst-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.inst-status-dot.current { background: var(--accent-emerald); box-shadow: 0 0 6px rgba(16, 185, 129, 0.4); }
+.inst-status-dot.running { background: var(--accent-emerald); box-shadow: 0 0 6px rgba(16, 185, 129, 0.4); }
+.inst-status-dot.stopped { background: var(--text-dim); }
+.inst-card-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.inst-source-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--accent-violet);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.inst-source-badge.default { background: rgba(59, 130, 246, 0.12); color: var(--accent-blue); }
+.inst-card-state {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.inst-card-state.current { color: var(--accent-emerald); background: rgba(16, 185, 129, 0.12); }
+.inst-card-state.running { color: var(--accent-emerald); background: rgba(16, 185, 129, 0.12); }
+.inst-card-state.stopped { color: var(--text-dim); background: rgba(100, 116, 139, 0.12); }
+.inst-card-email {
+  grid-column: 1;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.inst-card-tag { grid-column: 1; font-size: 9px; color: var(--accent-violet); }
+.inst-tag-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(139, 92, 246, 0.1);
+  color: var(--accent-violet);
+  cursor: pointer;
+}
+.inst-tag-badge:hover { background: rgba(139, 92, 246, 0.18); }
+.inst-tag-none { font-size: 10px; opacity: 0.4; cursor: pointer; }
+.inst-card-actions {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  align-self: center;
+}
+.inst-card-btn {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.inst-card-btn:hover { background: rgba(255,255,255,0.04); }
+.inst-card-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.inst-card-btn.start { color: var(--accent-emerald); border-color: rgba(16, 185, 129, 0.3); }
+.inst-card-btn.start:hover { background: rgba(16, 185, 129, 0.08); }
+.inst-card-btn.stop { color: var(--accent-red); border-color: rgba(239, 68, 68, 0.3); }
+.inst-card-btn.stop:hover { background: rgba(239, 68, 68, 0.08); }
+.inst-card-btn.current { color: var(--accent-emerald); opacity: 0.7; }
+.icon-btn.focus { color: var(--accent-blue); }
 .status-pill { white-space: nowrap; flex-shrink: 0; }
 
 /* ═══════ Summary card (按现有设计) ═══════ */
@@ -1251,8 +1341,8 @@ html, body {
     <div class="panel-head" onclick="togglePanel(this)">
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
       <span class="panel-head-title">Windsurf 增强</span>
-      <span class="panel-head-sub">v5.0.3</span>
       <span class="panel-head-arrow">▶</span>
+      <span class="panel-head-sub">v5.0.3</span>
       <div class="toggle on" onclick="event.stopPropagation();this.classList.toggle('on')"></div>
     </div>
     <div class="panel-body">
@@ -1375,8 +1465,8 @@ html, body {
     <div class="panel-head" onclick="togglePanel(this)">
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
       <span class="panel-head-title">自动切号</span>
-      <span class="panel-head-sub">23 账号池</span>
       <span class="panel-head-arrow">▶</span>
+      <span class="panel-head-sub">23 账号池</span>
       <div class="toggle on" onclick="event.stopPropagation();this.classList.toggle('on')"></div>
     </div>
     <div class="panel-body">
@@ -1441,8 +1531,8 @@ html, body {
     <div class="panel-head" onclick="togglePanel(this)">
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M12 17h.01"/></svg>
       <span class="panel-head-title">自动继续</span>
-      <span class="panel-head-sub">守护中</span>
       <span class="panel-head-arrow">▶</span>
+      <span class="panel-head-sub">守护中</span>
       <div class="toggle on" onclick="event.stopPropagation();this.classList.toggle('on')"></div>
     </div>
     <div class="panel-body">
@@ -1555,15 +1645,142 @@ html, body {
        ══════════════════════════════════════ -->
   <div class="section-label">账号与实例</div>
 
-  <!-- ═══ 号池汇总 ═══ -->
+  <!-- ═══ 多实例分身 ═══ -->
   <div class="panel-card">
     <div class="panel-head" onclick="togglePanel(this)">
-      <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-      <span class="panel-head-title">号池汇总</span>
-      <span class="panel-head-sub">23 账号</span>
+      <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <span class="panel-head-title">多实例分身</span>
       <span class="panel-head-arrow">▶</span>
+      <span class="panel-head-sub">4 实例</span>
+      <button class="btn-icon" title="Cockpit 导入" onclick="event.stopPropagation()" style="width:22px;height:22px;font-size:9px">C</button>
+      <button class="btn-icon" title="新建" onclick="event.stopPropagation()" style="width:22px;height:22px">+</button>
     </div>
     <div class="panel-body">
+      <div class="inst-list">
+        <!-- W1: 当前窗口 · 主实例 -->
+        <div class="inst-card current">
+          <div class="inst-card-header">
+            <span class="inst-status-dot current"></span>
+            <div class="inst-card-name">主窗口</div>
+            <span class="inst-source-badge default">主实例</span>
+            <button class="icon-btn focus" title="跳转到此窗口" style="visibility:hidden" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </button>
+            <span class="inst-card-state current">当前窗口</span>
+          </div>
+          <div class="inst-card-email">primary@codeium.com</div>
+          <div class="inst-card-tag"><span class="inst-tag-badge">📌 工作</span></div>
+          <div class="inst-card-actions">
+            <button class="inst-card-btn current" disabled>
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3 3 7-7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="btn-icon" title="编辑">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+            </button>
+            <button class="btn-icon" title="删除" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- W2: 运行中 · Cockpit 来源 -->
+        <div class="inst-card running">
+          <div class="inst-card-header">
+            <span class="inst-status-dot running"></span>
+            <div class="inst-card-name">工作号</div>
+            <span class="inst-source-badge">Cockpit</span>
+            <button class="icon-btn focus" title="跳转到此窗口">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </button>
+            <span class="inst-card-state running">运行中</span>
+          </div>
+          <div class="inst-card-email">work@codeium.com</div>
+          <div class="inst-card-tag"><span class="inst-tag-badge">📌 工作</span></div>
+          <div class="inst-card-actions">
+            <button class="inst-card-btn stop">
+              <svg width="11" height="11" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" fill="currentColor" rx="1"/></svg>
+              停止
+            </button>
+            <button class="btn-icon" title="编辑">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+            </button>
+            <button class="btn-icon" title="删除">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- W3: 已停止 -->
+        <div class="inst-card stopped">
+          <div class="inst-card-header">
+            <span class="inst-status-dot stopped"></span>
+            <div class="inst-card-name">测试号</div>
+            <button class="icon-btn focus" title="跳转到此窗口" style="visibility:hidden" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </button>
+            <span class="inst-card-state stopped">已停止</span>
+          </div>
+          <div class="inst-card-email">test@codeium.com</div>
+          <div class="inst-card-tag"><span class="inst-tag-badge">📌 测试</span></div>
+          <div class="inst-card-actions">
+            <button class="inst-card-btn start">
+              <svg width="11" height="11" viewBox="0 0 16 16"><polygon points="4,3 13,8 4,13" fill="currentColor"/></svg>
+              启动
+            </button>
+            <button class="btn-icon" title="编辑">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+            </button>
+            <button class="btn-icon" title="删除">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- W4: 已停止 · 未绑定 -->
+        <div class="inst-card stopped">
+          <div class="inst-card-header">
+            <span class="inst-status-dot stopped"></span>
+            <div class="inst-card-name">备份号</div>
+            <button class="icon-btn focus" title="跳转到此窗口" style="visibility:hidden" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </button>
+            <span class="inst-card-state stopped">已停止</span>
+          </div>
+          <div class="inst-card-email"><span style="opacity:0.4">未绑定账号</span></div>
+          <div class="inst-card-tag"><span class="inst-tag-none">未分配标签分组号池</span></div>
+          <div class="inst-card-actions">
+            <button class="inst-card-btn start">
+              <svg width="11" height="11" viewBox="0 0 16 16"><polygon points="4,3 13,8 4,13" fill="currentColor"/></svg>
+              启动
+            </button>
+            <button class="btn-icon" title="编辑">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+            </button>
+            <button class="btn-icon" title="删除">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="action-row" style="margin-top:4px">
+        <button class="btn-solid btn-emerald" style="flex:1;justify-content:center">+ 新建实例</button>
+        <button class="btn-solid btn-ghost-solid" style="flex:1;justify-content:center">Cockpit 导入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 外部账户提示条 + 我的账号 ═══ -->
+  <div class="panel-card">
+    <div class="panel-head" onclick="togglePanel(this)">
+      <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="panel-head-title">我的账号</span>
+      <span class="panel-head-arrow">▶</span>
+      <span class="panel-head-badge">23</span>
+      <button class="btn-solid btn-emerald" style="padding:4px 10px;font-size:10px" onclick="event.stopPropagation()">+ 添加</button>
+    </div>
+    <div class="panel-body">
+      <!-- 汇总统计 -->
       <div class="summary-stats">
         <div class="summary-stat">
           <div class="summary-stat-head">
@@ -1589,127 +1806,47 @@ html, body {
         <div class="status-row"><span class="status-row-label">活跃 / 禁用</span><span class="status-row-val">21 / 2</span></div>
         <div class="status-row"><span class="status-row-label">满额度账号</span><span class="status-row-val ok">14 个（≥ 80%）</span></div>
         <div class="status-row"><span class="status-row-label">低额度账号</span><span class="status-row-val" style="color:var(--accent-amber)">3 个（≤ 30%）</span></div>
-        <div class="status-row"><span class="status-row-label">最近刷新</span><span class="status-row-val off">12 秒前</span></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══ 多实例分身 ═══ -->
-  <div class="panel-card">
-    <div class="panel-head" onclick="togglePanel(this)">
-      <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      <span class="panel-head-title">多实例分身</span>
-      <span class="panel-head-sub">4 实例</span>
-      <span class="panel-head-arrow">▶</span>
-      <button class="btn-icon" title="Cockpit 导入" onclick="event.stopPropagation()" style="width:22px;height:22px;font-size:9px">C</button>
-      <button class="btn-icon" title="新建" onclick="event.stopPropagation()" style="width:22px;height:22px">+</button>
-    </div>
-    <div class="panel-body">
-      <div class="inst-list">
-        <div class="inst-item current">
-          <div class="inst-avatar g1">W1</div>
-          <div class="inst-meta">
-            <div class="inst-name">主窗口 <span class="status-pill ok">● 当前</span></div>
-            <div class="inst-email">primary@codeium.com</div>
-          </div>
-          <div class="inst-actions">
-            <button class="btn-icon" title="聚焦">⟲</button>
-            <button class="btn-icon" title="编辑">✎</button>
-          </div>
-        </div>
-
-        <div class="inst-item">
-          <div class="inst-avatar g2">W2</div>
-          <div class="inst-meta">
-            <div class="inst-name">工作号 <span class="status-pill info">● 运行中</span></div>
-            <div class="inst-email">work@codeium.com · 标签: 工作</div>
-          </div>
-          <div class="inst-actions">
-            <button class="btn-icon" title="聚焦">⟲</button>
-            <button class="btn-icon" title="停止">⏹</button>
-            <button class="btn-icon" title="编辑">✎</button>
-          </div>
-        </div>
-
-        <div class="inst-item">
-          <div class="inst-avatar g3">W3</div>
-          <div class="inst-meta">
-            <div class="inst-name">测试号 <span class="status-pill off">● 已停止</span></div>
-            <div class="inst-email">test@codeium.com · 标签: 测试</div>
-          </div>
-          <div class="inst-actions">
-            <button class="btn-icon" title="启动">▶</button>
-            <button class="btn-icon" title="编辑">✎</button>
-            <button class="btn-icon" title="删除">✕</button>
-          </div>
-        </div>
-
-        <div class="inst-item">
-          <div class="inst-avatar g4">W4</div>
-          <div class="inst-meta">
-            <div class="inst-name">备份号 <span class="status-pill warn">● 未绑定</span></div>
-            <div class="inst-email">— 未配置 —</div>
-          </div>
-          <div class="inst-actions">
-            <button class="btn-icon" title="启动">▶</button>
-            <button class="btn-icon" title="编辑">✎</button>
-            <button class="btn-icon" title="删除">✕</button>
-          </div>
-        </div>
+        <div class="status-row"><span class="status-row-label">最近刷新</span><span class="status-row-val off" style="display:flex;align-items:center;gap:6px">12 秒前 <button class="btn-icon" title="刷新" style="width:18px;height:18px;font-size:10px">⟳</button></span></div>
       </div>
 
-      <div class="action-row" style="margin-top:4px">
-        <button class="btn-solid btn-emerald" style="flex:1;justify-content:center">+ 新建实例</button>
-        <button class="btn-solid btn-ghost-solid" style="flex:1;justify-content:center">Cockpit 导入</button>
-      </div>
-    </div>
-  </div>
+      <div class="divider"></div>
 
-  <!-- ═══ 外部账户提示条 + 我的账号 ═══ -->
-  <div class="panel-card">
-    <div class="panel-head" onclick="togglePanel(this)">
-      <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-      <span class="panel-head-title">我的账号</span>
-      <span class="panel-head-sub">23 个</span>
-      <span class="panel-head-arrow">▶</span>
-      <button class="btn-solid btn-emerald" style="padding:4px 10px;font-size:10px" onclick="event.stopPropagation()">+ 添加</button>
-    </div>
-    <div class="panel-body">
+      <!-- 外部账户提示 -->
       <div class="external-banner">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent-amber);flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         <span class="external-banner-text">Windsurf 登录的 <strong>outsider@example.com</strong> 不在号池中</span>
         <button class="external-banner-btn">加入</button>
       </div>
 
+      <!-- Row 1: 搜索 -->
       <div class="toolbar">
-        <div class="search-box">
+        <div class="search-box" style="flex:1">
           <svg class="search-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input type="text" placeholder="搜索账号...">
         </div>
+      </div>
+
+      <!-- Row 2: 标签筛选 -->
+      <div class="tag-bar">
+        <span class="tag-chip active">全部</span>
+        <span class="tag-chip">工作</span>
+        <span class="tag-chip">测试</span>
+        <span class="tag-chip blue">备用</span>
+        <span class="tag-chip">+</span>
+      </div>
+
+      <!-- Row 3: 排序 + 工具 -->
+      <div class="toolbar">
         <select class="sel" style="font-size:10px">
           <option>⭐ 推荐</option><option>综合配额</option><option>日配额</option><option>周配额</option><option>到期日</option><option>邮箱 A-Z</option><option>添加时间</option>
         </select>
         <button class="btn-icon" title="切换排序方向">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
         </button>
-        <button class="btn-icon" title="刷新">⟳</button>
-      </div>
-
-      <div class="toolbar">
-        <button class="tag-chip active">ALL · 23</button>
         <button class="btn-icon" title="过滤" style="font-size:10px">▽</button>
         <div style="flex:1"></div>
         <select class="sel" style="font-size:10px"><option>20/页</option><option>10/页</option><option>50/页</option><option>全部</option></select>
         <button class="tag-chip">多选</button>
-      </div>
-
-      <div class="tag-bar">
-        <span class="tag-bar-label">标签:</span>
-        <span class="tag-chip active">全部</span>
-        <span class="tag-chip">工作</span>
-        <span class="tag-chip">测试</span>
-        <span class="tag-chip blue">备用</span>
-        <span class="tag-chip">+</span>
       </div>
 
       <!-- Account cards (按现有 grid-card 设计) -->
@@ -1866,6 +2003,7 @@ html, body {
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
       <span class="panel-head-title">添加账号（对话框）</span>
       <span class="panel-head-arrow">▶</span>
+
     </div>
     <div class="panel-body">
       <div class="tab-bar">
@@ -1977,6 +2115,7 @@ auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
       <span class="panel-head-title">批量进度 / 实例操作</span>
       <span class="panel-head-arrow">▶</span>
+
     </div>
     <div class="panel-body">
       <div class="lt-status">
@@ -2028,8 +2167,8 @@ auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
     <div class="panel-head" onclick="togglePanel(this)">
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
       <span class="panel-head-title">错误恢复规则详情</span>
-      <span class="panel-head-sub">4 规则</span>
       <span class="panel-head-arrow">▶</span>
+      <span class="panel-head-sub">4 规则</span>
     </div>
     <div class="panel-body">
       <div class="strip">
@@ -2153,6 +2292,7 @@ auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       <span class="panel-head-title">通用弹窗 / 编辑实例</span>
       <span class="panel-head-arrow">▶</span>
+
     </div>
     <div class="panel-body">
       <!-- Confirm dialog -->
@@ -2214,8 +2354,8 @@ auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
     <div class="panel-head" onclick="togglePanel(this)">
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
       <span class="panel-head-title">筛选下拉面板</span>
-      <span class="panel-head-sub">套餐 / 标签 / 状态</span>
       <span class="panel-head-arrow">▶</span>
+      <span class="panel-head-sub">套餐 / 标签 / 状态</span>
     </div>
     <div class="panel-body">
       <div class="modal-demo" style="padding:0;background:var(--bg-elevated)">
@@ -2259,8 +2399,8 @@ auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
     <div class="panel-head" onclick="togglePanel(this)">
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
       <span class="panel-head-title">批量操作栏</span>
-      <span class="panel-head-sub">多选模式</span>
       <span class="panel-head-arrow">▶</span>
+      <span class="panel-head-sub">多选模式</span>
     </div>
     <div class="panel-body">
       <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--radius-md);background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.25);flex-wrap:wrap">
@@ -2299,6 +2439,7 @@ auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
       <span class="panel-head-title">新建实例 / Cockpit 导入</span>
       <span class="panel-head-arrow">▶</span>
+
     </div>
     <div class="panel-body">
       <!-- 新建实例 -->
@@ -2364,8 +2505,8 @@ auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
     <div class="panel-head" onclick="togglePanel(this)">
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
       <span class="panel-head-title">自定义正则规则</span>
-      <span class="panel-head-sub">错误恢复扩展</span>
       <span class="panel-head-arrow">▶</span>
+      <span class="panel-head-sub">错误恢复扩展</span>
     </div>
     <div class="panel-body">
       <div class="opt-row">
@@ -2430,6 +2571,7 @@ auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
       <svg class="panel-head-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
       <span class="panel-head-title">空状态 / 关闭状态</span>
       <span class="panel-head-arrow">▶</span>
+
     </div>
     <div class="panel-body">
       <!-- 空号池 -->

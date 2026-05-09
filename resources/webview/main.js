@@ -5,6 +5,7 @@
   let accounts = [];
   let lastEmail = '';
   let usageCache = new Map();
+  let lastRefreshTime = 0;
   let autoSwitchEnabled = true;
   let _ltRunning = false; // 长任务是否正在运行（防止其他保存操作覆盖 continueMode）
   let autoSwitchThreshold = 10;
@@ -15,7 +16,7 @@
   let autoSwitchMinQuota = 10;
   let autoSwitchPreferUsedThreshold = 50;
   let autoSwitchPoolScope = 'all';
-  let autoSwitchPoolTag = '';
+  let autoSwitchPoolTags = [];
   let autoSwitchRefreshMin = 5;
   let autoSwitchSynced = false; // 是否已收到后端同步
   let pageSize = 20; // 每页显示数量，0=全部
@@ -24,6 +25,7 @@
   let externalAccount = ''; // Windsurf 当前登录但不在号池中的账户
   let lockedEmails = new Set(); // 被其他窗口占用的账号
   let lockedEmailsMap = {}; // email → { instanceName }
+  let perAccountStats = {}; // email → { switchToCount, dailyUsedPct, weeklyUsedPct }
 
   // ==================== 工具函数 ====================
   const _escDiv = document.createElement('div');
@@ -117,6 +119,13 @@
   const enhBubblesTheme = $('#enhBubblesTheme');
   const enhBubblesShape = $('#enhBubblesShape');
   const enhLocalizationEnabled = $('#enhLocalizationEnabled');
+  // 底部状态栏设置
+  const enhStatusBarEnabled = $('#enhStatusBarEnabled');
+  const enhStatusBarPosition = $('#enhStatusBarPosition');
+  const enhStatusBarStyle = $('#enhStatusBarStyle');
+  const enhSbShowPool = $('#enhSbShowPool');
+  const enhSbShowAutoSwitch = $('#enhSbShowAutoSwitch');
+  const enhSbShowInstance = $('#enhSbShowInstance');
   // ── 自动继续（新 UI） ──
   const enhAutoContinueEnabled = $('#enhAutoContinueEnabled');
   const acOffHint = $('#acOffHint');
@@ -444,6 +453,7 @@
       <div class="grid-card-extra">
         <div class="grid-extra-row"><span>额外用量余额</span><span class="grid-extra-val" data-field="flexCredits">${snap && snap.overageBalanceMicros !== undefined ? '$' + (snap.overageBalanceMicros / 1000000).toFixed(2) : '—'}</span></div>
         <div class="grid-extra-row"><span>会员期限</span><span class="grid-extra-val ${snap && snap.planEnd ? periodClass(snap.planEnd) : ''}" data-field="period">${snap && snap.planStart && snap.planEnd ? formatPeriodSimple(snap.planStart, snap.planEnd) : '—'}</span></div>
+        <div class="grid-extra-row"><span>今日切号</span><span class="grid-extra-val" data-field="switchCount">${perAccountStats[account.email]?.switchToCount || 0} 次</span></div>
       </div>
       <div class="grid-card-actions">
         ${isActive
@@ -514,6 +524,11 @@
     if (periodEl && snapshot.planStart && snapshot.planEnd) {
       periodEl.textContent = formatPeriodSimple(snapshot.planStart, snapshot.planEnd);
       periodEl.className = 'grid-extra-val ' + periodClass(snapshot.planEnd);
+    }
+
+    const switchEl = card.querySelector('[data-field="switchCount"]');
+    if (switchEl) {
+      switchEl.textContent = (perAccountStats[email]?.switchToCount || 0) + ' 次';
     }
 
     const errEl = card.querySelector('.grid-card-error');
@@ -724,9 +739,6 @@
     const dailyPct = hasData && max > 0 ? (dailySum / max) * 100 : 0;
     const weeklyPct = hasData && max > 0 ? (weeklySum / max) * 100 : 0;
 
-    const countEl = document.getElementById('summaryCount');
-    if (countEl) countEl.textContent = `${accounts.length} 账号`;
-
     const setStat = (prefix, sum, pct) => {
       const bar = document.getElementById(`summary${prefix}Bar`);
       const num = document.getElementById(`summary${prefix}Num`);
@@ -740,9 +752,76 @@
 
     setStat('Daily', dailySum, dailyPct);
     setStat('Weekly', weeklySum, weeklyPct);
+
+    // --- 状态行 ---
+    const activeCount = accounts.filter(a => !a.disabled).length;
+    const disabledCount = accounts.length - activeCount;
+    const adEl = document.getElementById('summaryActiveDisabled');
+    if (adEl) adEl.textContent = `${activeCount} / ${disabledCount}`;
+
+    let highQuota = 0, lowQuota = 0;
+    accounts.forEach(a => {
+      const snap = usageCache.get(a.email)?.snapshot;
+      if (snap) {
+        const dp = snap.dailyRemainingPercent || 0;
+        if (dp >= 80) highQuota++;
+        if (dp <= 30) lowQuota++;
+      }
+    });
+    const hqEl = document.getElementById('summaryHighQuota');
+    if (hqEl) hqEl.textContent = hasData ? `${highQuota} 个（≥ 80%）` : '--';
+    const lqEl = document.getElementById('summaryLowQuota');
+    if (lqEl) lqEl.textContent = hasData ? `${lowQuota} 个（≤ 30%）` : '--';
+
+    const lrEl = document.getElementById('summaryLastRefresh');
+    if (lrEl) {
+      if (lastRefreshTime) {
+        const sec = Math.round((Date.now() - lastRefreshTime) / 1000);
+        lrEl.textContent = sec < 60 ? `${sec} 秒前` : `${Math.round(sec / 60)} 分钟前`;
+      } else {
+        lrEl.textContent = '--';
+      }
+    }
   }
 
   // 已移除列表视图，仅保留卡片视图
+
+  // ==================== 用量统计 ====================
+  function updateUsageStatsUI(stats) {
+    if (!stats) return;
+    // 保存每账号统计
+    if (stats.perAccount) perAccountStats = stats.perAccount;
+
+    // 日期
+    const dateEl = document.getElementById('usageStatsDate');
+    if (dateEl) dateEl.textContent = stats.date || '';
+
+    // 四格统计数字
+    const setNum = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = val;
+    };
+    setNum('statPoolSignals', stats.totalPoolSignals || 0);
+    setNum('statSwitches', stats.totalSwitches || 0);
+    setNum('statRefreshes', stats.totalRefreshes || 0);
+    setNum('statAvgDailyUsed', (stats.avgDailyUsedPct || 0) + '%');
+
+    // 总用量条形图
+    const acctCount = stats.accountCount || 1;
+    const maxDaily = acctCount * 100;
+    const dailyPct = maxDaily > 0 ? Math.min(100, (stats.totalDailyUsed / maxDaily) * 100) : 0;
+    const weeklyPct = maxDaily > 0 ? Math.min(100, (stats.totalWeeklyUsed / maxDaily) * 100) : 0;
+
+    const dailyBar = document.getElementById('statDailyBar');
+    if (dailyBar) dailyBar.style.width = dailyPct.toFixed(1) + '%';
+    const dailyVal = document.getElementById('statDailyVal');
+    if (dailyVal) dailyVal.textContent = Math.round(stats.totalDailyUsed || 0) + '/' + maxDaily;
+
+    const weeklyBar = document.getElementById('statWeeklyBar');
+    if (weeklyBar) weeklyBar.style.width = weeklyPct.toFixed(1) + '%';
+    const weeklyVal = document.getElementById('statWeeklyVal');
+    if (weeklyVal) weeklyVal.textContent = Math.round(stats.totalWeeklyUsed || 0) + '/' + maxDaily;
+  }
 
   // ==================== 批量导入 ====================
   let batchBusy = false;
@@ -973,12 +1052,14 @@
   }
 
   function retryFailedItems(failedResults) {
-    // 从原始队列中查找失败项的密码
+    // 从原始队列中查找失败项的完整信息（含 tag、authMethod 等）
     const retryAccts = [];
     for (const r of failedResults) {
-      const original = _lastBatchQueue.find(a => a.email === r.email);
+      const original = _lastBatchQueue.find(a =>
+        a.email ? a.email === r.email : (a.token && r.email && a.token.startsWith(r.email.replace(/\.{3}$/, '')))
+      );
       if (original) {
-        retryAccts.push({ email: original.email, password: original.password });
+        retryAccts.push(Object.assign({}, original));
       }
     }
     if (retryAccts.length === 0) return;
@@ -1215,6 +1296,24 @@
         accts.push({ token: line });
         continue;
       }
+      // 智能识别: 行内包含 token（支持 email----token、email -- token | auth1=auth1_xxx 等混合格式）
+      {
+        let embeddedToken = '';
+        const auth1Match = line.match(/\bauth1[=_](auth1_[A-Za-z0-9_]+)/);
+        if (auth1Match) {
+          embeddedToken = auth1Match[1];
+        } else {
+          const devinMatch = line.match(/\b(devin-session-token\$[A-Za-z0-9._\-]+)/);
+          if (devinMatch) embeddedToken = devinMatch[1];
+        }
+        if (embeddedToken) {
+          const tokenKey = embeddedToken.substring(0, 32);
+          if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
+          seen.add(tokenKey);
+          accts.push({ token: embeddedToken });
+          continue;
+        }
+      }
       const idx = line.indexOf(delim);
       if (idx <= 0) { errors.push(`第 ${i+1} 行格式错误: ${line.substring(0,40)}`); continue; }
       const email = line.substring(0, idx).trim();
@@ -1378,29 +1477,79 @@
     el.scrollTop = el.scrollHeight;
   }
 
+  // 多标签选择器（需在 syncAutoSwitchUI 之前定义）
+  function renderTagPicker() {
+    const picker = document.getElementById('asTagPicker');
+    const optionsEl = document.getElementById('asTagOptions');
+    const selectedEl = document.getElementById('asTagSelected');
+    if (!picker || !optionsEl || !selectedEl) return;
+
+    const isTag = autoSwitchPoolScope === 'tag';
+    picker.style.display = isTag ? '' : 'none';
+    if (!isTag) return;
+
+    const allTags = getTagList();
+    const selectedSet = new Set(autoSwitchPoolTags);
+
+    // 可选标签（点击添加）
+    optionsEl.innerHTML = allTags
+      .filter(t => !selectedSet.has(t))
+      .map(t => `<span class="as-tag-opt" data-tag="${escHtml(t)}">${escHtml(t)}</span>`)
+      .join('');
+    if (allTags.length === 0) {
+      optionsEl.innerHTML = '<span style="color:var(--muted);font-size:11px">暂无标签，请先给账号添加标签</span>';
+    } else if (optionsEl.innerHTML === '') {
+      optionsEl.innerHTML = '<span style="color:var(--muted);font-size:11px">已全部选择</span>';
+    }
+
+    // 已选标签（点击移除）
+    selectedEl.innerHTML = autoSwitchPoolTags.length === 0
+      ? '<span style="color:var(--muted);font-size:11px">未选择标签，将使用全部账号</span>'
+      : autoSwitchPoolTags.map(t => `<span class="as-tag-chip" data-tag="${escHtml(t)}">${escHtml(t)} ×</span>`).join('');
+
+    // 绑定点击事件
+    optionsEl.querySelectorAll('.as-tag-opt').forEach(el => {
+      el.addEventListener('click', () => {
+        const tag = el.dataset.tag;
+        if (tag && !autoSwitchPoolTags.includes(tag)) {
+          autoSwitchPoolTags.push(tag);
+          renderTagPicker();
+          sendAutoSwitchSettings();
+        }
+      });
+    });
+    selectedEl.querySelectorAll('.as-tag-chip').forEach(el => {
+      el.addEventListener('click', () => {
+        const tag = el.dataset.tag;
+        autoSwitchPoolTags = autoSwitchPoolTags.filter(t => t !== tag);
+        renderTagPicker();
+        sendAutoSwitchSettings();
+      });
+    });
+  }
+
   function syncAutoSwitchUI() {
     if (asEnabledEl) asEnabledEl.checked = autoSwitchEnabled;
     if (asThresholdEl) asThresholdEl.value = autoSwitchThreshold;
-    const asCheckEl = document.getElementById('asCheckInterval');
     const asCooldownEl = document.getElementById('asCooldown');
-    if (asCheckEl) asCheckEl.value = autoSwitchCheckSec;
     if (asCooldownEl) asCooldownEl.value = autoSwitchCooldownSec;
+    // 刷新频率（位于 Windsurf 增强面板）
+    const enhRefCurEl = document.getElementById('enhRefreshCurrent');
+    const enhRefAllEl = document.getElementById('enhRefreshAll');
+    if (enhRefCurEl) enhRefCurEl.value = autoSwitchCheckSec;
+    if (enhRefAllEl) enhRefAllEl.value = autoSwitchRefreshMin;
     const asScoreModeEl = document.getElementById('asScoreMode');
     if (asScoreModeEl) asScoreModeEl.value = autoSwitchScoreMode;
     updateScoreModeHint();
     const asPoolScopeEl = document.getElementById('asPoolScope');
-    const asPoolTagEl = document.getElementById('asPoolTag');
     if (asPoolScopeEl) asPoolScopeEl.value = autoSwitchPoolScope;
-    if (asPoolTagEl) {
-      populateTagSelect(asPoolTagEl, autoSwitchPoolTag);
-      asPoolTagEl.style.display = autoSwitchPoolScope === 'tag' ? '' : 'none';
-    }
+    renderTagPicker();
   }
 
   const SCORE_MODE_HINTS = {
-    min: '取 min(日配额, 周配额) 作为评分，任一配额低于阈值即触发切号。',
-    daily: '以日配额作为评分，日配额低于阈值即触发切号。注意：若任一配额 ≤ 额度下限仍会强制切号。',
-    weekly: '以周配额作为评分，周配额低于阈值即触发切号。注意：若任一配额 ≤ 额度下限仍会强制切号。',
+    min: '取日/周配额中较低者评分（推荐）。例：日100% 周0% → 评分0%，自动切号。',
+    daily: '仅看日配额评分。安全兜底：周配额 ≤ 额度下限时仍会强制切号。',
+    weekly: '仅看周配额评分。安全兜底：日配额 ≤ 额度下限时仍会强制切号。',
   };
   function updateScoreModeHint() {
     const el = document.getElementById('asHint');
@@ -1591,6 +1740,7 @@
         const { email, snapshot, error } = msg;
         if (!email) break;
         usageCache.set(email, { snapshot: snapshot || null, error, ts: Date.now() });
+        lastRefreshTime = Date.now();
         persistState();
         const card = accountGrid?.querySelector(`[data-email="${cssEscape(email)}"]`);
         if (card && snapshot) {
@@ -1654,13 +1804,18 @@
         autoSwitchMinQuota = msg.minQuota ?? 10;
         autoSwitchPreferUsedThreshold = msg.preferUsedThreshold ?? 50;
         autoSwitchPoolScope = msg.poolScope || 'all';
-        autoSwitchPoolTag = msg.poolTag || '';
+        autoSwitchPoolTags = msg.poolTags || [];
         autoSwitchRefreshMin = msg.refreshMin || 5;
         autoSwitchSynced = true;
         syncAutoSwitchUI();
         syncStrategyUI();
         const asDetailsSync = document.getElementById('asDetails');
         if (asDetailsSync) { if (autoSwitchEnabled) asDetailsSync.setAttribute('open', ''); else asDetailsSync.removeAttribute('open'); }
+        break;
+      }
+
+      case 'usageStatsSync': {
+        updateUsageStatsUI(msg);
         break;
       }
 
@@ -1845,30 +2000,29 @@
     if (!availableModelsList) return;
     const currentPriority = getModelPriorityFromDOM();
     availableModelsList.style.display = 'flex';
+    availableModelsList.style.flexDirection = 'column';
     availableModelsList.innerHTML = '';
     models.forEach(name => {
-      const chip = document.createElement('span');
+      const row = document.createElement('div');
       const isSelected = currentPriority.some(p => name.toLowerCase().includes(p.toLowerCase()) || p.toLowerCase().includes(name.toLowerCase()));
-      chip.className = 'available-model-chip' + (isSelected ? ' selected' : '');
-      chip.innerHTML = '<span class="chip-check">' + (isSelected ? '✓' : '+') + '</span>' + name;
-      chip.addEventListener('click', () => {
-        if (chip.classList.contains('selected')) {
-          // 从优先级列表移除
-          chip.classList.remove('selected');
-          chip.querySelector('.chip-check').textContent = '+';
+      row.className = 'available-model-row' + (isSelected ? ' selected' : '');
+      row.innerHTML = '<span class="amr-check">' + (isSelected ? '✓' : '') + '</span><span class="amr-name">' + escHtml(name) + '</span>';
+      row.addEventListener('click', () => {
+        if (row.classList.contains('selected')) {
+          row.classList.remove('selected');
+          row.querySelector('.amr-check').textContent = '';
           const items = getModelPriorityFromDOM().filter(m => !name.toLowerCase().includes(m.toLowerCase()) && !m.toLowerCase().includes(name.toLowerCase()));
           renderModelPriority(items);
         } else {
-          // 添加到优先级列表
-          chip.classList.add('selected');
-          chip.querySelector('.chip-check').textContent = '✓';
+          row.classList.add('selected');
+          row.querySelector('.amr-check').textContent = '✓';
           const items = getModelPriorityFromDOM();
           items.push(name);
           renderModelPriority(items);
         }
         saveEnhanceSettings();
       });
-      availableModelsList.appendChild(chip);
+      availableModelsList.appendChild(row);
     });
   }
 
@@ -2094,6 +2248,15 @@
       if (enhBubblesShape) enhBubblesShape.value = s.bubblesShape || 'rounded';
       if (enhLocalizationEnabled) enhLocalizationEnabled.checked = s.localizationEnabled !== false;
 
+      // 底部状态栏
+      const sb = s.statusBar || {};
+      if (enhStatusBarEnabled) enhStatusBarEnabled.checked = sb.enabled !== false;
+      if (enhStatusBarPosition) enhStatusBarPosition.value = sb.position || 'right';
+      if (enhStatusBarStyle) enhStatusBarStyle.value = sb.style || 'labeled';
+      if (enhSbShowPool) enhSbShowPool.checked = sb.showPool !== false;
+      if (enhSbShowAutoSwitch) enhSbShowAutoSwitch.checked = sb.showAutoSwitch !== false;
+      if (enhSbShowInstance) enhSbShowInstance.checked = sb.showInstance !== false;
+
       // 自动继续：新 UI
       const acEnabled = s.autoContinueEnabled !== undefined ? s.autoContinueEnabled : true;
       if (enhAutoContinueEnabled) enhAutoContinueEnabled.checked = acEnabled;
@@ -2174,11 +2337,9 @@
       const cb = document.getElementById(tag.dataset.target);
       if (cb) tag.classList.toggle('is-on', cb.checked);
     });
-    // Strategy cards
-    document.querySelectorAll('.v2-strategy[data-value]').forEach(card => {
-      const radio = card.parentElement.querySelector('input[type="radio"][value="' + card.dataset.value + '"]');
-      if (radio) card.classList.toggle('is-active', radio.checked);
-    });
+    // Strategy select (已从卡片改为下拉)
+    const stratSel = document.getElementById('asSwitchStrategy');
+    if (stratSel && window.autoSwitchStrategy) stratSel.value = window.autoSwitchStrategy;
   }
 
   // 启动时向后端拉取真相源；失败则回退到本地缓存
@@ -2224,6 +2385,14 @@
       bubblesTheme: enhBubblesTheme ? enhBubblesTheme.value : 'emerald',
       bubblesShape: enhBubblesShape ? enhBubblesShape.value : 'rounded',
       localizationEnabled: enhLocalizationEnabled ? enhLocalizationEnabled.checked : true,
+      statusBar: {
+        enabled: enhStatusBarEnabled ? enhStatusBarEnabled.checked : true,
+        position: enhStatusBarPosition ? enhStatusBarPosition.value : 'right',
+        style: enhStatusBarStyle ? enhStatusBarStyle.value : 'labeled',
+        showPool: enhSbShowPool ? enhSbShowPool.checked : true,
+        showAutoSwitch: enhSbShowAutoSwitch ? enhSbShowAutoSwitch.checked : true,
+        showInstance: enhSbShowInstance ? enhSbShowInstance.checked : true,
+      },
       continueMode,
       autoContinueEnabled: acEnabled,
       autoContinueTab: acTab,
@@ -2276,31 +2445,7 @@
       if (enhCustomToneRow) enhCustomToneRow.style.display = (updated.notifyTone === 'custom') ? 'flex' : 'none';
       if (enhAudioFileRow) enhAudioFileRow.style.display = (updated.notifyTone === 'file') ? 'flex' : 'none';
       updateBubblePreview();
-      showEnhReloadBanner();
     } catch {}
-  }
-
-  // 显示"设置已实时应用"提示条（banner）
-  // 自从 v4.20.0 起，扩展宿主通过 HTTP 桥实时推送 apply-settings 命令给 windsurf-better.js，
-  // 无需 reload window 即可生效；保留 banner 作为反馈，附"重启窗口"小链接以备万一
-  let _enhBannerTimer = null;
-  function showEnhReloadBanner() {
-    let banner = document.getElementById('enhReloadBanner');
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'enhReloadBanner';
-      banner.style.cssText = 'position:sticky;top:0;z-index:50;padding:6px 10px;margin:6px 0;background:linear-gradient(90deg,#10b981,#06b6d4);color:#fff;border-radius:6px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;box-shadow:0 2px 6px rgba(0,0,0,.15);';
-      banner.innerHTML = '<span>✓ 设置已实时应用</span><button id="enhReloadBtn" title="如有异常可重启窗口" style="background:rgba(255,255,255,.18);border:none;color:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;opacity:0.85;">重启窗口</button>';
-      const host = document.getElementById('enhanceArea')
-        || document.querySelector('.enhance-card')
-        || document.body;
-      host.insertBefore(banner, host.firstChild);
-      const btn = banner.querySelector('#enhReloadBtn');
-      if (btn) btn.addEventListener('click', () => { try { vscode.postMessage({ type: 'runCommand', command: 'workbench.action.reloadWindow' }); } catch {} });
-    }
-    banner.style.display = 'flex';
-    if (_enhBannerTimer) clearTimeout(_enhBannerTimer);
-    _enhBannerTimer = setTimeout(() => { banner.style.display = 'none'; }, 3500);
   }
 
   // 气泡预览：主题和形状数据（与 windsurf-better.js 保持一致）
@@ -2374,7 +2519,6 @@
     if (isCurrent) {
       primaryBtn = `<button class="inst-card-btn current" disabled title="正是当前窗口，无需操作">
          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3 3 7-7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-         当前窗口
        </button>`;
     } else if (inst.running) {
       primaryBtn = `<button class="inst-card-btn stop" data-inst-action="stop" title="停止">
@@ -2424,10 +2568,10 @@
           <div class="inst-card-header">
             <span class="inst-status-dot ${statusClass}" title="${stateText}"></span>
             <div class="inst-card-name">${escHtml(inst.name)}</div>${sourceBadge}
-            ${focusBtn}<span class="inst-card-state">${stateText}</span>
+            ${focusBtn}<span class="inst-card-state ${statusClass}">${stateText}</span>
           </div>
-          <div class="inst-card-email" title="${escHtml(inst.bindEmail || '')}">${inst.bindEmail ? escHtml(inst.bindEmail) : '<span style="opacity:0.4">未绑定账号</span>'}</div>
-          <div class="inst-card-tag">${inst.assignedTag ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">📌 ' + escHtml(inst.assignedTag) + '</span>' : '<span class="inst-tag-none" data-inst-action="viewTag" style="opacity:0.4;cursor:pointer">未分配标签分组号池</span>'}</div>
+          <div class="inst-card-email" title="${escHtml(inst.bindEmail === '__auto__' ? (inst.currentEmail || '智能选号') : (inst.bindEmail || ''))}">${inst.bindEmail === '__auto__' ? '<span style="color:var(--ac-emerald)">⭐ 智能选号</span>' + (inst.currentEmail ? ' <span style="opacity:0.75">· 当前 ' + escHtml(inst.currentEmail) + '</span>' : ' <span style="opacity:0.5">· 尚未启动</span>') : inst.bindEmail ? escHtml(inst.bindEmail) : '<span style="opacity:0.4">未绑定账号</span>'}</div>
+          <div class="inst-card-tag">${inst.assignedTag ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">📌 ' + escHtml(inst.assignedTag) + '</span>' : '<span class="inst-tag-none" data-inst-action="viewTag">未分配号池分组</span>'}</div>
           <div class="inst-card-actions">
             ${primaryBtn}
             <button class="icon-btn" data-inst-action="edit" title="编辑">
@@ -2462,17 +2606,17 @@
           }
         }
         const stateEl = card.querySelector('.inst-card-state');
-        if (stateEl) stateEl.textContent = stateText;
+        if (stateEl) { stateEl.className = 'inst-card-state ' + statusClass; stateEl.textContent = stateText; }
         const emailEl = card.querySelector('.inst-card-email');
         if (emailEl) {
-          emailEl.title = inst.bindEmail || '';
-          emailEl.innerHTML = inst.bindEmail ? escHtml(inst.bindEmail) : '<span style="opacity:0.4">未绑定账号</span>';
+          emailEl.title = inst.bindEmail === '__auto__' ? (inst.currentEmail || '智能选号') : (inst.bindEmail || '');
+          emailEl.innerHTML = inst.bindEmail === '__auto__' ? '<span style="color:var(--ac-emerald)">⭐ 智能选号</span>' + (inst.currentEmail ? ' <span style="opacity:0.75">· 当前 ' + escHtml(inst.currentEmail) + '</span>' : ' <span style="opacity:0.5">· 尚未启动</span>') : inst.bindEmail ? escHtml(inst.bindEmail) : '<span style="opacity:0.4">未绑定账号</span>';
         }
         const tagEl = card.querySelector('.inst-card-tag');
         if (tagEl) {
           tagEl.innerHTML = inst.assignedTag
             ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">📌 ' + escHtml(inst.assignedTag) + '</span>'
-            : '<span class="inst-tag-none" data-inst-action="viewTag" style="opacity:0.4;cursor:pointer">未分配标签分组号池</span>';
+            : '<span class="inst-tag-none" data-inst-action="viewTag">未分配号池分组</span>';
         }
         const actionsEl = card.querySelector('.inst-card-actions');
         if (actionsEl) {
@@ -2600,7 +2744,11 @@
     const list = document.createElement('div');
     list.className = 'ap-list ap-list-portal';
     list.hidden = true;
-    list.innerHTML = accounts.map(a =>
+    const autoOptHtml = `<div class="ap-item ap-item-auto" data-email="__auto__">
+      <div class="ap-email" style="display:flex;align-items:center;gap:5px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> 智能选号（推荐）</div>
+      <div class="ap-usage"><span class="ap-stat" style="color:var(--ac-emerald)">自动用余额最多的账号，用完自动换下一个</span></div>
+    </div>`;
+    list.innerHTML = autoOptHtml + accounts.map(a =>
       `<div class="ap-item" data-email="${escHtml(a.email)}">${renderAccountItemContent(a)}</div>`
     ).join('');
 
@@ -2626,9 +2774,13 @@
 
     function selectEmail(email) {
       el.dataset.value = email;
-      const acc = accounts.find(a => a.email === email);
       const content = trigger.querySelector('.ap-trigger-content');
-      if (content) content.innerHTML = renderAccountItemContent(acc);
+      if (email === '__auto__') {
+        if (content) content.innerHTML = `<div class="ap-email" style="display:flex;align-items:center;gap:5px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> 智能选号（推荐）</div><div class="ap-usage"><span class="ap-stat" style="color:var(--ac-emerald)">自动用余额最多的账号，用完自动换下一个</span></div>`;
+      } else {
+        const acc = accounts.find(a => a.email === email);
+        if (content) content.innerHTML = renderAccountItemContent(acc);
+      }
       list.hidden = true;
       list.querySelectorAll('.ap-item').forEach(it => {
         it.classList.toggle('selected', it.getAttribute('data-email') === email);
@@ -2670,9 +2822,11 @@
     document.body.appendChild(list);
 
     // 默认选中
-    const initialEmail = (selectedEmail && accounts.some(a => a.email === selectedEmail))
-      ? selectedEmail
-      : accounts[0].email;
+    const initialEmail = selectedEmail === '__auto__'
+      ? '__auto__'
+      : (selectedEmail && accounts.some(a => a.email === selectedEmail))
+        ? selectedEmail
+        : accounts[0].email;
     selectEmail(initialEmail);
   }
 
@@ -2685,10 +2839,12 @@
     const overlay = document.getElementById('instCreateOverlay');
     const nameInput = document.getElementById('instCreateName');
     const accountEl = document.getElementById('instCreateAccount');
+    const tagSelect = document.getElementById('instCreateTag');
     const errorEl = document.getElementById('instCreateError');
     if (!overlay) return;
 
-    renderAccountPicker(accountEl, lastEmail);
+    renderAccountPicker(accountEl, '__auto__');
+    populateTagSelect(tagSelect, '');
     if (nameInput) nameInput.value = getNextInstanceName();
     if (errorEl) errorEl.hidden = true;
     overlay.hidden = false;
@@ -2714,8 +2870,10 @@
       return;
     }
 
+    const tagSelect = document.getElementById('instCreateTag');
+    const assignedTag = tagSelect?.value || '';
     if (overlay) overlay.hidden = true;
-    postMsg('instanceCreate', { instanceName: name, email });
+    postMsg('instanceCreate', { instanceName: name, email, assignedTag });
   }
 
   // 自定义确认对话框（webview 不支持原生 confirm）
@@ -2767,7 +2925,7 @@
     const errorEl = document.getElementById('instEditError');
     if (!overlay) return;
 
-    renderAccountPicker(accountEl, inst.bindEmail);
+    renderAccountPicker(accountEl, '__auto__');
     populateTagSelect(tagSelect, inst.assignedTag || '');
     if (nameInput) nameInput.value = inst.name;
     if (errorEl) errorEl.hidden = true;
@@ -3011,6 +3169,7 @@
         selectModeBtn.classList.toggle('is-active', selectMode);
         selectModeBtn.textContent = selectMode ? '退出多选' : '多选';
         if (batchBar) batchBar.hidden = !selectMode;
+        if (accountGrid) accountGrid.classList.toggle('is-select-mode', selectMode);
         if (!selectMode) selectedEmails.clear();
         renderCards();
       });
@@ -3071,6 +3230,7 @@
         postMsg('batchDelete', { emails: [...selectedEmails] });
         selectedEmails.clear();
         if (batchBar) batchBar.hidden = true;
+        if (accountGrid) accountGrid.classList.remove('is-select-mode');
         selectMode = false;
         if (selectModeBtn) {
           selectModeBtn.classList.remove('is-active');
@@ -3114,6 +3274,7 @@
         selectMode = false;
         selectedEmails.clear();
         if (batchBar) batchBar.hidden = true;
+        if (accountGrid) accountGrid.classList.remove('is-select-mode');
         if (selectModeBtn) {
           selectModeBtn.classList.remove('is-active');
           selectModeBtn.textContent = '多选';
@@ -3277,7 +3438,7 @@
         minQuota: autoSwitchMinQuota,
         preferUsedThreshold: autoSwitchPreferUsedThreshold,
         poolScope: autoSwitchPoolScope,
-        poolTag: autoSwitchPoolTag,
+        poolTags: autoSwitchPoolTags,
       });
     }
     if (asEnabledEl) {
@@ -3295,11 +3456,20 @@
         sendAutoSwitchSettings();
       });
     }
-    const asCheckIntervalEl = document.getElementById('asCheckInterval');
-    if (asCheckIntervalEl) {
-      asCheckIntervalEl.addEventListener('change', () => {
-        autoSwitchCheckSec = Math.max(10, parseInt(asCheckIntervalEl.value) || 60);
-        asCheckIntervalEl.value = autoSwitchCheckSec;
+    // 刷新频率（位于 Windsurf 增强面板 → 底部状态栏下方）
+    const enhRefreshCurrentEl = document.getElementById('enhRefreshCurrent');
+    if (enhRefreshCurrentEl) {
+      enhRefreshCurrentEl.addEventListener('change', () => {
+        autoSwitchCheckSec = Math.max(3, parseInt(enhRefreshCurrentEl.value) || 5);
+        enhRefreshCurrentEl.value = autoSwitchCheckSec;
+        sendAutoSwitchSettings();
+      });
+    }
+    const enhRefreshAllEl = document.getElementById('enhRefreshAll');
+    if (enhRefreshAllEl) {
+      enhRefreshAllEl.addEventListener('change', () => {
+        autoSwitchRefreshMin = Math.max(1, parseInt(enhRefreshAllEl.value) || 5);
+        enhRefreshAllEl.value = autoSwitchRefreshMin;
         sendAutoSwitchSettings();
       });
     }
@@ -3322,42 +3492,55 @@
 
     // 切号范围
     const asPoolScopeSelectEl = document.getElementById('asPoolScope');
-    const asPoolTagSelectEl = document.getElementById('asPoolTag');
     if (asPoolScopeSelectEl) {
       asPoolScopeSelectEl.addEventListener('change', () => {
         autoSwitchPoolScope = asPoolScopeSelectEl.value || 'all';
-        if (asPoolTagSelectEl) {
-          asPoolTagSelectEl.style.display = autoSwitchPoolScope === 'tag' ? '' : 'none';
-          if (autoSwitchPoolScope === 'tag') populateTagSelect(asPoolTagSelectEl, autoSwitchPoolTag);
-        }
-        sendAutoSwitchSettings();
-      });
-    }
-    if (asPoolTagSelectEl) {
-      asPoolTagSelectEl.addEventListener('change', () => {
-        autoSwitchPoolTag = asPoolTagSelectEl.value || '';
+        renderTagPicker();
         sendAutoSwitchSettings();
       });
     }
 
     // 切号策略配置
+    const STRATEGY_HINTS = {
+      highestFirst: '优先选额度最充足的号切入，保证可用时间最长',
+      lowestNonZero: '优先消耗快用完的号，节省满额度号留作备用',
+    };
+    function updateStrategyHint() {
+      const el = document.getElementById('asStrategyHint');
+      if (el) el.textContent = STRATEGY_HINTS[autoSwitchStrategy] || '';
+      updatePreferUsedVisibility();
+    }
+    function updatePreferUsedVisibility() {
+      const cell = document.getElementById('asPreferUsedCell');
+      const hint = document.getElementById('asThresholdHint');
+      const isLowest = autoSwitchStrategy === 'lowestNonZero';
+      if (cell) {
+        cell.style.opacity = isLowest ? '1' : '0.35';
+        cell.style.pointerEvents = isLowest ? '' : 'none';
+      }
+      if (hint) {
+        hint.textContent = isLowest
+          ? '额度下限：低于此值的号视为废号，不会被选中。已用阈值：低于此值的号视为"正在用"，优先消耗完再换新号。'
+          : '额度下限：日/周任一配额低于此值的号视为废号，不会被选中。';
+      }
+    }
     function syncStrategyUI() {
-      const radios = document.querySelectorAll('input[name="asSwitchStrategy"]');
-      radios.forEach(r => { r.checked = r.value === autoSwitchStrategy; });
+      const sel = document.getElementById('asSwitchStrategy');
+      if (sel) sel.value = autoSwitchStrategy;
       const minQuotaEl = document.getElementById('asMinQuota');
       const prefUsedEl = document.getElementById('asPreferUsedThreshold');
       if (minQuotaEl) minQuotaEl.value = autoSwitchMinQuota;
       if (prefUsedEl) prefUsedEl.value = autoSwitchPreferUsedThreshold;
-      // V2: 同步策略卡片视觉状态
-      if (typeof syncV2VisualState === 'function') syncV2VisualState();
+      updateStrategyHint();
     }
-    const strategyRadios = document.querySelectorAll('input[name="asSwitchStrategy"]');
-    strategyRadios.forEach(r => {
-      r.addEventListener('change', () => {
-        autoSwitchStrategy = r.value;
+    const strategySelect = document.getElementById('asSwitchStrategy');
+    if (strategySelect) {
+      strategySelect.addEventListener('change', () => {
+        autoSwitchStrategy = strategySelect.value;
+        updateStrategyHint();
         sendAutoSwitchSettings();
       });
-    });
+    }
     const asMinQuotaEl = document.getElementById('asMinQuota');
     if (asMinQuotaEl) {
       asMinQuotaEl.addEventListener('change', () => {
@@ -3576,6 +3759,7 @@
     // ── 守护面板 + 长任务面板的所有勾选/输入 ──
     const enhSettingsEls = [
       enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled,
+      enhStatusBarEnabled, enhStatusBarPosition, enhStatusBarStyle, enhSbShowPool, enhSbShowAutoSwitch, enhSbShowInstance,
       // 守护模式
       enhGdAutoContinueBtn, enhGdAutoRetry, enhGdAutoSendOnToolLimit,
       enhGdApproveWeb, enhGdApproveTerminal, enhGdApproveFile, enhGdDismissCorrupt,
@@ -3902,17 +4086,8 @@
       });
     });
 
-    // V2 Strategy: 点击时同步隐藏 radio
-    window.v2SelectStrategy = function(el) {
-      const parent = el.parentElement;
-      parent.querySelectorAll('.v2-strategy').forEach(s => s.classList.remove('is-active'));
-      el.classList.add('is-active');
-      const val = el.dataset.value;
-      if (val) {
-        const radio = parent.querySelector('input[type="radio"][value="' + val + '"]');
-        if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change', {bubbles:true})); }
-      }
-    };
+    // V2 Strategy: 兼容旧版（已改为 select）
+    window.v2SelectStrategy = function() {};
 
     // 初始加载后延迟拉配额
     setTimeout(() => {

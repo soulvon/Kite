@@ -4,7 +4,7 @@
  */
 (function () {
 	'use strict';
-	const VERSION = '1.3.0';
+	const VERSION = '1.4.0';
 	const LOG_PREFIX = '[WS-Better]';
 
 	// ========== Trusted Types 兼容（Windsurf 新版启用了 require-trusted-types-for 'script'） ==========
@@ -54,6 +54,7 @@
 		continueMode: 'smart',  // 'smart' | 'brainless' | 'off'
 		continueText: 'continue',  // 自动发送的文本（两种模式共享）
 		dismissCorruptEnabled: true,
+		autoSwitchEnabled: true,
 		autoSwitchOnQuota: true,
 		autoSwitchOnRateLimit: true,
 		// 无脑模式参数
@@ -2066,7 +2067,9 @@
 			if (typeof isInCooldown === 'function' && isInCooldown()) return;
 			// 自身 5s 冷却，避免短时间内被 MutationObserver 反复触发
 			if (Date.now() - _autoContinueLastFireTs < 5000) return;
-			const btns = document.querySelectorAll('button, [role="button"]');
+			// 限定在聊天根内查找，避免误点侧栏内的同名按钮
+			const scope = findChatRoot() || document;
+			const btns = scope.querySelectorAll('button, [role="button"]');
 			for (const btn of btns) {
 				const txt = (btn.textContent || '').trim();
 				if (txt === 'Continue response' || txt === '继续回复') {
@@ -2497,7 +2500,9 @@
 	}
 
 	function findRetryButton() {
-		const btns = document.querySelectorAll('button, [role="button"]');
+		// 限定在聊天根内查找，避免误点侧栏/其他面板的同名重试按钮
+		const scope = findChatRoot() || document;
+		const btns = scope.querySelectorAll('button, [role="button"]');
 		for (const btn of btns) {
 			const txt = (btn.textContent || '').trim().toLowerCase();
 			if ((txt === 'retry' || txt === '重试' || txt === 'try again' || txt === '再试一次') && isVisibleAndClickable(btn)) return btn;
@@ -2544,24 +2549,35 @@
 		// 优先查找 .error-message 类的元素
 		for (const sel of ERROR_BUBBLE_SEL) {
 			const els = scanRoot.querySelectorAll(sel);
-			if (els.length > 0) {
-				const last = els[els.length - 1];
-				const text = getElementErrorText(last);
+			// 从后往前找第一个"合法"的错误元素（排除 AI 消息内嵌、我们自己的 toast 等）
+			for (let i = els.length - 1; i >= 0; i--) {
+				const el = els[i];
+				if (el.closest(ASSISTANT_MSG_SEL)) continue;
+				if (el.closest(USER_MSG_SEL)) continue;
+				if (el.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
+				if (el.closest('.monaco-editor,pre,code')) continue;
+				const text = getElementErrorText(el);
 				if (text && text.length > 5 && text.length < 1000) {
 					latestError = text;
-					latestErrorEl = last;
+					latestErrorEl = el;
 					break;
 				}
 			}
+			if (latestError) break;
 		}
 
 		// 文本内容匹配：从最后几条消息中反向扫描，匹配 ERROR_PATTERNS
+		// 注意：排除 AI 回复 / 用户消息 / 代码编辑器（这些是"内容"，不是"错误 UI"）
 		if (!latestError) {
 			const msgEls = scanRoot.querySelectorAll('span, p, [class*="message"], [role="status"], [role="alert"]');
 			for (let i = msgEls.length - 1; i >= 0 && i > msgEls.length - 30; i--) {
 				const el = msgEls[i];
 				if (el.children.length > 5) continue; // 跳过大容器
 				if (el.dataset && el.dataset._wsRecoveryHandled) continue;
+				// 排除 AI/用户消息体、代码块、可编辑输入
+				if (el.closest(ASSISTANT_MSG_SEL)) continue;
+				if (el.closest(USER_MSG_SEL)) continue;
+				if (el.closest('.monaco-editor,pre,code,textarea,input,[contenteditable="true"]')) continue;
 				const t = getElementErrorText(el);
 				if (t.length < 10 || t.length > 500) continue;
 				for (const ep of ERROR_PATTERNS) {
@@ -2578,29 +2594,44 @@
 		// 注意：不再扫描正常 AI 回复（之前的"备选"逻辑会把正常回复误判为错误，导致死循环）
 
 		// 最终兜底：扫描整个 document.body 查找额度关键词（banner 可能在 chat root 之外）
+		// 注意：必须严格限定在"错误 UI 容器"内，否则会把 AI 聊天消息、代码、文档误判为错误
 		if (!latestError) {
 			const QUOTA_KW_RE = /quota.*exhausted|usage.*limit.*reached|额度.*耗尽|monthly acu limit|rate limit exceeded|upgrade to a Pro|over their global rate limit|reached.*(?:message|rate)\s*limit|速率限制|配额.*(?:用完|耗尽|不足)/i;
-			const allText = document.body.querySelectorAll('span, p, div');
-			for (let i = allText.length - 1; i >= 0; i--) {
-				const el = allText[i];
-				if (el.children.length > 2) continue; // 跳过容器元素，只看叶子
-				if (el.dataset && el.dataset._wsRecoveryHandled) continue; // 已处理过，跳过
-				const t = (el.textContent || '').trim();
-				if (t.length > 10 && t.length < 300 && QUOTA_KW_RE.test(t)) {
-					// 用 getElementErrorText 拼接 data-ws-orig 原文，让英文正则也能命中
-					latestError = getElementErrorText(el) || t;
-					latestErrorEl = el;
-					// 注意：不在此处标记 _wsRecoveryHandled，由 checkForErrors 统一标记
-					break;
-				}
+			// 只在明确的错误 UI 容器内查找（banner/alert/notification/error），避免命中聊天内容
+			const ERROR_CONTAINER_SEL = '[role="alert"],[role="status"],[class*="banner" i],[class*="notification" i],[class*="alert" i],[class*="error" i],[class*="warning" i],[class*="toast" i]';
+			const errorContainers = document.body.querySelectorAll(ERROR_CONTAINER_SEL);
+			for (let i = errorContainers.length - 1; i >= 0; i--) {
+				const container = errorContainers[i];
+				// 排除 AI 聊天消息 / 用户消息 / 代码编辑器 / 我们自己的 toast
+				if (container.closest(ASSISTANT_MSG_SEL)) continue;
+				if (container.closest(USER_MSG_SEL)) continue;
+				if (container.closest('.monaco-editor,pre,code,textarea,input,[contenteditable="true"]')) continue;
+				if (container.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
+				// 检查容器文本是否匹配额度关键词
+				if (container.dataset && container.dataset._wsRecoveryHandled) continue;
+				const t = (container.textContent || '').trim();
+				if (t.length < 10 || t.length > 500) continue;
+				if (!QUOTA_KW_RE.test(t)) continue;
+				// 匹配成功
+				latestError = getElementErrorText(container) || t;
+				latestErrorEl = container;
+				break;
 			}
 		}
 		
 		return { text: latestError, el: latestErrorEl };
 	}
 
-	function sendPoolSignal(type, lastMessage) {
-		const signal = { type, ts: Date.now(), lastMessage: lastMessage || lastUserMessage };
+	function sendPoolSignal(type, lastMessage, opts) {
+		opts = opts || {};
+		// 测试按钮 (opts.force=true) 强制绕过总开关
+		if (settings.autoSwitchEnabled === false && !opts.force) {
+			console.log(LOG_PREFIX + '[trigger] sendPoolSignal 被拦截: 自动切号已关闭 (type=' + type + ')');
+			return;
+		}
+		const signal = { type, ts: Date.now(), lastMessage: lastMessage || lastUserMessage, force: !!opts.force };
+		const caller = new Error().stack ? new Error().stack.split('\n').slice(1, 4).map(function(l){return l.trim();}).join(' <- ') : 'unknown';
+		console.log(LOG_PREFIX + '[trigger] sendPoolSignal: type=' + type + ', caller=' + caller);
 		console.log(LOG_PREFIX + '[Recovery] 发送切号信号: ' + type);
 		showRecoveryNotification('正在请求切换账号...');
 		// 优先走 HTTP 桥（跨 origin 唯一可靠通道）
@@ -2616,6 +2647,7 @@
 		}
 		if (!sentViaBridge) {
 			// 兜底：本地 localStorage（极少数情况下增强未启用桥时使用）
+			console.log(LOG_PREFIX + '[trigger] sendPoolSignal 回退localStorage路径');
 			localStorage.setItem('ws-pool-signal', JSON.stringify(signal));
 		}
 		setTimeout(() => checkPoolTimeout(signal.ts), 8000);
@@ -2646,6 +2678,7 @@
 			lastPoolResultTs = result.ts;
 
 			if (result.type === 'switched') {
+				console.log(LOG_PREFIX + '[trigger] 收到切号结果: switched, email=' + (result.email || '?'));
 				console.log(LOG_PREFIX + '[Recovery] 切号成功，等待 session 生效后重试...');
 				showRecoveryNotification('切号成功，正在重试...');
 				recoveryRetryCount = 0;
@@ -2743,7 +2776,7 @@
 		}
 		// 重置样式
 		toast.style.cssText = [
-			'position:fixed', 'top:48px', 'right:20px',
+			'position:fixed', 'top:120px', 'right:20px',
 			'max-width:360px', 'min-width:180px',
 			'background:' + c.bg,
 			'color:#e6edf3',
@@ -2860,11 +2893,18 @@
 
 		// 防抖：同一错误冷却期内不重复处理
 		const now = Date.now();
-		if (now - lastRecoveryTs < _recoveryCooldownMs) return;
+		if (now - lastRecoveryTs < _recoveryCooldownMs) {
+			console.log(LOG_PREFIX + '[trigger] checkForErrors 跳过: 冷却中 (' + Math.round((_recoveryCooldownMs - (now - lastRecoveryTs)) / 1000) + 's剩余), error=' + errorText.substring(0, 80));
+			return;
+		}
 
 		// 指纹去重：如果当前错误和上次触发切号的错误一样，跳过（避免 DOM 残留反复触发）
 		const fp = makeErrorFingerprint(errorText);
-		if (fp && fp === _lastSwitchFingerprint && now - _lastSwitchTs < 60000) return;
+		if (fp && fp === _lastSwitchFingerprint && now - _lastSwitchTs < 60000) {
+			console.log(LOG_PREFIX + '[trigger] checkForErrors 跳过: 指纹相同且未超过60s (switchAge=' + Math.round((now - _lastSwitchTs) / 1000) + 's)');
+			return;
+		}
+		console.log(LOG_PREFIX + '[trigger] checkForErrors 检测到错误: ' + errorText.substring(0, 120) + ' | fp=' + fp + ' | lastSwitchFp=' + _lastSwitchFingerprint + ' | cooldown=' + _recoveryCooldownMs + 'ms | sinceLastRecovery=' + (now - lastRecoveryTs) + 'ms');
 
 		// 优先匹配自定义规则
 		const customRule = matchCustomRule(errorText);
@@ -2893,6 +2933,12 @@
 				if (settings.guardian && settings.guardian.autoRetry === false) return;
 				handleRetryAction(rule, errorText, now, category);
 			} else if (action === 'switch-account') {
+				if (settings.autoSwitchEnabled === false) {
+					console.log(LOG_PREFIX + '[trigger] checkForErrors: 自动切号已关闭，switch-account 降级为 notify (category=' + category + ')');
+					showRecoveryNotification(ep.hint || errorText.substring(0, 80));
+					recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'notify', result: 'autoSwitch-off-fallback' });
+					return;
+				}
 				handleSwitchAccountAction(rule, ep, errorText, now, category);
 			} else if (action === 'switch-model') {
 				handleSwitchModelAction(rule, ep, errorText, now, category);
@@ -2914,6 +2960,12 @@
 		if (action === 'retry') {
 			handleRetryAction(rule, errorText, now, 'custom');
 		} else if (action === 'switch-account') {
+			if (settings.autoSwitchEnabled === false) {
+				console.log(LOG_PREFIX + '[trigger] executeRuleAction: 自动切号已关闭，switch-account 降级为 notify (rule=' + (rule.name || 'custom') + ')');
+				showRecoveryNotification(rule.hint || errorText.substring(0, 80));
+				recordRecoveryLog({ category: 'custom', error: errorText.substring(0, 200), action: 'notify', result: 'autoSwitch-off-fallback' });
+				return;
+			}
 			handleSwitchAccountAction(rule, rule, errorText, now, 'custom');
 		} else if (action === 'switch-model') {
 			handleSwitchModelAction(rule, rule, errorText, now, 'custom');
@@ -3010,7 +3062,13 @@
 	}
 
 	// ── 统一发送 continue 辅助函数（防重复 + 按钮提交） ──
+	// 注意：test-send-continue 不走这里（直接调 setInputText/trySendMessage 以绕过总开关）
 	async function sendContinueMessage(customText) {
+		// 总开关：关闭自动继续时，任何路径都不发送（切号后、工具上限、无脑模式、守护面板均生效）
+		if (settings.continueMode === 'off') {
+			console.log(LOG_PREFIX + '[trigger] sendContinueMessage 被拦截: 自动继续已关闭 (continueMode=off)');
+			return false;
+		}
 		const cooldown = (settings.sendCooldown && settings.sendCooldown > 0) ? settings.sendCooldown : 10000;
 		if (Date.now() - _lastContinueTs < cooldown) return false;
 		const text = customText || (settings.continueText && String(settings.continueText).trim()) || 'continue';
@@ -3077,6 +3135,11 @@
 		for (const el of recent) {
 			// 跳过已处理的元素
 			if (el.dataset && el.dataset._wsContHandled) continue;
+			// 排除 AI/用户消息体、代码编辑器、我们自己的 toast（同 getLatestErrorText 保持一致）
+			if (el.closest(ASSISTANT_MSG_SEL)) continue;
+			if (el.closest(USER_MSG_SEL)) continue;
+			if (el.closest('.monaco-editor,pre,code,textarea,input,[contenteditable="true"]')) continue;
+			if (el.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
 			// 用 getElementErrorText 拿原文 + 可见文，让英文 pattern 在汉化后仍生效
 			const txt = getElementErrorText(el);
 			if (!txt || txt.length > 1000) continue;
@@ -3094,11 +3157,14 @@
 	}
 
 	let _lastPermApprovalTs = 0;
-	function checkForPermissionApproval() {
-		// 守护面板「自动批准权限」总开关
-		if (settings.guardian && settings.guardian.autoApprovePermission === false) return;
-		const rule = getRuleForCategory('permissionRequests');
-		if (!rule || rule.action !== 'auto-allow') return;
+	function checkForPermissionApproval(opts) {
+		opts = opts || {};
+		const rule = getRuleForCategory('permissionRequests') || {};
+		// 守护面板「自动批准权限」总开关（测试按钮 force=true 时绕过）
+		if (!opts.force) {
+			if (settings.guardian && settings.guardian.autoApprovePermission === false) return;
+			if (rule.action !== 'auto-allow') return;
+		}
 		// 3s 冷却，避免重复点击
 		if (Date.now() - _lastPermApprovalTs < 3000) return;
 		// guardian.permissionScope 优先，回退到 rule.scope
@@ -3502,33 +3568,22 @@
 		console.log(LOG_PREFIX + '[Notify] ✅完成提醒已启用');
 	}
 
-	function isGenerating() {
-		// 检测是否正在生成：查找 stop 按钮、加载动画等
-		const stopSelectors = [
-			'button[aria-label="Stop"]',
-			'button[aria-label="停止"]',
-			'button[data-testid="stop-button"]',
-			'.stop-button',
-		];
-		for (const sel of stopSelectors) {
-			if (document.querySelector(sel)) return true;
-		}
-		// 检测加载指示器
-		const loaders = document.querySelectorAll('[class*="loading"], [class*="spinner"], [class*="generating"]');
-		for (const l of loaders) {
-			const r = l.getBoundingClientRect();
-			if (r.width > 0 && r.height > 0) return true;
-		}
-		return false;
-	}
+	// 完成提醒直接复用长任务的 isAIGenerating()（lucide-circle-stop + thumbs-up 计数）
+	// 不再维护独立的检测函数，保持一致性
 
 	function checkCompletion() {
 		if (!settings.notifyEnabled) return;
-		const generating = isGenerating();
-		
+		const generating = isAIGenerating();
+
+		// 状态跳变日志（只在跳变时打印，避免刷屏）
+		if (generating !== _wasGenerating) {
+			console.log(LOG_PREFIX + '[Notify] 状态跳变: ' + _wasGenerating + ' → ' + generating);
+		}
+
 		if (_wasGenerating && !generating) {
 			// 刚刚从生成状态变为非生成状态 → 完成
 			const shouldNotify = shouldTriggerNotify();
+			console.log(LOG_PREFIX + '[Notify] 检测到完成，shouldTrigger=' + shouldNotify + '，trigger=' + (settings.notifyTrigger || 'always') + '，sound=' + !!settings.notifySound + '，desktop=' + !!settings.notifyDesktop);
 			if (shouldNotify) {
 				console.log(LOG_PREFIX + '[Notify] AI 回复完成，触发提醒');
 				// 通过 localStorage 信号通知扩展后端播放系统声音
@@ -3576,17 +3631,37 @@
 	}
 	
 	// ========== 桥（Bridge HTTP Client）==========
-	// 替代旧的 localStorage 跨 origin 通信（不工作）。扩展宿主起 localhost HTTP server
-	// 端口和 token 通过 __WS_BETTER_INJECTED_SETTINGS__.__bridgePort/__bridgeToken 传入
+	// 替代旧的 localStorage 跨 origin 通信（不工作）。扩展宿主起 localhost HTTP server。
+	// 多实例关键：workbench.html 是全部实例共享的单一文件，不能注入单一端口。
+	// 端口/token 改由同进程 sidebar webview iframe 通过 window.postMessage 推送：
+	//   { type: 'ws-pool-bridge', port, token }
+	// 这样"sidebar iframe ↔ workbench 顶层 frame"天然与进程绑定，不会跨实例串号。
+	let _bridgeInfo = null;
+	try {
+		window.addEventListener('message', (e) => {
+			const d = e && e.data;
+			if (!d || d.type !== 'ws-pool-bridge') return;
+			const port = Number(d.port);
+			const token = String(d.token || '');
+			if (!port || !token) return;
+			const changed = !_bridgeInfo || _bridgeInfo.port !== port || _bridgeInfo.token !== token;
+			_bridgeInfo = { port, token };
+			if (changed) {
+				console.log(LOG_PREFIX + '[bridge] received from sidebar: port=' + port);
+				// 端口变化 → 清掉旧轮询计时器再重启
+				if (_bridgePollTimer) { clearInterval(_bridgePollTimer); _bridgePollTimer = null; }
+				startBridgePolling();
+			}
+		});
+	} catch (e) { console.warn(LOG_PREFIX + '[bridge] message listener failed:', e); }
 	function getBridgeUrl() {
-		const port = settings.__bridgePort;
-		if (!port) return null;
-		return 'http://127.0.0.1:' + port;
+		if (!_bridgeInfo || !_bridgeInfo.port) return null;
+		return 'http://127.0.0.1:' + _bridgeInfo.port;
 	}
 	function getBridgeHeaders() {
 		return {
 			'Content-Type': 'application/json',
-			'X-Bridge-Token': settings.__bridgeToken || '',
+			'X-Bridge-Token': (_bridgeInfo && _bridgeInfo.token) || '',
 		};
 	}
 	async function bridgePostResult(payload) {
@@ -3699,6 +3774,7 @@
 				try {
 					if (cmd.payload) {
 						localStorage.setItem('ws-pool-result', JSON.stringify(cmd.payload));
+						console.log(LOG_PREFIX + '[trigger] bridge收到pool-result: type=' + cmd.payload.type + (cmd.payload.email ? ' email=' + cmd.payload.email : '') + (cmd.payload.error ? ' error=' + cmd.payload.error : ''));
 						console.log(LOG_PREFIX + '[Recovery] 收到 bridge 切号结果: ' + cmd.payload.type);
 					}
 				} catch {}
@@ -3775,14 +3851,15 @@
 				break;
 			}
 			case 'test-switch-account': {
-				respond({ status: 'running', message: '正在发送切号信号...' });
-				sendPoolSignal('quota-exhausted', lastUserMessage);
+				respond({ status: 'running', message: '正在发送切号信号（强制测试模式）...' });
+				sendPoolSignal('quota-exhausted', lastUserMessage, { force: true });
 				respond({ status: 'done', message: '切号信号已发送（等待 pool 响应）' });
 				break;
 			}
 			case 'test-permission': {
-				checkForPermissionApproval();
-				respond({ status: 'done', message: '权限检测已执行' });
+				// 测试按钮强制绕过总开关
+				checkForPermissionApproval({ force: true });
+				respond({ status: 'done', message: '权限检测已执行（强制测试模式）' });
 				break;
 			}
 			case 'get-current-model': {
@@ -3804,7 +3881,9 @@
 		startBridgePolling();
 		if (settings.continueMode === 'smart') startAutoContinue();
 		if (settings.autoRecoveryEnabled) startAutoRecovery();
+		console.log(LOG_PREFIX + '[Notify] init: notifyEnabled=' + settings.notifyEnabled + ', sound=' + settings.notifySound + ', desktop=' + settings.notifyDesktop + ', trigger=' + settings.notifyTrigger + ', tone=' + settings.notifyTone);
 		if (settings.notifyEnabled) startNotifyObserver();
+		else console.log(LOG_PREFIX + '[Notify] ⚠️ notifyEnabled=false，未启动观察器');
 		// brainless 模式不在 init 自动启动——必须由用户显式点击「开始运行」触发
 		// 重启后 continueMode 应为 'smart'，不会走到 brainless 分支
 		if (settings.continueMode === 'brainless') {

@@ -140,12 +140,27 @@ export function applyI18nOnly(): boolean {
  * 通过已补丁注册的 windsurf.provideAuthTokenToAuthProviderWithShit 命令，
  * 直接传入 {apiKey, name, apiServerUrl}，跳过 registerUser 调用。
  */
+// ── 全局切号计数器（用于快速判断是否在频繁切号）──
+let _switchSeqNo = 0;
+let _switchTimestamps: number[] = [];  // 最近 N 次切号时间
+
 export async function injectSession(
   context: vscode.ExtensionContext,
   account: StoredAccount,
   options?: { silent?: boolean }
 ): Promise<boolean> {
   const silent = options?.silent ?? false;
+  const seqNo = ++_switchSeqNo;
+  const t0 = Date.now();
+  const caller = new Error().stack?.split('\n').slice(2, 5).map(l => l.trim()).join(' <- ') || 'unknown';
+  console.log(`[injectSession][#${seqNo}] ▶ 入口: email=${account.email}, silent=${silent}, caller=${caller}`);
+
+  // 频率检测：记录时间戳，检测 60s 内是否超过 5 次
+  _switchTimestamps.push(t0);
+  _switchTimestamps = _switchTimestamps.filter(ts => t0 - ts < 60_000);
+  if (_switchTimestamps.length > 5) {
+    console.warn(`[injectSession][#${seqNo}] ⚠ 60s 内已触发 ${_switchTimestamps.length} 次切号！可能存在循环切号`);
+  }
 
   // 先确认补丁命令是否已注册（等待 Windsurf 内置扩展激活）
   // silent 模式（启动自动切号）等更久，因为 Windsurf 扩展可能还在加载
@@ -154,10 +169,15 @@ export async function injectSession(
   for (let attempt = 0; attempt < maxWait; attempt++) {
     const allCmds = await vscode.commands.getCommands(true);
     if (allCmds.includes(PATCHED_CMD)) { cmdReady = true; break; }
+    if (attempt === 0) {
+      console.log(`[injectSession][#${seqNo}] 等待补丁命令就绪 (maxWait=${maxWait}s)...`);
+    }
     await new Promise(r => setTimeout(r, 1000));
   }
 
   if (!cmdReady) {
+    const waitMs = Date.now() - t0;
+    console.warn(`[injectSession][#${seqNo}] ✗ 补丁命令未就绪 (等了 ${waitMs}ms), Windsurf 可能还没启动好`);
     // 命令不存在 — 检查文件是否已打补丁
     const targetPath = getWindsurfExtensionJsPath();
     let alreadyPatched = false;
@@ -218,21 +238,27 @@ export async function injectSession(
     return false;
   }
 
+  const readyMs = Date.now() - t0;
+  console.log(`[injectSession][#${seqNo}] 命令就绪 (${readyMs}ms), 执行切号 → ${account.email}`);
   try {
     const result: any = await vscode.commands.executeCommand(PATCHED_CMD, {
       apiKey: account.apiKey,
       name: account.name || account.email.split('@')[0],
-      apiServerUrl: account.apiServerUrl
+      apiServerUrl: account.apiServerUrl,
+      email: account.email
     });
 
+    const totalMs = Date.now() - t0;
     if (result && result.error) {
-      console.error('Session injection error:', result.error);
+      console.error(`[injectSession][#${seqNo}] ✗ 命令返回错误 (${totalMs}ms):`, result.error);
       return false;
     }
 
+    console.log(`[injectSession][#${seqNo}] ✓ 切号成功 → ${account.email} (${totalMs}ms)`);
     return true;
   } catch (err) {
-    console.error('Session injection failed:', err);
+    const totalMs = Date.now() - t0;
+    console.error(`[injectSession][#${seqNo}] ✗ 切号异常 (${totalMs}ms):`, err);
     vscode.window.showWarningMessage('切换失败：' + (err instanceof Error ? err.message : String(err)));
     return false;
   }
@@ -282,13 +308,35 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
         const r = injectExportCmd(content);
         if (r.changed) { content = r.content; exportAdded = true; }
       }
-      if (i18nResult.changed || exportAdded) {
+
+      // 升级旧补丁：如果 handleAuthTokenWithShit 没有 lastLoginEmail 持久化，则内联注入
+      let persistAdded = false;
+      if (!content.includes('lastLoginEmail')) {
+        const upgradeRe = new RegExp(
+          `(${PATCHED_METHOD}\\((\\w)\\)\\{const\\{apiKey:\\w,name:\\w\\}=\\2,\\w=\\(0,\\w\\.getApiServerUrl\\)\\(\\2\\.apiServerUrl\\);)`
+        );
+        const um = content.match(upgradeRe);
+        if (um) {
+          const paramName = um[2];
+          const persistBlock =
+            `try{const _em=${paramName}.email||${paramName}.name||"";` +
+            `this.context.globalState.update("lastLoginEmail",_em);` +
+            `this.context.globalState.update("lastLoginEmail.staging",_em);` +
+            `this.context.secrets.store("windsurf_auth.apiServerUrl",(0,${content.match(/\(0,(\w+)\.getApiServerUrl\)/)?.[1] || 'H'}.getApiServerUrl)(${paramName}.apiServerUrl));` +
+            `}catch(_){}`;
+          content = content.replace(um[0], um[0] + persistBlock);
+          persistAdded = true;
+        }
+      }
+
+      if (i18nResult.changed || exportAdded || persistAdded) {
         const backupPath = targetPath + '.backup_' + Date.now();
         copyFileWithElevation(targetPath, backupPath);
         writeFileWithElevation(targetPath, content, 'utf8');
         const parts: string[] = [];
         if (i18nResult.changed) parts.push('已更新欢迎语汉化');
         if (exportAdded) parts.push('已添加当前账户导出命令');
+        if (persistAdded) parts.push('已添加登录状态持久化');
         vscode.window.showInformationMessage('补丁已存在，' + parts.join('、') + '（重启后生效）');
       } else {
         vscode.window.showInformationMessage('补丁已存在，无需重复应用');
@@ -337,7 +385,12 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
     // 头部仅包含解构和 url 计算，不重复 if 检查（在 originalBodyTail 中已有）
     const patchedMethodHead = `async ${PATCHED_METHOD}(${paramA}){` +
       `const{apiKey:${varT},name:${varI}}=${paramA},` +
-      `${varN}=(0,${modH}.getApiServerUrl)(${paramA}.apiServerUrl);`;
+      `${varN}=(0,${modH}.getApiServerUrl)(${paramA}.apiServerUrl);` +
+      `try{const _em=${paramA}.email||${varI}||"";` +
+      `this.context.globalState.update("lastLoginEmail",_em);` +
+      `this.context.globalState.update("lastLoginEmail.staging",_em);` +
+      `this.context.secrets.store("windsurf_auth.apiServerUrl",${varN});` +
+      `}catch(_){}`;
 
     const fullPatchedMethod = patchedMethodHead + originalBodyTail;
 

@@ -170,9 +170,8 @@ function getPatchVersion(): string {
 /**
  * 计算设置对象的稳定哈希（用于检测设置变化）
  * 递归对所有层级的 object key 排序，保证嵌套结构（如 recoveryRules）也稳定
- * 注意：__bridgePort / __bridgeToken 等运行时字段也参与 hash，因为这些值变化时
- * 必须重写 workbench.html 让新 port 嵌入。preferredPort 复用机制保证正常情况
- * 下端口稳定，hash 不会无故变化。
+ * 注意：bridge 端口/token 不再写入 enh-settings.json（见 bridgeServer.ts），
+ * workbench.html 只因真正的用户设置变化才重写，避免多实例互踢触发无谓提权。
  */
 function hashSettings(settings: Record<string, any>): string {
   try {

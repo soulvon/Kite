@@ -4,8 +4,10 @@ import * as fs from 'fs';
 import { SidebarProvider } from './sidebarProvider';
 import { applyPatch, applyI18nOnly } from './sessionInjector';
 import * as accountStore from './accountStore';
-import { readBindMark, getCurrentUserDataDir, getCurrentInstanceName } from './instanceManager';
+import { readBindMark, getCurrentUserDataDir, getCurrentInstanceName, migrateAllInstancesToAuto } from './instanceManager';
 import { AutoSwitcher } from './autoSwitcher';
+import { initDiskCache } from './usageDiskCache';
+import { StatusBarManager } from './statusBar';
 import { checkForUpdates, autoCheckOnStartup } from './updater';
 import { ensureEnhancement, restoreWorkbench } from './enhancementInjector';
 import { ensureBubbleRules, injectBubbleRules, removeBubbleRules, hasBubbleRules } from './rulesInjector';
@@ -15,11 +17,17 @@ import { initAccountLock, acquireLock, releaseLock, startHeartbeat, stopHeartbea
 import { mergeEnhSettings, readEnhSettings } from './enhSettingsStore';
 import { isWindows, isMac, isWritable } from './utils';
 import { beginElevatedBatch, flushElevatedBatch, cancelElevatedBatch, ElevationError } from './elevatedFs';
+import { UsageTracker } from './usageTracker';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
+let statusBar: StatusBarManager;
+let usageTracker: UsageTracker;
 
 export function activate(context: vscode.ExtensionContext) {
+  // v6.0.3 一次性迁移：将所有实例统一改为智能选号（旧策略余额追踪不准）
+  try { migrateAllInstancesToAuto(); } catch (e) { console.warn('[migrate] 失败:', e); }
+
   // 多实例：检测绑定标记并自动切号
   autoSwitchByBindMark(context);
 
@@ -29,10 +37,22 @@ export function activate(context: vscode.ExtensionContext) {
   // 静默应用汉化（不影响扩展启动）
   applyI18nOnly();
 
+  // 初始化跨窗口共享的额度文件缓存（必须在 AutoSwitcher 创建前）
+  initDiskCache(context);
+
+  // 用量统计追踪器（必须在 AutoSwitcher 和 SidebarProvider 之前创建）
+  usageTracker = new UsageTracker(context);
+  context.subscriptions.push(usageTracker);
+
   // 创建后端自动切号引擎
-  autoSwitcher = new AutoSwitcher(context);
+  autoSwitcher = new AutoSwitcher(context, usageTracker);
   context.subscriptions.push(autoSwitcher);
   autoSwitcher.start();
+
+  // 底部状态栏（独立于侧栏面板，启动即显示）
+  statusBar = new StatusBarManager(context, autoSwitcher);
+  context.subscriptions.push(statusBar);
+  statusBar.update();
 
   // 跨窗口账号锁：初始化并锁定当前账号
   initAccountLock(`pid-${process.pid}`, getCurrentInstanceName());
@@ -47,7 +67,7 @@ export function activate(context: vscode.ExtensionContext) {
   checkInstallPermission(context);
 
   // 创建侧栏提供器
-  sidebarProvider = new SidebarProvider(context.extensionUri, context, autoSwitcher);
+  sidebarProvider = new SidebarProvider(context.extensionUri, context, autoSwitcher, usageTracker);
 
   // 注册侧栏视图
   const sidebarView = vscode.window.registerWebviewViewProvider(
@@ -102,6 +122,7 @@ export function activate(context: vscode.ExtensionContext) {
       const email = selected.label;
       const account = accounts.find((a: any) => a.email === email);
       if (account) {
+        console.log(`[switch][trigger] 手动切号(命令面板 switchAccount): → ${email}`);
         const { injectSession } = await import('./sessionInjector');
         const success = await injectSession(context, account);
         if (success) {
@@ -129,6 +150,7 @@ export function activate(context: vscode.ExtensionContext) {
     const nextAccount = accounts[nextIndex];
 
     // 切换到下一个账号
+    console.log(`[switch][trigger] 手动切号(命令面板 switchNext): ${currentEmail} → ${nextAccount.email}`);
     const { injectSession } = await import('./sessionInjector');
     const success = await injectSession(context, nextAccount);
     if (success) {
@@ -196,28 +218,16 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(checkUpdatesCmd);
 
   // [Bridge] 启动跨 origin 桥（HTTP localhost）—— 仅当增强已启用时才启动
-  // 关键：复用上次的 port/token，使 windsurf-better.js 用上次嵌入值连接也能成功
-  // （否则每次 Windsurf 启动都要 reload 才能用桥功能）
+  // 多实例隔离：每个扩展宿主进程起独立 bridge，端口/token 由 sidebar webview iframe
+  // 通过 window.top.postMessage 告知同进程 workbench renderer，天然按进程隔离。
   const _enhEnabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
   if (_enhEnabled) {
-    const _lastSettings = readEnhSettings();
-    const lastBridge: { preferredPort?: number; preferredToken?: string } = {
-      preferredPort: typeof _lastSettings.__bridgePort === 'number' ? _lastSettings.__bridgePort : undefined,
-      preferredToken: typeof _lastSettings.__bridgeToken === 'string' ? _lastSettings.__bridgeToken : undefined,
-    };
-    startBridgeServer(lastBridge).then(info => {
-      // 端口或 token 变化才更新 enh-settings，避免每次启动都触发 hash 变化
-      if (info.port !== lastBridge.preferredPort || info.token !== lastBridge.preferredToken) {
-        try {
-          mergeEnhSettings({ __bridgePort: info.port, __bridgeToken: info.token });
-          ensureEnhancement();
-          // bridge 回调在 flush 之后异步执行，workbench.html 已直接写入磁盘，
-          // 必须同步修复 checksums 否则下次启动校验失败
-          autoFixChecksums();
-        } catch (err) {
-          console.warn('[windsurf-pool] bridge inject failed:', err);
-        }
-      }
+    // 多实例隔离：每个扩展宿主起自己的 bridge（OS 分配端口 + 随机 token）。
+    // 端口/token 不再写入 enh-settings.json，改由 sidebar webview 的 HTML 内联
+    // 后通过 window.top.postMessage 告知同进程的 workbench renderer。
+    startBridgeServer().then(info => {
+      console.log(`[windsurf-pool] bridge ready at 127.0.0.1:${info.port}`);
+      try { sidebarProvider?.refreshBridgeInfo?.(); } catch {}
     }).catch(err => {
       console.warn('[windsurf-pool] bridge server failed to start:', err);
     });
@@ -402,7 +412,12 @@ async function autoSwitchByBindMark(context: vscode.ExtensionContext) {
   try {
     const currentDir = getCurrentUserDataDir();
     const bindEmail = readBindMark(currentDir);
-    if (!bindEmail) { return; }
+    // bind mark 优先；'__auto__' 表示自动模式，回退 lastEmail（重启后恢复号池 session）
+    const targetEmail = (bindEmail && bindEmail !== '__auto__')
+      ? bindEmail
+      : (context.globalState.get<string>('lastEmail') || '');
+    console.log(`[autoSwitch][trigger] autoSwitchByBindMark: currentDir=${currentDir}, bindEmail=${bindEmail || 'none'}, targetEmail=${targetEmail || 'none'}`);
+    if (!targetEmail) { return; }
     // 轮询等待账号存储就绪（最多 5 秒）
     const maxRetries = 10;
     const retryInterval = 500;
@@ -410,20 +425,27 @@ async function autoSwitchByBindMark(context: vscode.ExtensionContext) {
 
     for (let i = 0; i < maxRetries; i++) {
       const accounts = await accountStore.readAccounts(context);
-      account = accounts.find(a => a.email === bindEmail);
+      account = accounts.find(a => a.email === targetEmail);
       if (account) break;
       await new Promise(r => setTimeout(r, retryInterval));
     }
 
-    if (!account) return;
+    if (!account) {
+      console.log(`[autoSwitch][trigger] autoSwitchByBindMark: 未找到账号 ${targetEmail}，跳过`);
+      return;
+    }
 
+    console.log(`[autoSwitch][trigger] autoSwitchByBindMark: 执行切号 → ${targetEmail}`);
     const { injectSession } = await import('./sessionInjector');
     const success = await injectSession(context, account, { silent: true });
     if (success) {
-      await accountStore.setCurrentAccount(context, bindEmail);
+      console.log(`[autoSwitch][trigger] autoSwitchByBindMark: 切号成功 → ${targetEmail}`);
+      await accountStore.setCurrentAccount(context, targetEmail);
+    } else {
+      console.warn(`[autoSwitch][trigger] autoSwitchByBindMark: 切号失败 → ${targetEmail}`);
     }
-  } catch {
-    /* ignore */
+  } catch (err) {
+    console.error(`[autoSwitch][trigger] autoSwitchByBindMark 异常:`, err);
   }
 }
 

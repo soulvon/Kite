@@ -5,6 +5,7 @@ import * as crypto from 'crypto';
 import * as os from 'os';
 import { getPoolRoot, getAppDataDir, ensureDir, isWindows, isMac } from './utils';
 import { CACHE_TTL } from './config';
+import { getInstanceEmailMap } from './accountLock';
 
 // ─── 类型 ───────────────────────────────────────────────
 
@@ -20,6 +21,7 @@ export interface InstanceConfig {
   lastPid?: number;
   source?: InstanceSource;  // 默认 local，cockpit 表示引用 Cockpit Tools 目录
   assignedTag?: string;     // 分配的账号标签（切号范围）
+  currentEmail?: string;    // 自动切号模式下当前实际登录的账号（仅展示用）
 }
 
 export interface InstanceView extends InstanceConfig {
@@ -29,6 +31,8 @@ export interface InstanceView extends InstanceConfig {
 
 interface InstanceStore {
   instances: InstanceConfig[];
+  // 一次性迁移标记：v6.0.3 起所有实例统一改为智能选号（旧策略余额追踪不准）
+  migratedToAutoV6_0_3?: boolean;
 }
 
 // ─── 常量 ───────────────────────────────────────────────
@@ -76,7 +80,10 @@ function loadStore(forceFresh = false): InstanceStore {
   try {
     const raw = fs.readFileSync(p, 'utf8');
     const parsed = JSON.parse(raw);
-    _storeCache = { instances: Array.isArray(parsed.instances) ? parsed.instances : [] };
+    _storeCache = {
+      instances: Array.isArray(parsed.instances) ? parsed.instances : [],
+      migratedToAutoV6_0_3: parsed.migratedToAutoV6_0_3 === true,
+    };
     _storeCacheTs = now;
     return _storeCache;
   } catch {
@@ -156,10 +163,14 @@ export async function listInstances(): Promise<InstanceView[]> {
 
   const runningDirs = await getRunningInstanceDirs();
   const currentDir = normalizePath(getCurrentUserDataDir());
+  // 通过跨窗口锁实时查询：每个实例当前实际登录的账号（自动选号模式下用于展示）
+  const lockMap = getInstanceEmailMap();
   return store.instances.map(inst => {
     const normDir = normalizePath(inst.userDataDir);
+    const liveEmail = lockMap[inst.id];
     return {
       ...inst,
+      currentEmail: liveEmail || inst.currentEmail,
       running: runningDirs.has(normDir),
       current: normDir === currentDir
     };
@@ -187,13 +198,47 @@ function ensureDefaultInstance(store: InstanceStore): void {
   saveStore(store);
 }
 
+/**
+ * 一次性迁移：v6.0.3 起所有实例统一改为智能选号。
+ * 旧版本按余额绑定具体账号的策略追踪不准，统一切到 __auto__ 由号池实时挑选。
+ * 已运行过的环境通过 migratedToAutoV6_0_3 标记跳过。
+ */
+export function migrateAllInstancesToAuto(): void {
+  const store = loadStore(true);
+  if (store.migratedToAutoV6_0_3) return;
+  let changed = false;
+  for (const inst of store.instances) {
+    if (inst.bindEmail !== '__auto__') {
+      inst.bindEmail = '__auto__';
+      inst.bindAccountId = '__auto__';
+      inst.currentEmail = undefined;
+      changed = true;
+      // 同步 .windsurf-pool-bind 标记文件
+      try {
+        const bindPath = path.join(inst.userDataDir, BIND_FILE);
+        if (fs.existsSync(inst.userDataDir)) {
+          fs.writeFileSync(bindPath, JSON.stringify({ bindEmail: '__auto__' }), 'utf8');
+        }
+      } catch (e) {
+        console.warn('[instanceManager] migrate write bind file failed:', e);
+      }
+    }
+  }
+  store.migratedToAutoV6_0_3 = true;
+  saveStore(store);
+  if (changed) {
+    console.log('[instanceManager] 已将所有实例迁移为智能选号（v6.0.3 一次性迁移）');
+  }
+}
+
 /** 将当前窗口的活跃账号同步到 instances.json（供其他窗口读取） */
 export function syncCurrentInstanceEmail(email: string): void {
   if (!email) return;
   const store = loadStore();
   const currentDir = normalizePath(getCurrentUserDataDir());
   const inst = store.instances.find(i => normalizePath(i.userDataDir) === currentDir);
-  if (inst && inst.bindEmail !== email) {
+  // __auto__ 表示自动切号模式，不覆盖（实际账号通过 accountLock 实时查询）
+  if (inst && inst.bindEmail !== email && inst.bindEmail !== '__auto__') {
     inst.bindEmail = email;
     inst.bindAccountId = email;
     saveStore(store);
@@ -298,6 +343,10 @@ export function updateInstanceBind(instanceId: string, bindEmail: string): void 
   if (!inst) { throw new Error('实例不存在'); }
   inst.bindAccountId = bindEmail;
   inst.bindEmail = bindEmail;
+  // 切换绑定后清理 currentEmail 展示缓存（重新启动后由 syncCurrentInstanceEmail 写入）
+  if (bindEmail !== '__auto__') {
+    inst.currentEmail = undefined;
+  }
   // 更新标记文件
   const bindPath = path.join(inst.userDataDir, BIND_FILE);
   fs.writeFileSync(bindPath, JSON.stringify({ bindEmail }), 'utf8');

@@ -239,3 +239,20 @@ export function stopHeartbeat(): void {
 export function getCurrentLockedEmail(): string | null {
   return _currentLockedEmail;
 }
+
+/**
+ * 获取所有存活窗口的 instanceId → email 映射（包含当前窗口）
+ * 用于在实例列表中展示"自动选号模式"实例当前实际登录的账号
+ */
+export function getInstanceEmailMap(): Record<string, string> {
+  const data = readLockFile();
+  const cleaned = cleanStaleLocks(data);
+  if (cleaned) {
+    try { writeLockFile(data); } catch { /* ignore */ }
+  }
+  const map: Record<string, string> = {};
+  for (const [email, entry] of Object.entries(data.locks)) {
+    if (entry.instanceId) map[entry.instanceId] = email;
+  }
+  return map;
+}

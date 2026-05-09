@@ -42,11 +42,12 @@ export function getBridgeInfo(): BridgeInfo | null {
   return { port, token };
 }
 
-export function startBridgeServer(opts?: { preferredPort?: number; preferredToken?: string }): Promise<BridgeInfo> {
+export function startBridgeServer(): Promise<BridgeInfo> {
   return new Promise((resolve, reject) => {
     if (server && port) return resolve({ port, token });
-    // 复用上次的 token 也很重要：workbench 嵌入的旧 token 这次仍要被校验通过
-    token = (opts && opts.preferredToken) || crypto.randomBytes(16).toString('hex');
+    // 多实例隔离：每次启动都用新 token + OS 分配端口，端口/token 通过 sidebar
+    // webview postMessage 广播到同进程的 workbench，不再靠 workbench.html 嵌入。
+    token = crypto.randomBytes(16).toString('hex');
     server = http.createServer((req, res) => {
       // CORS for vscode-file:// origin
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -97,7 +98,6 @@ export function startBridgeServer(opts?: { preferredPort?: number; preferredToke
       res.writeHead(404); res.end('not found');
     });
 
-    let triedFallback = false;
     let resolved = false;
 
     const onListening = () => {
@@ -105,8 +105,7 @@ export function startBridgeServer(opts?: { preferredPort?: number; preferredToke
       if (addr && typeof addr === 'object') {
         port = addr.port;
         resolved = true;
-        const reused = !triedFallback && opts && opts.preferredPort === port;
-        console.log(`[bridge] listening on 127.0.0.1:${port}${reused ? ' (reused)' : ''}`);
+        console.log(`[bridge] listening on 127.0.0.1:${port}`);
         resolve({ port, token });
       } else {
         reject(new Error('failed to get server address'));
@@ -116,23 +115,14 @@ export function startBridgeServer(opts?: { preferredPort?: number; preferredToke
     server.on('listening', onListening);
     server.on('error', err => {
       if (resolved) return;
-      // 端口被占 → fallback 到 OS 分配（仅当指定了首选端口且未尝试过 fallback）
-      if ((err as any).code === 'EADDRINUSE' && !triedFallback && opts && opts.preferredPort) {
-        triedFallback = true;
-        console.warn(`[bridge] preferred port ${opts.preferredPort} busy, falling back to OS-assigned`);
-        // 直接 listen(0)，复用同一个 server 实例（监听器仍生效）
-        try { server!.listen(0, '127.0.0.1'); } catch (e) { reject(e); }
-        return;
-      }
       console.error('[bridge] server error:', err);
       server = null;
       port = 0;
       reject(err);
     });
 
-    // 优先用上次的端口（windsurf-better.js 已嵌入此值）；不行则 OS 分配
-    const tryPort = (opts && opts.preferredPort) || 0;
-    server.listen(tryPort, '127.0.0.1');
+    // OS 分配端口；多实例各自独立，端口/token 经 sidebar postMessage 告知 workbench
+    server.listen(0, '127.0.0.1');
   });
 }
 
