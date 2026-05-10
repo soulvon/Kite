@@ -434,7 +434,7 @@ guardian: {
 recovery: {
   maxRetries: 3,               // 网络错误最大重试次数
   baseDelay: 3000,             // 重试基础延迟（ms）
-  modelPriority: ['claude-3.5-sonnet', 'gpt-4o', 'claude-3-haiku'],
+  modelPriority: ['Claude Opus 4.6 Thinking', 'Claude Opus 4.7', 'GPT-5.5'],
 },
 
 // ═══════ 发送机制参数 ═══════

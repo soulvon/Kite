@@ -72,7 +72,7 @@
 		recoveryRules: {
 			networkErrors:      { action: 'retry', maxRetries: 3, delay: 3000 },
 			quotaErrors:        { action: 'switch-account', afterAction: 'auto' },
-			modelErrors:        { action: 'switch-model', afterAction: 'send-continue', modelPriority: ['claude-3.5-sonnet', 'gpt-4o', 'claude-3-haiku'] },
+			modelErrors:        { action: 'switch-model', afterAction: 'send-continue', modelPriority: ['Claude Opus 4.6 Thinking', 'Claude Opus 4.7', 'GPT-5.5'] },
 			continuationErrors: { action: 'send-continue' },
 			permissionRequests: { action: 'auto-allow', scope: ['web-request', 'terminal', 'file-write'] },
 			userIntervention:   { action: 'notify' },
@@ -2186,8 +2186,8 @@
 
 	// ========== 通用选择器常量（避免字面量重复） ==========
 	const MODEL_SELECTOR_BTN_SEL = 'button[aria-label*="Model Selector"], button[aria-label*="模型选择"]';
-	const MODEL_PANEL_SEL = '[class*="model-selector"], [class*="modelSelector"], [class*="dropdown"], [role="listbox"], [role="menu"]';
-	const MODEL_OPTION_SEL = '[role="option"], [role="menuitem"], [class*="option"], [class*="item"], [class*="row"]';
+	const MODEL_PANEL_SEL = '.radix-popover-content[data-state="open"], [data-radix-popper-content-wrapper] [role="dialog"], [class*="model-selector"], [class*="modelSelector"], [role="listbox"], [role="menu"]';
+	const MODEL_OPTION_SEL = 'button[data-kb-navigate="true"], [role="option"], [role="menuitem"]';
 	const ASSISTANT_MSG_SEL = '[data-role="assistant"], .assistant-message, [class*="assistantMessage"]';
 	const USER_MSG_SEL = '[data-role="user"], .user-message, [class*="userMessage"]';
 	const ERROR_BUBBLE_SEL = [
@@ -2216,37 +2216,53 @@
 	// 已知的模型名前缀正则（用于 fallback 识别按钮）
 	const MODEL_NAME_RE = /^(claude[-\s]|gpt[-\s]?|gpt\d|o\d[-\s]|gemini|llama|qwen|deepseek|mistral|mixtral|sonnet|haiku|opus|grok|swe-)/i;
 
-	// 找到当前模型选择器按钮（多层 fallback）
+	// 找到当前模型选择器按钮（多层 fallback，同时搜索主文档和 Cascade iframe）
 	function findModelSelectorBtn() {
-		// 1. aria-label 精确匹配
-		let btn = document.querySelector(MODEL_SELECTOR_BTN_SEL);
-		if (btn) return btn;
-		// 2. data-testid / data-test 含 model
-		btn = document.querySelector('[data-testid*="model" i], [data-test*="model" i]');
-		if (btn) return btn;
-		// 3. 类名含 "model" + 是个按钮 / 可点击元素
-		const candidates = document.querySelectorAll(
-			'[class*="model" i][class*="select" i], [class*="modelSelector" i], [class*="model-selector" i]'
-		);
-		for (const c of candidates) {
-			const text = (c.textContent || '').trim();
-			if (text && text.length < 80) return c;
+		const chatRoot = findChatRoot();
+		const scopes = chatRoot ? [chatRoot, document] : [document];
+
+		for (const scope of scopes) {
+			// 1. aria-label 精确匹配
+			let btn = scope.querySelector(MODEL_SELECTOR_BTN_SEL);
+			if (btn) return btn;
+			// 2. data-testid / data-test 含 model
+			btn = scope.querySelector('[data-testid*="model" i], [data-test*="model" i]');
+			if (btn) return btn;
 		}
-		// 4. 全文档扫描所有可点击元素，挑文本是已知模型名前缀的最短匹配
-		const clickables = document.querySelectorAll(
-			'button, [role="button"], [role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="menu"], [aria-haspopup="true"]'
-		);
-		let best = null;
-		let bestLen = Infinity;
-		for (const c of clickables) {
-			const t = (c.textContent || '').trim();
-			if (!t || t.length > 80) continue;
-			if (MODEL_NAME_RE.test(t) && t.length < bestLen) {
-				best = c;
-				bestLen = t.length;
+		for (const scope of scopes) {
+			// 3. 类名含 "model" + "select"
+			const candidates = scope.querySelectorAll(
+				'[class*="model" i][class*="select" i], [class*="modelSelector" i], [class*="model-selector" i]'
+			);
+			for (const c of candidates) {
+				const text = (c.textContent || '').trim();
+				if (text && text.length < 120) return c;
 			}
 		}
-		return best;
+		for (const scope of scopes) {
+			// 4. 扫描可点击元素，逐行检查文本是否匹配模型名
+			const clickables = scope.querySelectorAll(
+				'button, [role="button"], [role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="menu"], [aria-haspopup="true"], [class*="model" i]'
+			);
+			let best = null;
+			let bestLen = Infinity;
+			for (const c of clickables) {
+				const t = (c.textContent || '').trim();
+				if (!t || t.length > 120) continue;
+				// 检查完整文本和每一行（按钮可能包含多行，如 "代码\nClaude Opus 4.7"）
+				const lines = [t, ...t.split(/\n/).map(l => l.trim()).filter(Boolean)];
+				for (const line of lines) {
+					if (line.length > 60) continue;
+					if (MODEL_NAME_RE.test(line) && line.length < bestLen) {
+						best = c;
+						bestLen = line.length;
+						break;
+					}
+				}
+			}
+			if (best) return best;
+		}
+		return null;
 	}
 
 	// 全文档扫描所有按钮 / 选项 / 列表项的文本，挑出符合模型名前缀的
@@ -2279,6 +2295,32 @@
 		return null;
 	}
 
+	// 在所有可达的 document 中搜索 Radix Popover 模型面板
+	function findModelPanel() {
+		const docs = [document];
+		try {
+			for (const f of document.querySelectorAll('iframe')) {
+				try { if (f.contentDocument) docs.push(f.contentDocument); } catch {}
+			}
+		} catch {}
+		for (const doc of docs) {
+			// Radix Popover: role="dialog" inside data-radix-popper-content-wrapper
+			const popovers = doc.querySelectorAll(
+				'.radix-popover-content[data-state="open"], [data-radix-popper-content-wrapper] [role="dialog"], [role="listbox"], [role="menu"]'
+			);
+			for (const p of popovers) {
+				// 验证是模型选择面板：有搜索框 或 有 data-kb-navigate 按钮
+				const hasSearch = p.querySelector('input[placeholder*="model" i], input[placeholder*="Search" i], input[placeholder*="搜索"]');
+				const hasKbNav = p.querySelectorAll('button[data-kb-navigate="true"]').length > 0;
+				if (hasSearch || hasKbNav) {
+					console.log(LOG_PREFIX + '[ModelSwitch] 找到 Radix 面板 (search=' + !!hasSearch + ' kbNav=' + hasKbNav + ' doc=' + (doc === document ? 'main' : 'iframe') + ')');
+					return p;
+				}
+			}
+		}
+		return null;
+	}
+
 	async function switchModel(targetModel) {
 		if (_modelSwitchInProgress) {
 			console.log(LOG_PREFIX + '[ModelSwitch] 切换进行中，跳过');
@@ -2288,66 +2330,84 @@
 		try {
 			console.log(LOG_PREFIX + '[ModelSwitch] 尝试切换到: ' + targetModel);
 
-			// 1. 找到并点击模型选择器按钮（用多层 fallback）
+			// 1. 找到并点击模型选择器按钮（多层 fallback，含 iframe 搜索）
 			const selectorBtn = findModelSelectorBtn();
 			if (!selectorBtn) {
-				console.log(LOG_PREFIX + '[ModelSwitch] 找不到模型选择器按钮');
+				console.log(LOG_PREFIX + '[ModelSwitch] 找不到模型选择器按钮（chatRoot=' + (findChatRoot() ? 'found' : 'null') + '）');
 				return false;
 			}
+			console.log(LOG_PREFIX + '[ModelSwitch] 找到按钮: ' + (selectorBtn.textContent || '').trim().substring(0, 50));
 			selectorBtn.click();
-			await sleep(500);
+			await sleep(600);
 
-			// 2. 等待下拉面板出现
-			const panel = await waitForElement(MODEL_PANEL_SEL, 2000);
+			// 2. 轮询等待 Radix 弹出面板（搜索所有 document 包括 iframe）
+			let panel = null;
+			const deadline = Date.now() + 4000;
+			while (!panel && Date.now() < deadline) {
+				panel = findModelPanel();
+				if (!panel) await sleep(200);
+			}
 			if (!panel) {
-				console.log(LOG_PREFIX + '[ModelSwitch] 模型下拉面板未出现');
+				console.log(LOG_PREFIX + '[ModelSwitch] 模型下拉面板未出现（已搜索 main + iframe）');
 				dismissModelDropdown(selectorBtn);
 				return false;
 			}
 
 			// 3. 在面板中查找搜索框并输入模型名
-			const searchInput = panel.querySelector('input[type="text"], input[placeholder*="model"], input[placeholder*="模型"], input[placeholder*="search"], input[placeholder*="搜索"]');
+			const searchInput = panel.querySelector('input[type="text"], input[placeholder*="model" i], input[placeholder*="Search" i], input[placeholder*="搜索"]');
 			if (searchInput) {
 				searchInput.focus();
 				searchInput.value = '';
-				// 模拟逐字输入以触发搜索
 				const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
 				nativeInputValueSetter.call(searchInput, targetModel);
 				searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-				await sleep(500);
+				searchInput.dispatchEvent(new Event('change', { bubbles: true }));
+				await sleep(600);
 			}
 
-			// 4. 查找匹配的模型选项并点击
-			const options = panel.querySelectorAll(MODEL_OPTION_SEL);
+			// 4. 查找匹配的模型选项并点击（Radix 使用 data-kb-navigate 按钮）
+			const options = panel.querySelectorAll('button[data-kb-navigate="true"]');
+			console.log(LOG_PREFIX + '[ModelSwitch] 找到 ' + options.length + ' 个选项');
 			let matched = null;
 			const target = targetModel.toLowerCase();
+
+			// 4a. 精确包含匹配
 			for (const opt of options) {
 				const text = (opt.textContent || '').toLowerCase();
-				if (text.includes(target)) {
-					matched = opt;
-					break;
+				if (text.includes(target)) { matched = opt; break; }
+			}
+
+			// 4b. 反向包含：选项首行文本
+			if (!matched) {
+				for (const opt of options) {
+					const text = (opt.textContent || '').trim();
+					const firstLine = text.split('\n')[0].trim().toLowerCase();
+					if (firstLine && (firstLine.includes(target) || target.includes(firstLine))) {
+						matched = opt; break;
+					}
 				}
 			}
 
+			// 4c. 宽泛匹配：去掉版本号和变体后缀
 			if (!matched) {
-				// 退一步：宽泛匹配（去掉版本号）
-				const baseTarget = target.replace(/[\d.-]+/g, '').trim();
+				const baseTarget = target.replace(/[\d.\-]+/g, ' ').replace(/\b(low|medium|high|xhigh|fast|mini|thinking|max|minimal)\b/gi, '').replace(/\s+/g, ' ').trim();
 				for (const opt of options) {
-					const text = (opt.textContent || '').toLowerCase().replace(/[\d.-]+/g, '').trim();
+					const text = (opt.textContent || '').toLowerCase().replace(/[\d.\-]+/g, ' ').replace(/\b(low|medium|high|xhigh|fast|mini|thinking|max|minimal)\b/gi, '').replace(/\s+/g, ' ').trim();
 					if (text.includes(baseTarget) || baseTarget.includes(text)) {
-						matched = opt;
-						break;
+						matched = opt; break;
 					}
 				}
 			}
 
 			if (matched) {
+				console.log(LOG_PREFIX + '[ModelSwitch] 匹配到: ' + (matched.textContent || '').trim().substring(0, 50));
 				matched.click();
 				console.log(LOG_PREFIX + '[ModelSwitch] ✅ 已切换到: ' + targetModel);
 				await sleep(300);
 				return true;
 			} else {
-				console.log(LOG_PREFIX + '[ModelSwitch] 未找到模型: ' + targetModel);
+				const optTexts = Array.from(options).slice(0, 5).map(o => (o.textContent || '').trim().substring(0, 40));
+				console.log(LOG_PREFIX + '[ModelSwitch] 未找到模型: ' + targetModel + '（选项: ' + optTexts.join(' | ') + '）');
 				dismissModelDropdown(selectorBtn);
 				return false;
 			}
@@ -2444,15 +2504,29 @@
 
 	function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-	function waitForElement(selector, timeout) {
+	function waitForElement(selector, timeout, scope) {
 		return new Promise(resolve => {
-			const el = document.querySelector(selector);
+			// 搜索多个作用域：指定 scope、chatRoot、document
+			const scopes = [scope, findChatRoot(), document].filter(Boolean);
+			function tryFind() {
+				for (const s of scopes) {
+					const el = s.querySelector(selector);
+					if (el) return el;
+				}
+				return null;
+			}
+			const el = tryFind();
 			if (el) return resolve(el);
 			const observer = new MutationObserver(() => {
-				const el = document.querySelector(selector);
+				const el = tryFind();
 				if (el) { observer.disconnect(); resolve(el); }
 			});
+			// 观察 document.body（涵盖主文档和 overlay），也观察 chatRoot
 			observer.observe(document.body, { childList: true, subtree: true });
+			const chatRoot = findChatRoot();
+			if (chatRoot && chatRoot !== document.body) {
+				try { observer.observe(chatRoot, { childList: true, subtree: true }); } catch {}
+			}
 			setTimeout(() => { observer.disconnect(); resolve(null); }, timeout);
 		});
 	}

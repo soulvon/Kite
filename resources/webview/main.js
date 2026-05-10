@@ -2101,29 +2101,31 @@
 
     // 获取模型列表结果
     if (result.action === 'fetch-models') {
-      // 无论成功/失败都重置按钮状态
-      if (fetchModelsBtn) { fetchModelsBtn.textContent = '获取可用模型列表'; fetchModelsBtn.disabled = false; }
+      if (fetchModelsBtn) {
+        fetchModelsBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>获取列表';
+        fetchModelsBtn.disabled = false;
+      }
       if (result.status === 'done') {
-        if (currentModelName) currentModelName.textContent = result.currentModel || '-';
+        updateCurrentModelCard(result.currentModel || '-');
         if (result.models && result.models.length > 0) {
           renderAvailableModels(result.models);
         } else {
-          showTestResult(testSwitchModelResult, 'error', '未检测到可用模型（可能需要先打开聊天面板）');
+          showMsResult(testSwitchModelResult, 'error', '未检测到可用模型');
         }
       } else if (result.status === 'error') {
-        showTestResult(testSwitchModelResult, 'error', result.message || '获取失败');
+        showMsResult(testSwitchModelResult, 'error', result.message || '获取失败');
       }
     }
 
     // 获取当前模型结果
     if (result.action === 'get-current-model' && result.status === 'done') {
-      if (currentModelName) currentModelName.textContent = result.currentModel || '-';
+      updateCurrentModelCard(result.currentModel || '-');
     }
 
     // 测试切换模型结果
     if (result.action === 'test-switch-model') {
-      showTestResult(testSwitchModelResult, result.status === 'done' ? 'success' : (result.status === 'running' ? 'running' : 'error'), result.message || '');
-      if (result.newModel && currentModelName) currentModelName.textContent = result.newModel;
+      showMsResult(testSwitchModelResult, result.status === 'done' ? 'success' : (result.status === 'running' ? 'running' : 'error'), result.message || '');
+      if (result.newModel) updateCurrentModelCard(result.newModel);
     }
 
     // 测试重试结果
@@ -2147,17 +2149,63 @@
     }
   }
 
+  // ==================== 模型切换 UI 辅助 ====================
+
+  function getModelBrandClass(name) {
+    const n = (name || '').toLowerCase();
+    if (n.includes('claude') || n.includes('sonnet') || n.includes('opus') || n.includes('haiku')) return 'ms-brand-claude';
+    if (n.includes('gpt') || n.includes('openai') || n.includes('o1') || n.includes('o3') || n.includes('o4')) return 'ms-brand-gpt';
+    if (n.includes('deepseek') || n.includes('deep-seek')) return 'ms-brand-deepseek';
+    if (n.includes('gemini') || n.includes('google')) return 'ms-brand-gemini';
+    if (n.includes('kimi') || n.includes('moonshot')) return 'ms-brand-kimi';
+    return 'ms-brand-default';
+  }
+
+  function getModelIcon(name) {
+    const n = (name || '').toLowerCase();
+    if (n.includes('claude') || n.includes('sonnet') || n.includes('opus') || n.includes('haiku')) return '◈';
+    if (n.includes('gpt') || n.includes('openai')) return '◉';
+    if (n.includes('deepseek')) return '◆';
+    if (n.includes('gemini')) return '✦';
+    if (n.includes('kimi')) return '◎';
+    return '⚡';
+  }
+
+  function updateCurrentModelCard(modelName) {
+    if (currentModelName) currentModelName.textContent = modelName;
+    const card = document.getElementById('msCurrentCard');
+    const icon = document.getElementById('msCurrentIcon');
+    if (card) {
+      card.className = 'ms-current ' + getModelBrandClass(modelName);
+    }
+    if (icon) icon.textContent = getModelIcon(modelName);
+  }
+
+  function showMsResult(el, type, msg) {
+    if (!el) return;
+    el.className = 'ms-result ' + (type === 'success' ? 'ok' : type);
+    el.textContent = msg;
+    if (type === 'success' || type === 'error') {
+      setTimeout(() => { el.className = 'ms-result'; el.textContent = ''; }, 6000);
+    }
+  }
+
+  function updatePriorityBadge() {
+    const badge = document.getElementById('msPriorityCount');
+    if (badge) badge.textContent = getModelPriorityFromDOM().length;
+  }
+
   function renderAvailableModels(models) {
     if (!availableModelsList) return;
     const currentPriority = getModelPriorityFromDOM();
     availableModelsList.style.display = 'flex';
-    availableModelsList.style.flexDirection = 'column';
     availableModelsList.innerHTML = '';
     models.forEach(name => {
       const row = document.createElement('div');
+      const brand = getModelBrandClass(name);
       const isSelected = currentPriority.some(p => name.toLowerCase().includes(p.toLowerCase()) || p.toLowerCase().includes(name.toLowerCase()));
-      row.className = 'available-model-row' + (isSelected ? ' selected' : '');
-      row.innerHTML = '<span class="amr-check">' + (isSelected ? '✓' : '') + '</span><span class="amr-name">' + escHtml(name) + '</span>';
+      row.className = 'available-model-row ' + brand + (isSelected ? ' selected' : '');
+      row.innerHTML = '<span class="amr-brand-dot"></span><span class="amr-name">' + escHtml(name) + '</span><span class="amr-check">' + (isSelected ? '✓' : '') + '</span>';
       row.addEventListener('click', () => {
         if (row.classList.contains('selected')) {
           row.classList.remove('selected');
@@ -2171,6 +2219,7 @@
           items.push(name);
           renderModelPriority(items);
         }
+        updatePriorityBadge();
         saveEnhanceSettings();
       });
       availableModelsList.appendChild(row);
@@ -2223,11 +2272,12 @@
     modelPriorityList.innerHTML = '';
     models.forEach((model, i) => {
       const item = document.createElement('div');
-      item.className = 'model-priority-item';
+      const brand = getModelBrandClass(model);
+      item.className = 'model-priority-item ' + brand;
       item.draggable = true;
       item.dataset.model = model;
       item.innerHTML = '<span class="model-priority-rank">' + (i + 1) + '</span>'
-        + '<span class="model-priority-name">' + model + '</span>'
+        + '<span class="model-priority-name">' + escHtml(model) + '</span>'
         + '<button class="model-priority-remove" title="移除">&times;</button>';
       // 拖拽排序
       item.addEventListener('dragstart', e => {
@@ -2236,7 +2286,6 @@
       });
       item.addEventListener('dragend', () => {
         item.classList.remove('dragging');
-        // 更新序号
         modelPriorityList.querySelectorAll('.model-priority-item').forEach((el, idx) => {
           const rank = el.querySelector('.model-priority-rank');
           if (rank) rank.textContent = idx + 1;
@@ -2259,10 +2308,12 @@
           const rank = el.querySelector('.model-priority-rank');
           if (rank) rank.textContent = idx + 1;
         });
+        updatePriorityBadge();
         saveEnhanceSettings();
       });
       modelPriorityList.appendChild(item);
     });
+    updatePriorityBadge();
   }
 
   function collectCustomRules() {
@@ -2458,8 +2509,8 @@
       if (permScopeTerminal) permScopeTerminal.checked = rulePermScope.includes('terminal');
       if (permScopeFile) permScopeFile.checked = rulePermScope.includes('file-write');
       if (ruleUserAction && rules.userIntervention) ruleUserAction.value = rules.userIntervention.action || 'notify';
-      // 模型优先级
-      renderModelPriority((rules.modelErrors && rules.modelErrors.modelPriority) || ['claude-3.5-sonnet', 'gpt-4o', 'claude-3-haiku']);
+      // 模型优先级（默认轮换：Claude Opus 4.6 Thinking → Claude Opus 4.7 → GPT-5.5）
+      renderModelPriority((rules.modelErrors && rules.modelErrors.modelPriority) || ['Claude Opus 4.6 Thinking', 'Claude Opus 4.7', 'GPT-5.5']);
       // 自定义规则
       renderCustomRules(s.customRecoveryRules || []);
       if (enhNotifyEnabled) enhNotifyEnabled.checked = s.notifyEnabled !== false;
@@ -4011,15 +4062,14 @@
     // 测试按钮事件
     if (fetchModelsBtn) {
       fetchModelsBtn.addEventListener('click', () => {
-        fetchModelsBtn.textContent = '获取中...';
+        fetchModelsBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>获取中...';
         fetchModelsBtn.disabled = true;
         sendCommand('fetch-models');
-        // 10s 超时：如果增强脚本未注入或 bridge 不可达，命令无人处理
         setTimeout(() => {
           if (fetchModelsBtn.disabled) {
-            fetchModelsBtn.textContent = '获取可用模型列表';
+            fetchModelsBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>获取列表';
             fetchModelsBtn.disabled = false;
-            showTestResult(testSwitchModelResult, 'error', '超时未响应（请确认增强脚本已注入并打开了聊天面板）');
+            showMsResult(testSwitchModelResult, 'error', '超时未响应（请确认增强脚本已注入）');
           }
         }, 10000);
       });
@@ -4037,10 +4087,10 @@
       testSwitchModelBtn.addEventListener('click', () => {
         const priority = getModelPriorityFromDOM();
         if (priority.length === 0) {
-          showTestResult(testSwitchModelResult, 'error', '请先添加备选模型');
+          showMsResult(testSwitchModelResult, 'error', '请先添加备选模型');
           return;
         }
-        showTestResult(testSwitchModelResult, 'running', '正在切换...');
+        showMsResult(testSwitchModelResult, 'running', '正在切换到 ' + priority[0] + '...');
         sendTestCommand('test-switch-model', testSwitchModelResult, { model: priority[0] });
       });
     }

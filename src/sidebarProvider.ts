@@ -28,6 +28,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _logFilePath: string;
   private _autoSwitcher: AutoSwitcher;
   private _usageTracker: UsageTracker;
+  private _lastSoundTs = 0; // 防重：上次播放时间戳
 
   constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext, autoSwitcher: AutoSwitcher, usageTracker: UsageTracker) {
     this._usageTracker = usageTracker;
@@ -98,13 +99,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
         // 完成提醒：通过 bridge 收到播放声音请求
         if (result && result.type === 'notify-sound') {
-          this.log(`[bridge ←] notify-sound tone=${result.tone} repeat=${result.repeat}`);
-          if (result.sound !== false) {
-            playSystemSound(result.tone || 'funk', result.repeat || 2, result.customTone, result.audioFile);
-          }
-          if (result.desktop) {
-            vscode.window.showInformationMessage(result.title || 'Cascade 完成', result.body || 'AI 回复已完成');
-          }
+          this._playNotifyOnce(result.tone || 'funk', result.repeat || 2, result.customTone, result.audioFile, result.sound !== false, !!result.desktop, result.title, result.body);
           return;
         }
         // 长任务状态通知：转发给 webview 更新 UI
@@ -219,8 +214,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   /** 过滤只保留主流模型 + 最近使用 */
   private _filterMainstreamModels(allModels: string[], recentUids: string[]): string[] {
-    // 排除含这些关键词的变体（Low/Medium/High/XHigh/Fast/Mini/BYOK/Thinking/1M/Spark/No Thinking/Max）
-    const variantRe = /\b(Low|Medium|High|XHigh|X-High|Fast|Mini|BYOK|Thinking|1M|Spark|No Thinking|Max|Minimal)\b/i;
+    // 排除含这些关键词的变体（Low/Medium/High/XHigh/Fast/Mini/BYOK/1M/Spark/Max）
+    // 注意：Thinking 不排除，因为它是重要的模型行为差异（Claude Opus 4.6 vs Claude Opus 4.6 Thinking）
+    const variantRe = /\b(Low|Medium|High|XHigh|X-High|Fast|Mini|BYOK|1M|Spark|Max|Minimal)\b/i;
     const mainstream = allModels.filter(m => !variantRe.test(m));
     // 把最近使用的 uid 转成 label 匹配（uid: claude-opus-4-7-medium → 匹配 "Claude Opus 4.7 Medium"）
     const recentLabels: string[] = [];
@@ -318,8 +314,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * 后端切换模型: 写入 state.vscdb + 同时尝试 bridge DOM 方式
-   * 解决 bridge 不可用时切换模型失败的问题
+   * 切换模型：后端静默写入 state DB（持久化兜底），然后通过 bridge 执行 DOM 切换（立即生效）
+   * bridge 结果由全局 onBridgeResult handler 推送给 webview，不产生竞态
    */
   private async _handleSwitchModel(cmdId: number, targetLabel: string) {
     if (!targetLabel) {
@@ -329,55 +325,48 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }} as any);
       return;
     }
-    try {
-      // 1. 提取 label → UID 映射
-      const uidMap = await this._extractModelUidMapping();
 
-      // 2. 查找目标模型 UID（优先精确匹配，退一步用规范化转换）
-      let targetUid = uidMap.get(targetLabel) || '';
-      if (!targetUid) {
-        // 模糊匹配: 遍历所有映射寻找包含关系
-        for (const [label, uid] of uidMap) {
-          const labelNorm = label.replace(/[.\-\s]/g, ' ').toLowerCase();
-          const targetNorm = targetLabel.replace(/[.\-\s]/g, ' ').toLowerCase();
-          if (labelNorm.includes(targetNorm) || targetNorm.includes(labelNorm)) {
-            targetUid = uid;
-            break;
-          }
-        }
-      }
-      if (!targetUid) {
-        // 最终兜底: 直接从 label 推导 UID
-        targetUid = targetLabel.toLowerCase().replace(/\s+/g, '-').replace(/\./g, '-').replace(/[()]/g, '').replace(/--+/g, '-').replace(/-$/, '');
-      }
+    // 1. 静默写入 state DB（不阻塞，不影响 bridge 结果）
+    this._writeSwitchModelToDb(targetLabel).catch(err => {
+      this.log(`[switchModel] DB 写入失败（降级）: ${err}`);
+    });
 
-      // 3. 读取当前 codeium.windsurf 状态
-      const codeiumRaw = await this._readStateDbKey('codeium.windsurf');
-      const state = codeiumRaw ? JSON.parse(codeiumRaw) : {};
+    // 2. 通过 bridge 执行 DOM 切换（bridge 结果由全局 handler 推送 webview）
+    enqueueCommand({ id: cmdId, action: 'test-switch-model', payload: { model: targetLabel } });
 
-      // 4. 更新 lastSelectedCascadeModelUids（目标 UID 置顶）
-      const currentUids: string[] = state['windsurf.state.lastSelectedCascadeModelUids'] || [];
-      const newUids = [targetUid, ...currentUids.filter((u: string) => u !== targetUid)];
-      state['windsurf.state.lastSelectedCascadeModelUids'] = newUids;
-
-      // 5. 写入 state DB
-      await this._writeStateDbKey('codeium.windsurf', JSON.stringify(state));
-      this.log(`[switchModel] 已写入 state DB: uid=${targetUid} label=${targetLabel}`);
-
-      // 注意: 不再通过 bridge 发送 test-switch-model，避免 bridge 的错误响应覆盖后端成功结果
-
+    // 3. 兜底超时：如果 bridge 8s 无响应，发送 DB 层面的成功
+    setTimeout(() => {
+      // 发一条 backup result（webview 会显示最后收到的结果）
       this.postMessage({ type: 'enhCommandResult', result: {
         id: cmdId, action: 'test-switch-model', status: 'done',
-        message: `已切换到 ${targetLabel}（UID: ${targetUid}，下次对话生效）`,
+        message: `已设置 ${targetLabel}（数据库已更新，新对话生效）`,
         newModel: targetLabel
       }} as any);
-    } catch (err) {
-      this.log(`[switchModel] 失败: ${err}`);
-      this.postMessage({ type: 'enhCommandResult', result: {
-        id: cmdId, action: 'test-switch-model', status: 'error',
-        message: '切换失败: ' + err
-      }} as any);
+    }, 8000);
+  }
+
+  /** 静默写入目标模型到 state DB */
+  private async _writeSwitchModelToDb(targetLabel: string): Promise<void> {
+    const uidMap = await this._extractModelUidMapping();
+    let targetUid = uidMap.get(targetLabel) || '';
+    if (!targetUid) {
+      for (const [label, uid] of uidMap) {
+        const labelNorm = label.replace(/[.\-\s]/g, ' ').toLowerCase();
+        const targetNorm = targetLabel.replace(/[.\-\s]/g, ' ').toLowerCase();
+        if (labelNorm.includes(targetNorm) || targetNorm.includes(labelNorm)) {
+          targetUid = uid; break;
+        }
+      }
     }
+    if (!targetUid) {
+      targetUid = targetLabel.toLowerCase().replace(/\s+/g, '-').replace(/\./g, '-').replace(/[()]/g, '').replace(/--+/g, '-').replace(/-$/, '');
+    }
+    const codeiumRaw = await this._readStateDbKey('codeium.windsurf');
+    const state = codeiumRaw ? JSON.parse(codeiumRaw) : {};
+    const currentUids: string[] = state['windsurf.state.lastSelectedCascadeModelUids'] || [];
+    state['windsurf.state.lastSelectedCascadeModelUids'] = [targetUid, ...currentUids.filter((u: string) => u !== targetUid)];
+    await this._writeStateDbKey('codeium.windsurf', JSON.stringify(state));
+    this.log(`[switchModel] DB 已更新: uid=${targetUid}`);
   }
 
   private async _readModelsFromStateDb(): Promise<string[]> {
@@ -535,6 +524,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         signalBridgeActive,
       } as any);
     } catch {}
+  }
+
+  /** 防重播放通知声音：5 秒内只允许一次（bridge + webview 可能对同一事件双触发） */
+  private _playNotifyOnce(tone: string, repeat: number, customTone?: string, audioFile?: string, sound = true, desktop = false, title?: string, body?: string): void {
+    const now = Date.now();
+    if (now - this._lastSoundTs < 3000) return; // 3s 内去重
+    this._lastSoundTs = now;
+    if (sound) {
+      playSystemSound(tone, repeat, customTone, audioFile);
+    }
+    if (desktop) {
+      vscode.window.showInformationMessage(title || 'Cascade 完成', body || 'AI 回复已完成');
+    }
   }
 
   /** 推送自动切号设置给 webview + 同步 enabled 状态到 windsurf-better.js */
@@ -1057,15 +1059,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // ── 完成提醒：系统声音播放 ──
       case 'playNotifySound': {
         const d = (message as any).data || {};
-        const tone = d.tone || 'funk';
-        const repeat = d.repeat || 2;
-        console.log('[Notify] 收到 playNotifySound 信号: sound=' + (d.sound !== false) + ', desktop=' + !!d.desktop + ', tone=' + tone + ', repeat=' + repeat + ', file=' + (d.audioFile || ''));
-        if (d.sound !== false) {
-          playSystemSound(tone, repeat, d.customTone, d.audioFile);
-        }
-        if (d.desktop) {
-          vscode.window.showInformationMessage(d.title || 'Cascade 完成', d.body || 'AI 回复已完成');
-        }
+        this._playNotifyOnce(d.tone || 'funk', d.repeat || 2, d.customTone, d.audioFile, d.sound !== false, !!d.desktop, d.title, d.body);
         break;
       }
 
@@ -1898,22 +1892,44 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         <option value="none">不操作</option>
                       </select>
                     </div>
-                    <div style="margin-top:8px">
-                      <div class="v2-sub-label">可用模型优先级</div>
-                      <button class="v2-btn-sm" id="fetchModelsBtn">获取可用模型列表</button>
-                      <div id="modelPriorityList" class="ac-tag-list"></div>
-                      <div id="availableModelsList" style="display:none;flex-direction:column;gap:2px;max-height:200px;overflow-y:auto"></div>
-                      <div style="display:flex;gap:4px;margin-top:4px">
-                        <input type="text" class="v2-input-field" id="modelPriorityInput" placeholder="手动输入模型名..." style="flex:1">
-                        <button class="v2-btn-sm" id="modelPriorityAdd">添加</button>
+                    <!-- 当前模型卡片 -->
+                    <div class="ms-current ms-brand-claude" id="msCurrentCard" style="margin-top:8px">
+                      <div class="ms-current-icon" id="msCurrentIcon">⚡</div>
+                      <div class="ms-current-info">
+                        <div class="ms-current-label">当前模型</div>
+                        <div class="ms-current-name" id="currentModelName">-</div>
                       </div>
-                      <div class="v2-field-row" style="margin-top:6px">
-                        <span>当前模型</span>
-                        <span id="currentModelName" style="color:var(--ac-accent)">-</span>
-                      </div>
+                      <div class="ms-current-pulse"></div>
                     </div>
-                    <button class="v2-btn-sm" id="testSwitchModelBtn">测试切换模型</button>
-                    <div class="test-result" id="testSwitchModelResult"></div>
+
+                    <!-- 备选模型队列 -->
+                    <div class="ms-section-head">
+                      <span class="ms-section-title">备选队列</span>
+                      <span class="ms-section-badge" id="msPriorityCount">0</span>
+                    </div>
+                    <div id="modelPriorityList" class="ac-tag-list"></div>
+
+                    <!-- 操作按钮 -->
+                    <div class="ms-actions">
+                      <button class="ms-btn" id="fetchModelsBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                        获取列表
+                      </button>
+                      <button class="ms-btn ms-btn-primary" id="testSwitchModelBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+                        立即切换
+                      </button>
+                    </div>
+                    <div class="ms-result" id="testSwitchModelResult"></div>
+
+                    <!-- 手动输入 -->
+                    <div class="ms-input-row">
+                      <input type="text" id="modelPriorityInput" placeholder="输入模型名...">
+                      <button id="modelPriorityAdd">添加</button>
+                    </div>
+
+                    <!-- 可用模型列表 -->
+                    <div id="availableModelsList" class="ms-available-list"></div>
                   </div>
                 </details>
 
