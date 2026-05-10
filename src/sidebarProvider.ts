@@ -56,6 +56,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     };
     this._autoSwitcher.onSwitchEvent = (log, status, statusType) => {
       this.postMessage({ type: 'autoSwitchEvent', log, status, statusType } as any);
+      // 持久化切号日志（webview 重建后可恢复）
+      if (log) {
+        const logs: string[] = this._context.globalState.get('autoSwitchLogs', []);
+        logs.push(log);
+        if (logs.length > 30) logs.splice(0, logs.length - 30);
+        this._context.globalState.update('autoSwitchLogs', logs);
+      }
     };
     this._autoSwitcher.onRefreshUI = () => {
       this.refresh();
@@ -87,6 +94,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             // windsurf-better.js 收到 action='pool-result' 命令 → 写 localStorage 触发原处理逻辑
             enqueueCommand({ id: Date.now(), action: 'pool-result', payload: poolResult });
           }).catch(err => console.warn('[sidebar] handlePoolSignal err:', err));
+          return;
+        }
+        // 完成提醒：通过 bridge 收到播放声音请求
+        if (result && result.type === 'notify-sound') {
+          this.log(`[bridge ←] notify-sound tone=${result.tone} repeat=${result.repeat}`);
+          if (result.sound !== false) {
+            playSystemSound(result.tone || 'funk', result.repeat || 2, result.customTone, result.audioFile);
+          }
+          if (result.desktop) {
+            vscode.window.showInformationMessage(result.title || 'Cascade 完成', result.body || 'AI 回复已完成');
+          }
           return;
         }
         // 长任务状态通知：转发给 webview 更新 UI
@@ -275,6 +293,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._pushAutoSwitchSettings();
       this._pushEnhancementStatus();
       this._pushUsageStats();
+      // 恢复持久化的切号日志
+      const savedLogs: string[] = this._context.globalState.get('autoSwitchLogs', []);
+      if (savedLogs.length > 0) {
+        for (const log of savedLogs) {
+          this.postMessage({ type: 'autoSwitchEvent', log } as any);
+        }
+      }
     }, 600);
 
     // 监听 auth session 变化（Windsurf 登录/登出时触发）
@@ -366,6 +391,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /** 推送自动切号设置给 webview + 同步 enabled 状态到 windsurf-better.js */
   private _pushAutoSwitchSettings(): void {
     const s = this._autoSwitcher.settings;
+    console.log(`[autoSwitch] pushSettings → webview: poolScope=${s.poolScope}, poolTags=[${(s.poolTags || []).join(',')}]`);
     this.postMessage({ type: 'autoSwitchSettingsSync', ...s } as any);
     // 同步 autoSwitchEnabled 给 DOM 侧，关闭时 windsurf-better.js 不再发送切号信号
     try {

@@ -6,7 +6,7 @@
 
 无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-6.2.0-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-6.3.2-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -131,8 +131,21 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
 
+### v6.3.2
+- **标签设置持久化修复**：修复自动切号范围中已选标签重启后丢失的问题，仅在实际变化时写入。
+
+### v6.3.1
+- **声音播放零延迟**：长驻 PowerShell 进程池，避免每次冷启动 ~1s 延迟，窗口关闭时自动清理。
+- **切号日志持久化**：sidebar 重建后自动恢复历史切号记录（最多 30 条）。
+- **通知去重**：完成提醒仅走 HTTP 桥单一路径，8s 防抖，消除多路径重复播放。
+
+### v6.3.0
+- **标签实色背景**：标签改为实色背景 + 白色文字，不同标签自动分配不同颜色（10 色调色板）。
+- **标签自定义颜色**：双击标签打开颜色选择器，支持预设色 + 自由取色 + 重置。
+- **完成提醒三重检测**：拦截 Windsurf 原生 Notification API + 文本增长检测 + 轮询，声音通过 HTTP 桥接播放。
+
 ### v6.2.0
-- **完成提醒修复**：复用长任务的 `isAIGenerating()`（`lucide-circle-stop` + thumbs-up 计数），替换失效的旧检测函数。
+- **完成提醒**：复用长任务的 `isAIGenerating()`（`lucide-circle-stop` + thumbs-up 计数）。
 - **多选模式卡片优化**：checkbox 绝对定位左上角 + padding-left 腰出空间，不遮挡文字、不影响布局。
 - **自动切号 UI 重设计**：核心设置精简为一句话，高级参数折叠隐藏。
 - **多标签选择**：切号范围支持多标签筛选，已选标签 chip 展示。

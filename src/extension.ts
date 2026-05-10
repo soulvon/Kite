@@ -18,6 +18,7 @@ import { mergeEnhSettings, readEnhSettings } from './enhSettingsStore';
 import { isWindows, isMac, isWritable } from './utils';
 import { beginElevatedBatch, flushElevatedBatch, cancelElevatedBatch, ElevationError } from './elevatedFs';
 import { UsageTracker } from './usageTracker';
+import { warmupSoundPlayer } from './soundPlayer';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
@@ -33,6 +34,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // 批量模式：将启动阶段所有安装目录写操作合并，需要提权时仅弹一次 UAC
   beginElevatedBatch();
+
+  // 预热声音播放器（Windows 上预启动 PowerShell 进程，首次播放零延迟）
+  warmupSoundPlayer();
 
   // 静默应用汉化（不影响扩展启动）
   applyI18nOnly();
@@ -521,4 +525,5 @@ export function deactivate() {
   try { stopHeartbeat(); } catch {}
   try { releaseLock(); } catch {}
   try { stopBridgeServer(); } catch {}
+  try { const { shutdownSoundPlayer } = require('./soundPlayer'); shutdownSoundPlayer(); } catch {}
 }

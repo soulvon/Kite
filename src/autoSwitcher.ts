@@ -119,7 +119,15 @@ export class AutoSwitcher implements vscode.Disposable {
     if (p.minQuota !== undefined) await this._ctx.globalState.update('as.minQuota', p.minQuota);
     if (p.preferUsedThreshold !== undefined) await this._ctx.globalState.update('as.preferUsedThreshold', p.preferUsedThreshold);
     if (p.poolScope !== undefined) await this._ctx.globalState.update('as.poolScope', p.poolScope);
-    if (p.poolTags !== undefined) await this._ctx.globalState.update('as.poolTags', p.poolTags);
+    if (p.poolTags !== undefined) {
+      // 仅在实际变化时写入，避免初始化时空数组覆盖已保存的标签
+      const cur = this._ctx.globalState.get<string[]>('as.poolTags') || [];
+      const next = p.poolTags;
+      if (JSON.stringify(cur) !== JSON.stringify(next)) {
+        console.log(`[autoSwitch] poolTags 变更: [${cur.join(',')}] → [${next.join(',')}]`);
+        await this._ctx.globalState.update('as.poolTags', next);
+      }
+    }
     this._restartTimers();
   }
 
@@ -730,10 +738,13 @@ export class AutoSwitcher implements vscode.Disposable {
       // 优先选已用号中额度最低的（消耗完再换新号），然后是满额号
       used.sort((a, b) => a.score - b.score);
       fresh.sort((a, b) => a.score - b.score);
-      return [...used, ...fresh];
+      const result = [...used, ...fresh];
+      console.log(`[autoSwitch] findAllCandidates: strategy=lowestNonZero, ${result.length} candidates, top3: ${result.slice(0, 3).map(c => `${c.email.substring(0, 15)}..=${Math.round(c.score)}%`).join(', ')}`);
+      return result;
     } else {
       // highestFirst：选额度最高的
       candidates.sort((a, b) => b.score - a.score);
+      console.log(`[autoSwitch] findAllCandidates: strategy=highestFirst, ${candidates.length} candidates, top3: ${candidates.slice(0, 3).map(c => `${c.email.substring(0, 15)}..=${Math.round(c.score)}%`).join(', ')}`);
       return candidates;
     }
   }

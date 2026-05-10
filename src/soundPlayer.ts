@@ -14,6 +14,68 @@ function execPowerShellEncoded(script: string, timeoutMs: number): void {
 }
 
 /**
+ * 长驻 PowerShell 进程 —— 避免每次播放都冷启动 powershell.exe（~0.5-1s 延迟）
+ * 通过 stdin 逐行发送 Beep 命令，进程空闲 60s 后自动退出。
+ */
+let _psProc: cp.ChildProcess | null = null;
+let _psReady = false;
+let _psIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function getPersistentPS(): cp.ChildProcess | null {
+  if (_psProc && !_psProc.killed && _psProc.stdin?.writable) {
+    // 重置空闲计时器
+    if (_psIdleTimer) clearTimeout(_psIdleTimer);
+    _psIdleTimer = setTimeout(killPersistentPS, 60_000);
+    return _psProc;
+  }
+  try {
+    _psProc = cp.spawn('powershell', ['-NoProfile', '-NoLogo', '-NonInteractive', '-Command', '-'], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+      windowsHide: true,
+    });
+    _psReady = true;
+    _psProc.on('exit', () => { _psProc = null; _psReady = false; });
+    _psProc.on('error', () => { _psProc = null; _psReady = false; });
+    _psIdleTimer = setTimeout(killPersistentPS, 60_000);
+    return _psProc;
+  } catch {
+    return null;
+  }
+}
+
+function killPersistentPS(): void {
+  if (_psProc && !_psProc.killed) {
+    try { _psProc.stdin?.end(); _psProc.kill(); } catch {}
+  }
+  _psProc = null;
+  _psReady = false;
+}
+
+function sendPSCommand(cmd: string): boolean {
+  const ps = getPersistentPS();
+  if (!ps?.stdin?.writable) return false;
+  try {
+    ps.stdin.write(cmd + '\n');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 预热长驻 PowerShell 进程（在扩展激活时调用，首次播放也零延迟） */
+export function warmupSoundPlayer(): void {
+  if (process.platform === 'win32') {
+    getPersistentPS();
+  }
+}
+
+/** 关闭长驻 PowerShell 进程（扩展停用时调用，确保不残留） */
+export function shutdownSoundPlayer(): void {
+  if (_psIdleTimer) { clearTimeout(_psIdleTimer); _psIdleTimer = null; }
+  killPersistentPS();
+}
+
+/**
  * 音调预设 —— 频率(Hz) + 持续时间(ms)
  */
 const TONE_PRESETS: Record<string, Array<{ freq: number; dur: number }>> = {
@@ -129,7 +191,10 @@ export function playSystemSound(tone: string, repeat: number, customTone?: strin
         beepCmds.push('Start-Sleep -Milliseconds 600');
       }
     }
-    execPowerShellEncoded(beepCmds.join(';'), 15000);
+    // 优先用长驻进程（几乎零延迟），失败则回退到新进程
+    if (!sendPSCommand(beepCmds.join(';'))) {
+      execPowerShellEncoded(beepCmds.join(';'), 15000);
+    }
   } else {
     // macOS/Linux: 使用 terminal bell 字符
     for (let r = 0; r < repeat; r++) {

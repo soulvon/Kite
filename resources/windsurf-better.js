@@ -3558,6 +3558,28 @@
 		_lastAssistantCount = getScanRoot().querySelectorAll(ASSISTANT_MSG_SEL).length;
 		_wasGenerating = false;
 
+		// ── 方法 A：拦截 Windsurf 原生 Notification API（最可靠） ──
+		if (!window._wsNotifyHooked) {
+			window._wsNotifyHooked = true;
+			const OrigNotification = window.Notification;
+			window.Notification = function(title, options) {
+				// 检测 Windsurf 的完成通知（标题含 "Cascade" 或 "完成"）
+				const titleLower = (title || '').toLowerCase();
+				if (titleLower.includes('cascade') || titleLower.includes('完成') || titleLower.includes('complete')) {
+					console.log(LOG_PREFIX + '[Notify] 🎯 拦截到 Windsurf 原生完成通知: ' + title);
+					triggerNotifySound();
+				}
+				return new OrigNotification(title, options);
+			};
+			window.Notification.permission = OrigNotification.permission;
+			window.Notification.requestPermission = OrigNotification.requestPermission.bind(OrigNotification);
+			Object.defineProperty(window.Notification, 'permission', {
+				get: () => OrigNotification.permission
+			});
+			console.log(LOG_PREFIX + '[Notify] Notification API 已挂钩');
+		}
+
+		// ── 方法 B：MutationObserver + 轮询（兜底） ──
 		let debounceTimer = null;
 		notifyObserver = new MutationObserver(() => {
 			if (!settings.notifyEnabled) return;
@@ -3565,15 +3587,95 @@
 			debounceTimer = setTimeout(() => checkCompletion(), 800);
 		});
 		notifyObserver.observe(document.body, { childList: true, subtree: true });
-		console.log(LOG_PREFIX + '[Notify] ✅完成提醒已启用');
+		if (window._notifyPollTimer) clearInterval(window._notifyPollTimer);
+		window._notifyPollTimer = setInterval(() => {
+			if (!settings.notifyEnabled) return;
+			checkCompletion();
+		}, 2000);
+		console.log(LOG_PREFIX + '[Notify] ✅完成提醒已启用（Notification hook + 观察器 + 轮询）');
 	}
 
-	// 完成提醒直接复用长任务的 isAIGenerating()（lucide-circle-stop + thumbs-up 计数）
-	// 不再维护独立的检测函数，保持一致性
+	// 直接触发声音提醒（被 Notification hook 或 checkCompletion 调用）
+	let _lastTriggerTs = 0;
+	function triggerNotifySound() {
+		if (!settings.notifyEnabled) return;
+		// 防抖：8s 内不重复触发（避免多检测方法重复播放）
+		if (Date.now() - _lastTriggerTs < 8000) return;
+		_lastTriggerTs = Date.now();
+
+		const shouldNotify = shouldTriggerNotify();
+		if (!shouldNotify) return;
+
+		console.log(LOG_PREFIX + '[Notify] 触发提醒（sound=' + !!settings.notifySound + '）');
+		// 仅走 HTTP 桥 → 扩展后端播放系统声音（唯一路径，避免重复）
+		try {
+			if (typeof bridgePostResult === 'function' && typeof getBridgeUrl === 'function' && getBridgeUrl()) {
+				bridgePostResult({
+					type: 'notify-sound',
+					ts: Date.now(),
+					sound: !!settings.notifySound,
+					desktop: false,
+					tone: settings.notifyTone || 'funk',
+					repeat: settings.notifyRepeat || 1,
+					customTone: settings.customTone || '',
+					audioFile: settings.audioFile || '',
+				});
+			}
+		} catch(e) {
+			console.warn(LOG_PREFIX + '[Notify] bridge 发送失败:', e);
+		}
+	}
+
+	// 完成提醒：综合检测 AI 生成状态
+	// 方法1: isAIGenerating()（lucide-circle-stop + thumbs-up）
+	// 方法2: 文本增长检测（兜底，不依赖特定 DOM class）
+	let _notifyLastTextLen = 0;
+	let _notifyTextStableCount = 0; // 文本稳定的连续检测次数
+	let _notifyTextGrowing = false; // 文本是否在增长中
+
+	function isNotifyGenerating() {
+		// 优先用 isAIGenerating()（如果停止按钮存在则可靠）
+		if (isAIGenerating()) return true;
+
+		// 兜底：检测聊天区域文本是否在增长（不依赖特定 assistant 选择器）
+		try {
+			const scanRoot = getScanRoot();
+			// 先尝试 assistant 消息选择器
+			let msgs = scanRoot.querySelectorAll(ASSISTANT_MSG_SEL);
+			let curLen = 0;
+			if (msgs.length > 0) {
+				curLen = (msgs[msgs.length - 1].textContent || '').length;
+			} else {
+				// 回退到整个聊天区域的文本长度
+				curLen = (scanRoot.textContent || '').length;
+			}
+
+			if (curLen > _notifyLastTextLen + 3) {
+				// 文本在增长
+				_notifyLastTextLen = curLen;
+				_notifyTextStableCount = 0;
+				_notifyTextGrowing = true;
+				return true;
+			} else if (_notifyTextGrowing) {
+				// 文本曾经增长但现在稳定了
+				_notifyTextStableCount++;
+				_notifyLastTextLen = curLen;
+				// 需要连续 2 次检测（轮询 2s × 2 = ~4s）文本不变才判定为停止
+				if (_notifyTextStableCount < 2) return true;
+				// 稳定了 → 生成结束
+				_notifyTextGrowing = false;
+				_notifyTextStableCount = 0;
+				return false;
+			}
+			_notifyLastTextLen = curLen;
+		} catch(e) {}
+
+		return false;
+	}
 
 	function checkCompletion() {
 		if (!settings.notifyEnabled) return;
-		const generating = isAIGenerating();
+		const generating = isNotifyGenerating();
 
 		// 状态跳变日志（只在跳变时打印，避免刷屏）
 		if (generating !== _wasGenerating) {
@@ -3582,28 +3684,8 @@
 
 		if (_wasGenerating && !generating) {
 			// 刚刚从生成状态变为非生成状态 → 完成
-			const shouldNotify = shouldTriggerNotify();
-			console.log(LOG_PREFIX + '[Notify] 检测到完成，shouldTrigger=' + shouldNotify + '，trigger=' + (settings.notifyTrigger || 'always') + '，sound=' + !!settings.notifySound + '，desktop=' + !!settings.notifyDesktop);
-			if (shouldNotify) {
-				console.log(LOG_PREFIX + '[Notify] AI 回复完成，触发提醒');
-				// 通过 localStorage 信号通知扩展后端播放系统声音
-				try {
-					localStorage.setItem('ws-pool-notify', JSON.stringify({
-						ts: Date.now(),
-						sound: !!settings.notifySound,
-						desktop: !!settings.notifyDesktop,
-						tone: settings.notifyTone || 'funk',
-						repeat: settings.notifyRepeat || 2,
-						customTone: settings.customTone || '',
-						audioFile: settings.audioFile || '',
-						title: 'Cascade 完成',
-						body: 'AI 回复已完成',
-					}));
-				} catch(e) {}
-				// 同时尝试本地播放（作为备用，可能因 autoplay 限制而静音）
-				if (settings.notifySound) playNotifySound();
-				if (settings.notifyDesktop) sendDesktopNotify('Cascade 完成', 'AI 回复已完成');
-			}
+			console.log(LOG_PREFIX + '[Notify] 检测到完成（方法B：文本增长检测）');
+			triggerNotifySound();
 		}
 		
 		_wasGenerating = generating;

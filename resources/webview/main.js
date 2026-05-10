@@ -26,6 +26,37 @@
   let lockedEmails = new Set(); // 被其他窗口占用的账号
   let lockedEmailsMap = {}; // email → { instanceName }
   let perAccountStats = {}; // email → { switchToCount, dailyUsedPct, weeklyUsedPct }
+  let tagColors = {}; // tag → color hex（用户自定义颜色，持久化到 localStorage）
+
+  // ── 标签颜色系统 ──
+  const TAG_PALETTE = [
+    '#8b5cf6', // violet
+    '#3b82f6', // blue
+    '#10b981', // emerald
+    '#f59e0b', // amber
+    '#ef4444', // red
+    '#ec4899', // pink
+    '#06b6d4', // cyan
+    '#84cc16', // lime
+    '#f97316', // orange
+    '#6366f1', // indigo
+  ];
+  // 加载用户自定义标签颜色
+  try { tagColors = JSON.parse(localStorage.getItem('ws-pool-tag-colors') || '{}'); } catch(e) { tagColors = {}; }
+
+  function saveTagColors() {
+    try { localStorage.setItem('ws-pool-tag-colors', JSON.stringify(tagColors)); } catch(e) {}
+  }
+
+  function getTagColor(tag) {
+    if (!tag) return TAG_PALETTE[0];
+    // 用户自定义色优先
+    if (tagColors[tag]) return tagColors[tag];
+    // 根据 tag 名 hash 分配默认色
+    let hash = 0;
+    for (let i = 0; i < tag.length; i++) hash = ((hash << 5) - hash + tag.charCodeAt(i)) | 0;
+    return TAG_PALETTE[Math.abs(hash) % TAG_PALETTE.length];
+  }
 
   // ==================== 工具函数 ====================
   const _escDiv = document.createElement('div');
@@ -418,7 +449,8 @@
     const snap = cached?.snapshot;
     const err = cached?.error;
     const tagActive = account.tag && filterTags.has(account.tag);
-    const tagHtml = account.tag ? `<span class="grid-tag-chip${tagActive ? ' is-active' : ''}" data-action="filterTag" title="点击筛选此标签 / 右键修改标签">${escHtml(account.tag)}</span>` : `<span class="grid-tag-add" data-action="editTag" title="添加标签">+ 标签</span>`;
+    const tagColor = account.tag ? getTagColor(account.tag) : '';
+    const tagHtml = account.tag ? `<span class="grid-tag-chip${tagActive ? ' is-active' : ''}" data-action="filterTag" title="点击筛选此标签 / 右键修改标签 / 双击改色" style="background:${tagColor}">${escHtml(account.tag)}</span>` : `<span class="grid-tag-add" data-action="editTag" title="添加标签">+ 标签</span>`;
 
     if (selectMode) card.classList.add('is-select-mode');
     if (account.disabled) card.classList.add('is-disabled');
@@ -874,8 +906,20 @@
     // 每个标签 → toggle filterTags Set
     tags.forEach(tag => {
       const chip = document.createElement('span');
-      chip.className = 'tag-chip' + (filterTags.has(tag) ? ' is-active' : '');
+      const isActive = filterTags.has(tag);
+      chip.className = 'tag-chip' + (isActive ? ' is-active' : '');
       chip.textContent = tag;
+      // 应用标签颜色
+      const tc = getTagColor(tag);
+      if (isActive) {
+        chip.style.background = tc;
+        chip.style.borderColor = tc;
+        chip.style.color = '#fff';
+      } else {
+        chip.style.background = tc + '20';
+        chip.style.borderColor = tc + '60';
+        chip.style.color = tc;
+      }
       chip.onclick = () => {
         if (filterTags.has(tag)) filterTags.delete(tag);
         else filterTags.add(tag);
@@ -953,6 +997,70 @@
     }
 
     closeTagEditModal();
+  }
+
+  // ── 标签颜色选择器 ──
+  function openTagColorPicker(tag, anchorEl) {
+    // 移除已有的颜色选择器
+    const existing = document.getElementById('tagColorPicker');
+    if (existing) existing.remove();
+
+    const picker = document.createElement('div');
+    picker.id = 'tagColorPicker';
+    picker.className = 'tag-color-picker';
+    const currentColor = getTagColor(tag);
+
+    picker.innerHTML = `
+      <div class="tag-color-picker-title">「${escHtml(tag)}」颜色</div>
+      <div class="tag-color-picker-grid">
+        ${TAG_PALETTE.map(c => `<span class="tag-color-dot${c === currentColor ? ' is-active' : ''}" data-color="${c}" style="background:${c}"></span>`).join('')}
+      </div>
+      <div class="tag-color-picker-custom">
+        <input type="color" class="tag-color-input" value="${currentColor}">
+        <span class="tag-color-reset" title="重置为默认色">↺</span>
+      </div>
+    `;
+
+    // 定位
+    const rect = anchorEl.getBoundingClientRect();
+    picker.style.position = 'fixed';
+    picker.style.left = rect.left + 'px';
+    picker.style.top = (rect.bottom + 4) + 'px';
+    picker.style.zIndex = '9999';
+    document.body.appendChild(picker);
+
+    // 点击预设色
+    picker.querySelectorAll('.tag-color-dot').forEach(dot => {
+      dot.addEventListener('click', () => {
+        tagColors[tag] = dot.dataset.color;
+        saveTagColors();
+        picker.remove();
+        renderAccounts();
+      });
+    });
+    // 自定义取色器
+    const colorInput = picker.querySelector('.tag-color-input');
+    colorInput.addEventListener('input', () => {
+      tagColors[tag] = colorInput.value;
+      saveTagColors();
+      renderAccounts();
+    });
+    // 重置
+    picker.querySelector('.tag-color-reset').addEventListener('click', () => {
+      delete tagColors[tag];
+      saveTagColors();
+      picker.remove();
+      renderAccounts();
+    });
+    // 点击外部关闭
+    setTimeout(() => {
+      document.addEventListener('click', function closePicker(e) {
+        if (!picker.contains(e.target)) {
+          picker.remove();
+          document.removeEventListener('click', closePicker);
+        }
+      });
+    }, 10);
   }
 
   // ==================== 批量导入模态弹窗 ====================
@@ -3095,6 +3203,17 @@
       if (!email) return;
       e.preventDefault();
       openTagEditModal('edit', email);
+    });
+    // 双击标签 chip 修改颜色
+    if (accountGrid) accountGrid.addEventListener('dblclick', (e) => {
+      const chip = e.target.closest('.grid-tag-chip');
+      if (!chip) return;
+      const card = chip.closest('.grid-card');
+      const email = card?.dataset.email;
+      const account = accounts.find(a => a.email === email);
+      if (!account?.tag) return;
+      e.preventDefault();
+      openTagColorPicker(account.tag, chip);
     });
 
     // ── 统一过滤器 ──

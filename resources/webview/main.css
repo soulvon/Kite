@@ -824,7 +824,7 @@ details > summary::marker { display: none; content: ''; }
 .tag-bar-label { font-size: 10px; color: var(--muted); margin-right: 2px; }
 .tag-list { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 .tag-chip {
-    padding: 3px 8px;
+    padding: 2px 7px;
     font-size: 10px;
     font-weight: 500;
     border-radius: 4px;
@@ -1016,11 +1016,73 @@ details > summary::marker { display: none; content: ''; }
     font-size: 9px;
     padding: 1px 6px;
     border-radius: 3px;
-    background: rgba(139, 92, 246, 0.12);
-    color: var(--ac-violet);
+    background: #8b5cf6;
+    color: #fff;
+    font-weight: 500;
     cursor: pointer;
+    border: none;
+    transition: opacity 0.15s;
+    line-height: 1.4;
 }
-.grid-tag-chip:hover { background: rgba(139, 92, 246, 0.2); }
+.grid-tag-chip:hover { opacity: 0.8; }
+.grid-tag-chip.is-active { box-shadow: 0 0 0 1.5px rgba(255,255,255,0.4); }
+
+/* ── Tag Color Picker ── */
+.tag-color-picker {
+    background: var(--card-bg, #1e1e2e);
+    border: 1px solid var(--card-border, #333);
+    border-radius: 8px;
+    padding: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    min-width: 180px;
+}
+.tag-color-picker-title {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    text-align: center;
+}
+.tag-color-picker-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    margin-bottom: 8px;
+}
+.tag-color-dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.12s, border-color 0.12s;
+}
+.tag-color-dot:hover { transform: scale(1.2); }
+.tag-color-dot.is-active { border-color: #fff; transform: scale(1.15); }
+.tag-color-picker-custom {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+    padding-top: 6px;
+    border-top: 1px solid var(--card-border, #333);
+}
+.tag-color-input {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 0;
+    background: none;
+}
+.tag-color-reset {
+    font-size: 16px;
+    cursor: pointer;
+    color: var(--muted);
+    transition: color 0.15s;
+}
+.tag-color-reset:hover { color: var(--accent, #10b981); }
 
 /* Quotas */
 .grid-card-quotas {
