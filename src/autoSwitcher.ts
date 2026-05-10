@@ -104,7 +104,7 @@ export class AutoSwitcher implements vscode.Disposable {
       minQuota: this._ctx.globalState.get('as.minQuota', DEFAULTS.minQuota),
       preferUsedThreshold: this._ctx.globalState.get('as.preferUsedThreshold', DEFAULTS.preferUsedThreshold),
       poolScope: this._ctx.globalState.get('as.poolScope', DEFAULTS.poolScope) as PoolScope,
-      poolTags: this._ctx.globalState.get<string[]>('as.poolTags') || this._migratePoolTag(),
+      poolTags: this._getPoolTags(),
     };
   }
 
@@ -120,15 +120,18 @@ export class AutoSwitcher implements vscode.Disposable {
     if (p.preferUsedThreshold !== undefined) await this._ctx.globalState.update('as.preferUsedThreshold', p.preferUsedThreshold);
     if (p.poolScope !== undefined) await this._ctx.globalState.update('as.poolScope', p.poolScope);
     if (p.poolTags !== undefined) {
-      // 仅在实际变化时写入，避免初始化时空数组覆盖已保存的标签
       const cur = this._ctx.globalState.get<string[]>('as.poolTags') || [];
-      const next = p.poolTags;
-      if (JSON.stringify(cur) !== JSON.stringify(next)) {
-        console.log(`[autoSwitch] poolTags 变更: [${cur.join(',')}] → [${next.join(',')}]`);
-        await this._ctx.globalState.update('as.poolTags', next);
+      if (JSON.stringify(cur) !== JSON.stringify(p.poolTags)) {
+        await this._ctx.globalState.update('as.poolTags', p.poolTags);
       }
     }
     this._restartTimers();
+  }
+
+  private _getPoolTags(): string[] {
+    const raw = this._ctx.globalState.get<string[]>('as.poolTags');
+    if (raw && raw.length > 0) return raw;
+    return this._migratePoolTag();
   }
 
   /** 迁移旧版单标签 poolTag → 新版多标签 poolTags */

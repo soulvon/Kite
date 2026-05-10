@@ -17,6 +17,7 @@
   let autoSwitchPreferUsedThreshold = 50;
   let autoSwitchPoolScope = 'all';
   let autoSwitchPoolTags = [];
+  let autoSwitchPoolTagsDirty = false; // 本地已修改但未被后端确认
   let autoSwitchRefreshMin = 5;
   let autoSwitchSynced = false; // 是否已收到后端同步
   let pageSize = 20; // 每页显示数量，0=全部
@@ -1422,10 +1423,37 @@
           continue;
         }
       }
-      const idx = line.indexOf(delim);
-      if (idx <= 0) { errors.push(`第 ${i+1} 行格式错误: ${line.substring(0,40)}`); continue; }
-      const email = line.substring(0, idx).trim();
-      const password = line.substring(idx + delim.length).trim();
+      // 智能识别: 邮箱：xxx 密码：xxx 格式
+      const cnFmtMatch = line.match(/邮箱[：:]\s*(\S+)\s+密码[：:]\s*(\S+)/);
+      if (cnFmtMatch) {
+        const email = cnFmtMatch[1].trim();
+        const password = cnFmtMatch[2].trim();
+        if (!email || !password) { errors.push(`第 ${i+1} 行邮箱或密码为空`); continue; }
+        if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
+        seen.add(email.toLowerCase());
+        accts.push({ email, password, authMethod });
+        continue;
+      }
+      // 分隔符解析（smart 模式自动尝试多种分隔符）
+      let email = '', password = '';
+      if (delim === 'smart') {
+        const smartDelims = ['----', '\t', ',', '|', ' '];
+        let found = false;
+        for (const d of smartDelims) {
+          const idx = line.indexOf(d);
+          if (idx > 0) {
+            const e = line.substring(0, idx).trim();
+            const p = line.substring(idx + d.length).trim();
+            if (e && p) { email = e; password = p; found = true; break; }
+          }
+        }
+        if (!found) { errors.push(`第 ${i+1} 行格式错误: ${line.substring(0,40)}`); continue; }
+      } else {
+        const idx = line.indexOf(delim);
+        if (idx <= 0) { errors.push(`第 ${i+1} 行格式错误: ${line.substring(0,40)}`); continue; }
+        email = line.substring(0, idx).trim();
+        password = line.substring(idx + delim.length).trim();
+      }
       if (!email || !password) { errors.push(`第 ${i+1} 行邮箱或密码为空`); continue; }
       if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
       seen.add(email.toLowerCase());
@@ -1547,7 +1575,8 @@
     const ta = document.getElementById('batchText');
     const hint = document.querySelector('#batchTextArea .batch-hint');
     if (!(ta instanceof HTMLTextAreaElement)) return;
-    let d = delim || '----';
+    let d = delim || 'smart';
+    if (d === 'smart') d = '----';
     if (d === '\\t') d = '\t';
     if (d === 'custom') d = '<自定义>';
     const am = authMethod || 'auto';
@@ -1621,8 +1650,10 @@
         const tag = el.dataset.tag;
         if (tag && !autoSwitchPoolTags.includes(tag)) {
           autoSwitchPoolTags.push(tag);
+          autoSwitchPoolTagsDirty = true;
           renderTagPicker();
-          sendAutoSwitchSettings();
+          // 直接走轻量专用消息保存（绕过 autoSwitchSettings 大 payload 丢失问题）
+          postMsg('savePoolTags', { poolTags: [...autoSwitchPoolTags] });
         }
       });
     });
@@ -1630,8 +1661,9 @@
       el.addEventListener('click', () => {
         const tag = el.dataset.tag;
         autoSwitchPoolTags = autoSwitchPoolTags.filter(t => t !== tag);
+        autoSwitchPoolTagsDirty = true;
         renderTagPicker();
-        sendAutoSwitchSettings();
+        postMsg('savePoolTags', { poolTags: [...autoSwitchPoolTags] });
       });
     });
   }
@@ -1813,6 +1845,8 @@
       try { const st = vscode.getState() || {}; st._filterPlans = []; st._filterTags = []; st._filterStatuses = []; vscode.setState(st); } catch {}
     }
     renderCards();
+    // 账号数据到达后重新渲染标签选择器（修复时序问题：settingsSync 先到，accounts 后到时标签列表为空）
+    renderTagPicker();
     // 更新外部账户提示条
     const banner = document.getElementById('externalBanner');
     const emailEl = document.getElementById('externalEmail');
@@ -1912,13 +1946,22 @@
         autoSwitchMinQuota = msg.minQuota ?? 10;
         autoSwitchPreferUsedThreshold = msg.preferUsedThreshold ?? 50;
         autoSwitchPoolScope = msg.poolScope || 'all';
-        autoSwitchPoolTags = msg.poolTags || [];
+        // 仅在本地未修改时才接受后端的 poolTags（避免后端旧值覆盖本地新选择）
+        if (!autoSwitchPoolTagsDirty) {
+          autoSwitchPoolTags = msg.poolTags || [];
+        }
         autoSwitchRefreshMin = msg.refreshMin || 5;
         autoSwitchSynced = true;
         syncAutoSwitchUI();
         syncStrategyUI();
         const asDetailsSync = document.getElementById('asDetails');
         if (asDetailsSync) { if (autoSwitchEnabled) asDetailsSync.setAttribute('open', ''); else asDetailsSync.removeAttribute('open'); }
+        break;
+      }
+
+      case 'poolTagsSaved': {
+        // 后端确认 poolTags 已保存，清除 dirty 标记
+        autoSwitchPoolTagsDirty = false;
         break;
       }
 
@@ -3545,7 +3588,7 @@
 
     // 自动切号设置 → 发送到后端
     function sendAutoSwitchSettings() {
-      if (!autoSwitchSynced) return; // 未收到后端同步前不发送，避免覆盖
+      if (!autoSwitchSynced) return;
       postMsg('autoSwitchSettings', {
         enabled: autoSwitchEnabled,
         threshold: autoSwitchThreshold,

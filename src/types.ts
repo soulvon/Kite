@@ -78,7 +78,8 @@ export type WebviewMessageType =
   | 'enhCommand'
   | 'enhForceStop'
   | 'requestBridgeInfo'
-  | 'getUsageStats';
+  | 'getUsageStats'
+  | 'savePoolTags';
 
 /**
  * Webview 消息

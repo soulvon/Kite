@@ -174,7 +174,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const selected = state['windsurf.state.lastSelectedCascadeModelUids'];
           if (Array.isArray(selected)) {
             recentUids = selected;
-            currentModel = selected[0] || '';
+            const rawCurrent = selected[0] || '';
+            // 将 UID/汉化名映射回可读 label（state DB 可能存了汉化后的名称）
+            currentModel = this._resolveModelLabel(rawCurrent, allModels) || rawCurrent;
           }
         }
       } catch {}
@@ -190,6 +192,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         message: '读取模型数据库失败: ' + err
       }} as any);
     }
+  }
+
+  /** 将 state DB 中的 UID 或汉化名映射回可读模型 label */
+  private _resolveModelLabel(raw: string, allModels: string[]): string {
+    if (!raw) return '';
+    // 精确匹配
+    if (allModels.includes(raw)) return raw;
+    // UID 模糊匹配: claude-opus-4-7-medium → Claude Opus 4.7 Medium
+    const rawNorm = raw.replace(/[-_.]/g, ' ').toLowerCase();
+    for (const m of allModels) {
+      const mNorm = m.replace(/[-.\s]/g, ' ').toLowerCase();
+      if (mNorm === rawNorm || rawNorm.includes(mNorm) || mNorm.includes(rawNorm)) return m;
+    }
+    // 去掉中文字符后再匹配（处理汉化残留如 "SWE-1.6New免费" → "SWE-1.6New"）
+    const rawAscii = raw.replace(/[^\x00-\x7F]/g, '').trim();
+    if (rawAscii && rawAscii !== raw) {
+      const asciiNorm = rawAscii.replace(/[-_.]/g, ' ').toLowerCase();
+      for (const m of allModels) {
+        const mNorm = m.replace(/[-.\s]/g, ' ').toLowerCase();
+        if (mNorm.includes(asciiNorm) || asciiNorm.includes(mNorm)) return m;
+      }
+    }
+    return '';
   }
 
   /** 过滤只保留主流模型 + 最近使用 */
@@ -229,6 +254,130 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
       } catch (e) { reject(e); }
     });
+  }
+
+  private _writeStateDbKey(key: string, value: string): Promise<void> {
+    const dbPath = path.join(process.env.APPDATA || '', 'Windsurf/User/globalStorage/state.vscdb');
+    const sqlitePath = path.join(vscode.env.appRoot, 'node_modules/@vscode/sqlite3');
+    return new Promise((resolve, reject) => {
+      try {
+        const sqlite = require(sqlitePath);
+        const db = new sqlite.Database(dbPath, (err: any) => {
+          if (err) { reject(err); return; }
+          db.run('INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)', [key, value], (e: any) => {
+            db.close();
+            if (e) reject(e);
+            else resolve();
+          });
+        });
+      } catch (e) { reject(e); }
+    });
+  }
+
+  /**
+   * 从 windsurfConfigurations protobuf 中提取 label → UID 映射
+   * UID 格式: lowercase-kebab-case (如 claude-opus-4-7)
+   * Label 格式: Title Case (如 Claude Opus 4.7)
+   */
+  private async _extractModelUidMapping(): Promise<Map<string, string>> {
+    const raw = await this._readStateDbKey('windsurfConfigurations');
+    if (!raw) return new Map();
+    const buf = Buffer.from(raw, 'base64');
+    const text = buf.toString('utf8');
+    const mapping = new Map<string, string>();
+
+    // 提取 labels (Title Case)
+    const labels: string[] = [];
+    const labelRe = /(?:Claude|GPT|SWE|Gemini|Grok|DeepSeek|Llama|Qwen|Mistral)[\w\s.\-()]+/g;
+    let m: RegExpExecArray | null;
+    while ((m = labelRe.exec(text)) !== null) {
+      const name = m[0].trim();
+      if (name.length > 3 && name.length < 50 && !/_/.test(name)) labels.push(name);
+    }
+
+    // 提取 UIDs (lowercase-kebab-case)
+    const uids = new Set<string>();
+    const uidRe = /\b(claude|gpt|swe|gemini|grok|deepseek|llama|qwen|mistral)[-a-z0-9]+/g;
+    while ((m = uidRe.exec(text)) !== null) {
+      const uid = m[0];
+      if (uid.length > 3 && uid.includes('-')) uids.add(uid);
+    }
+
+    // 建立映射: 通过规范化文本匹配
+    for (const label of labels) {
+      const labelNorm = label.replace(/[.\-\s]/g, ' ').toLowerCase().trim();
+      for (const uid of uids) {
+        const uidNorm = uid.replace(/-/g, ' ');
+        if (uidNorm === labelNorm || labelNorm.includes(uidNorm) || uidNorm.includes(labelNorm)) {
+          mapping.set(label, uid);
+          break;
+        }
+      }
+    }
+    return mapping;
+  }
+
+  /**
+   * 后端切换模型: 写入 state.vscdb + 同时尝试 bridge DOM 方式
+   * 解决 bridge 不可用时切换模型失败的问题
+   */
+  private async _handleSwitchModel(cmdId: number, targetLabel: string) {
+    if (!targetLabel) {
+      this.postMessage({ type: 'enhCommandResult', result: {
+        id: cmdId, action: 'test-switch-model', status: 'error',
+        message: '未指定模型'
+      }} as any);
+      return;
+    }
+    try {
+      // 1. 提取 label → UID 映射
+      const uidMap = await this._extractModelUidMapping();
+
+      // 2. 查找目标模型 UID（优先精确匹配，退一步用规范化转换）
+      let targetUid = uidMap.get(targetLabel) || '';
+      if (!targetUid) {
+        // 模糊匹配: 遍历所有映射寻找包含关系
+        for (const [label, uid] of uidMap) {
+          const labelNorm = label.replace(/[.\-\s]/g, ' ').toLowerCase();
+          const targetNorm = targetLabel.replace(/[.\-\s]/g, ' ').toLowerCase();
+          if (labelNorm.includes(targetNorm) || targetNorm.includes(labelNorm)) {
+            targetUid = uid;
+            break;
+          }
+        }
+      }
+      if (!targetUid) {
+        // 最终兜底: 直接从 label 推导 UID
+        targetUid = targetLabel.toLowerCase().replace(/\s+/g, '-').replace(/\./g, '-').replace(/[()]/g, '').replace(/--+/g, '-').replace(/-$/, '');
+      }
+
+      // 3. 读取当前 codeium.windsurf 状态
+      const codeiumRaw = await this._readStateDbKey('codeium.windsurf');
+      const state = codeiumRaw ? JSON.parse(codeiumRaw) : {};
+
+      // 4. 更新 lastSelectedCascadeModelUids（目标 UID 置顶）
+      const currentUids: string[] = state['windsurf.state.lastSelectedCascadeModelUids'] || [];
+      const newUids = [targetUid, ...currentUids.filter((u: string) => u !== targetUid)];
+      state['windsurf.state.lastSelectedCascadeModelUids'] = newUids;
+
+      // 5. 写入 state DB
+      await this._writeStateDbKey('codeium.windsurf', JSON.stringify(state));
+      this.log(`[switchModel] 已写入 state DB: uid=${targetUid} label=${targetLabel}`);
+
+      // 注意: 不再通过 bridge 发送 test-switch-model，避免 bridge 的错误响应覆盖后端成功结果
+
+      this.postMessage({ type: 'enhCommandResult', result: {
+        id: cmdId, action: 'test-switch-model', status: 'done',
+        message: `已切换到 ${targetLabel}（UID: ${targetUid}，下次对话生效）`,
+        newModel: targetLabel
+      }} as any);
+    } catch (err) {
+      this.log(`[switchModel] 失败: ${err}`);
+      this.postMessage({ type: 'enhCommandResult', result: {
+        id: cmdId, action: 'test-switch-model', status: 'error',
+        message: '切换失败: ' + err
+      }} as any);
+    }
   }
 
   private async _readModelsFromStateDb(): Promise<string[]> {
@@ -391,7 +540,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /** 推送自动切号设置给 webview + 同步 enabled 状态到 windsurf-better.js */
   private _pushAutoSwitchSettings(): void {
     const s = this._autoSwitcher.settings;
-    console.log(`[autoSwitch] pushSettings → webview: poolScope=${s.poolScope}, poolTags=[${(s.poolTags || []).join(',')}]`);
     this.postMessage({ type: 'autoSwitchSettingsSync', ...s } as any);
     // 同步 autoSwitchEnabled 给 DOM 侧，关闭时 windsurf-better.js 不再发送切号信号
     try {
@@ -420,9 +568,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const m = message as any;
         if (m.id != null && m.action) {
           this.log(`[enhCommand] → 入队 action=${m.action} id=${m.id}`);
-          // 特殊处理 fetch-models：先用 Windsurf 内部命令打开面板，再让 JS 被动读
+          // 特殊处理：后端直接处理，不经过 bridge
           if (m.action === 'fetch-models') {
             this._handleFetchModels(m.id);
+          } else if (m.action === 'test-switch-model') {
+            this._handleSwitchModel(m.id, m.payload?.model);
           } else {
             enqueueCommand({ id: m.id, action: m.action, payload: m.payload || {} });
           }
@@ -612,6 +762,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       case 'getUsageStats': {
         this._pushUsageStats();
+        break;
+      }
+
+      case 'savePoolTags': {
+        const m = message as any;
+        const tags: string[] = m.poolTags || [];
+        await this._context.globalState.update('as.poolTags', tags);
+        this.postMessage({ type: 'poolTagsSaved', poolTags: tags } as any);
         break;
       }
 
@@ -2190,7 +2348,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <div class="batch-section">
               <label class="batch-mode-label">分隔符</label>
               <div class="batch-radio-group batch-radio-group--wrap">
-                <label class="batch-radio"><input type="radio" name="batchDelimRadio" value="----" checked> ----</label>
+                <label class="batch-radio"><input type="radio" name="batchDelimRadio" value="smart" checked> 智能识别</label>
+                <label class="batch-radio"><input type="radio" name="batchDelimRadio" value="----"> ----</label>
                 <label class="batch-radio"><input type="radio" name="batchDelimRadio" value="\\t"> Tab</label>
                 <label class="batch-radio"><input type="radio" name="batchDelimRadio" value=" "> 空格</label>
                 <label class="batch-radio"><input type="radio" name="batchDelimRadio" value=","> 逗号</label>
@@ -2199,17 +2358,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               </div>
               <input type="text" id="batchCustomDelim" class="batch-custom-delim" placeholder="输入自定义分隔符" hidden>
             </div>
-            <select id="batchDelimiter" hidden><option value="----">----</option><option value="\\t">Tab</option><option value=" ">空格</option><option value=",">逗号</option><option value="|">竖线</option><option value="custom">自定义</option></select>
+            <select id="batchDelimiter" hidden><option value="smart">智能识别</option><option value="----">----</option><option value="\\t">Tab</option><option value=" ">空格</option><option value=",">逗号</option><option value="|">竖线</option><option value="custom">自定义</option></select>
 
             <label class="batch-hint">每行一组: 邮箱{分隔符}密码 — 或直接粘贴 auth1_ / devin-session-token$ 开头的 token 自动识别</label>
-            <textarea id="batchText" class="batch-textarea" rows="6" placeholder="user1@example.com----password123&#10;user2@example.com----abc456789&#10;auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
+            <textarea id="batchText" class="batch-textarea" rows="6" placeholder="user1@example.com----password123&#10;邮箱：user2@example.com 密码：abc456789&#10;auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
 
             <details class="batch-example">
               <summary>格式示例（点击展开）</summary>
               <div class="batch-example-content">
                 <div class="batch-example-label">邮箱 + 密码</div>
                 <pre class="batch-example-code">user1@example.com----password123
-user2@example.com----abc456789</pre>
+user2@example.com----abc456789
+邮箱：user3@example.com 密码：mypass789</pre>
                 <div class="batch-example-label" style="margin-top:8px">Token 直接导入</div>
                 <pre class="batch-example-code">auth1_xxxxxxxxxxxx...
 devin-session-token$eyJhbGciOi...</pre>
