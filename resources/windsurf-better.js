@@ -632,6 +632,25 @@
 		if (mm) data.mode = mm[1];
 	}
 	
+	// 判断文本节点是否处于"不应渲染气泡"的容器中：代码块、输入框、可编辑区
+	// 这样代码块里贴 :::bubbles 示例 / 输入框预览，不会被解析吃掉
+	function isInExcludedBubbleZone(node) {
+		let p = node && (node.nodeType === 1 ? node : node.parentElement);
+		while (p) {
+			const tag = p.tagName;
+			if (tag === 'PRE' || tag === 'CODE' || tag === 'KBD' || tag === 'SAMP' ||
+			    tag === 'TEXTAREA' || tag === 'INPUT') return true;
+			if (p.isContentEditable) return true;
+			// 兼容常见 markdown / chat 输入框样式类
+			const cls = p.className;
+			if (typeof cls === 'string' && cls && (
+				/\b(code-block|markdown-code-block|hljs|monaco-editor|input-area|chat-input|composer|editor-host)\b/.test(cls)
+			)) return true;
+			p = p.parentElement;
+		}
+		return false;
+	}
+
 	function findClosingMarker(openNode, openOffset, scope) {
 		const sameNodeText = openNode.textContent.substring(openOffset + 10);
 		const sameMatch = sameNodeText.match(/:{3}(?!bubbles)/);
@@ -642,6 +661,8 @@
 		w.currentNode = openNode;
 		let next;
 		while (next = w.nextNode()) {
+			// 跳过代码块/输入框中的 ::: ，避免跨容器吞内容
+			if (isInExcludedBubbleZone(next)) continue;
 			const t = next.textContent || '';
 			const m = t.match(/:{3}(?!bubbles)/);
 			if (m) return { node: next, offset: m.index + 3 };
@@ -721,6 +742,8 @@
 		const opens = [];
 		let tn;
 		while (tn = walker.nextNode()) {
+			// 跳过代码块/输入框/可编辑区里的 :::bubbles —— 那些是示例文本，不该渲染
+			if (isInExcludedBubbleZone(tn)) continue;
 			const txt = tn.textContent || '';
 			let idx = -1, searchFrom = 0;
 			while ((idx = txt.indexOf(':::bubbles', searchFrom)) >= 0) {
@@ -809,7 +832,59 @@
 	}
 	
 	// ========== 汉化功能 ==========
-	const EXCLUDE_SELECTOR = '.monaco-editor, .monaco-diff-editor, [class*="diffEditor"], [class*="diff-editor"], [class*="codeBlock"], [class*="code-block"], .hljs, pre, code, textarea, input, [contenteditable="true"], .xterm, .terminal, .debug-console, .ws-bubbles, .ws-better-panel, #ws-recovery-toast, [aria-label*="Model Selector"], [aria-label*="\u6a21\u578b\u9009\u62e9"], [class*="model-selector"], [class*="modelSelector"]';
+	const EXCLUDE_SELECTOR = [
+		// ── 编辑器与代码区 ──
+		'.monaco-editor', '.monaco-diff-editor',
+		'[class*="diffEditor"]', '[class*="diff-editor"]',
+		'[class*="codeBlock"]', '[class*="code-block"]',
+		'.hljs', '[class*="hljs"]',                   // highlight.js（含变体）
+		'.shiki', '[class*="shiki"]',                  // Shiki 语法高亮器
+		'[class*="language-"]',                        // Prism / 通用 language-xx 标记
+		'[class*="token"]',                            // Prism / Monaco token spans
+		'pre', 'code', 'kbd', 'samp', 'var',           // 标准代码相关元素
+		'textarea', 'input', '[contenteditable="true"]',
+		// ── 终端 / 输出区 ──
+		'.xterm', '.terminal', '.debug-console',
+		'[id*="workbench.panel.output"]',              // 输出面板
+		'[id*="workbench.panel.markers"]',             // 问题/诊断面板
+		// ── 自家 UI 不翻译 ──
+		'.ws-bubbles', '.ws-better-panel', '#ws-recovery-toast',
+		// ── Windsurf 模型选择器面板 ──
+		'[aria-label*="Model Selector"]', '[aria-label*="\u6a21\u578b\u9009\u62e9"]',
+		'[class*="model-selector"]', '[class*="modelSelector"]',
+		// ── 文件名/路径相关：禁止翻译文件夹/文件名 ──
+		'.explorer-folders-view',                      // 资源管理器文件树
+		'[id*="workbench.view.explorer"]',             // Explorer 视图容器
+		'[id*="workbench.view.search"]',               // 搜索结果
+		'[id*="workbench.view.scm"]',                  // 源代码管理（变更文件列表）
+		'.outline-tree',                               // 大纲视图
+		'.monaco-list-row[role="treeitem"]',           // 任意树视图的行
+		'.monaco-icon-label',                          // 带图标的文件/路径标签
+		'.breadcrumbs',                                // 面包屑导航
+		'.tabs-container .tab',                         // 编辑器标签页
+		'.editor-group-container .title',              // 编辑器组标题区
+		'.statusbar',                                  // 状态栏（含文件路径/git 分支）
+		// ── Cascade 聊天代码/工具调用区 ──
+		'[class*="markdown-body"]', '[class*="markdownBody"]',  // markdown 渲染容器（含代码块）
+		'[class*="tool-call"]', '[class*="toolCall"]', '[class*="tool_call"]',  // 工具调用展示
+		'[class*="code-citation"]', '[class*="codeCitation"]',  // 代码引用
+		'[class*="file-citation"]', '[class*="fileCitation"]',  // 文件引用
+		'[class*="diff-line"]', '[class*="diffLine"]',          // 内嵌 diff 行
+		'[data-language]',                             // 标注了语言的代码块容器
+		'[role="code"]',                               // ARIA code 角色
+		// ── 笔记本 ──
+		'.notebook-editor', '.notebook-cell-list',
+		'[class*="cell-editor-part"]',
+		// ── Quick Pick / 命令面板（常含文件路径） ──
+		'.quick-input-widget',
+		'.quick-input-list',
+		// ── Hover 浮窗里的代码 ──
+		'.monaco-hover code',
+		'.monaco-hover pre',
+		// ── Notification 中的命令/路径 ──
+		'.notification-list-item-source',
+		'.notification-list-item-detail-row code'
+	].join(', ');
 	// 模型名标识正则：文本包含已知模型/智能体名称时跳过翻译（避免翻译模型限定词如 Thinking/Fast/Medium）
 	const MODEL_LABEL_SKIP_RE = /\b(claude|gpt-?\d|gpt-?o|o\d-|gemini|llama|qwen|deepseek|mistral|mixtral|swe-?\d|grok|haiku|sonnet|opus|codestral|devstral|devin)\b/i;
 	// 描述性词汇指示符：含这些词时认为是描述/说明文字而非模型标签，不跳过翻译
