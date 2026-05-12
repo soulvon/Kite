@@ -28,6 +28,7 @@
   let lockedEmailsMap = {}; // email → { instanceName }
   let perAccountStats = {}; // email → { switchToCount, dailyUsedPct, weeklyUsedPct }
   let tagColors = {}; // tag → color hex（用户自定义颜色，持久化到 localStorage）
+  let privacyMode = false;
 
   // ── 标签颜色系统 ──
   const TAG_PALETTE = [
@@ -125,6 +126,40 @@
     return 'period-green';
   }
 
+  function maskEmail(email) {
+    if (!email || typeof email !== 'string') return '';
+    const at = email.indexOf('@');
+    if (at <= 0) return email.length <= 4 ? '*'.repeat(email.length) : email.slice(0, 2) + '***' + email.slice(-2);
+    const name = email.slice(0, at);
+    const domain = email.slice(at + 1);
+    const maskedName = name.length <= 2 ? name[0] + '***' : name.slice(0, 2) + '***' + name.slice(-1);
+    const dot = domain.lastIndexOf('.');
+    if (dot <= 0) return maskedName + '@***';
+    const host = domain.slice(0, dot);
+    const suffix = domain.slice(dot);
+    const maskedHost = host.length <= 2 ? host[0] + '***' : host.slice(0, 1) + '***' + host.slice(-1);
+    return maskedName + '@' + maskedHost + suffix;
+  }
+
+  function displayEmail(email) {
+    return privacyMode ? maskEmail(email) : email;
+  }
+
+  function updatePrivacyModeUi() {
+    if (!privacyModeBtn) return;
+    privacyModeBtn.classList.toggle('is-active', privacyMode);
+    privacyModeBtn.title = privacyMode ? '隐私模式：已开启，点击显示邮箱' : '隐私模式：隐藏邮箱';
+    const eye = privacyModeBtn.querySelector('.privacy-eye');
+    const eyeOff = privacyModeBtn.querySelector('.privacy-eye-off');
+    if (eye) eye.hidden = privacyMode;
+    if (eyeOff) eyeOff.hidden = !privacyMode;
+  }
+
+  function setExternalEmailText() {
+    const emailEl = document.getElementById('externalEmail');
+    if (emailEl) emailEl.textContent = displayEmail(externalAccount);
+  }
+
   // ==================== DOM 元素 ====================
   const $ = (sel) => document.querySelector(sel);
   const accountGrid = $('#accountGrid');
@@ -133,6 +168,7 @@
   const asEnabledEl = $('#asEnabled');
   const asThresholdEl = $('#asThreshold');
   const refreshAllBtn = $('#refreshAllBtn');
+  const privacyModeBtn = $('#privacyModeBtn');
 
   // Windsurf 增强面板元素
   const enhanceToggleBtn = $('#enhanceToggleBtn');
@@ -197,6 +233,10 @@
   const enhAutoSwitchOnQuota = $('#enhAutoSwitchOnQuota');
   const enhAutoSwitchOnRateLimit = $('#enhAutoSwitchOnRateLimit');
   const enhAutoRecoveryEnabled = $('#enhAutoRecoveryEnabled');
+  // v6.6.0 恢复确认 Banner 控件
+  const enhRecoveryConfirmEnabled = $('#enhRecoveryConfirmEnabled');
+  const enhRecoveryCountdownSeconds = $('#enhRecoveryCountdownSeconds');
+  const enhRecoveryPrefsClear = $('#enhRecoveryPrefsClear');
   // 恢复规则控件
   const ruleNetworkAction = $('#ruleNetworkAction');
   const ruleNetworkMaxRetries = $('#ruleNetworkMaxRetries');
@@ -462,7 +502,7 @@
       ${selectMode ? `<div class="grid-check-col"><input type="checkbox" class="grid-check-input" data-email="${escHtml(account.email)}" ${selectedEmails.has(account.email) ? 'checked' : ''}></div>` : ''}
       <div class="grid-card-body">
       <div class="grid-card-head">
-        <div class="grid-card-email" title="${escHtml(account.email)}">${escHtml(account.email)}</div>
+        <div class="grid-card-email" title="${escHtml(displayEmail(account.email))}">${escHtml(displayEmail(account.email))}</div>
         ${isActive ? '<span class="grid-active-tag">当前</span>' : ''}
         ${!isActive && lockedEmails.has(account.email) ? '<span class="grid-locked-tag" title="被其他窗口占用中">🔒 占用</span>' : ''}
         ${account.disabled ? '<span class="grid-disabled-tag">已禁用</span>' : ''}
@@ -1423,16 +1463,51 @@
           continue;
         }
       }
-      // 智能识别: 邮箱：xxx 密码：xxx 格式
-      const cnFmtMatch = line.match(/邮箱[：:]\s*(\S+)\s+密码[：:]\s*(\S+)/);
+      // 智能识别: 邮箱：xxx 密码：xxx 格式（支持单行和多行）
+      const cnFmtMatch = line.match(/邮箱[：:]\s*(\S+)/);
       if (cnFmtMatch) {
         const email = cnFmtMatch[1].trim();
-        const password = cnFmtMatch[2].trim();
-        if (!email || !password) { errors.push(`第 ${i+1} 行邮箱或密码为空`); continue; }
-        if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
-        seen.add(email.toLowerCase());
-        accts.push({ email, password, authMethod });
-        continue;
+        // 查找下一行的密码
+        if (i + 1 < lines.length) {
+          const nextLine = lines[i + 1].trim();
+          const pwdMatch = nextLine.match(/密码[：:]\s*(\S+)/);
+          if (pwdMatch) {
+            const password = pwdMatch[1].trim();
+            if (!email || !password) { errors.push(`第 ${i+1} 行邮箱或密码为空`); continue; }
+            // 密码字段是 token，直接用 token 导入
+            if (password.startsWith('auth1_') || password.startsWith('devin-session-token$')) {
+              const tokenKey = password.substring(0, 32);
+              if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); i++; continue; }
+              seen.add(tokenKey);
+              accts.push({ token: password });
+              i++; continue;
+            }
+            if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
+            seen.add(email.toLowerCase());
+            accts.push({ email, password, authMethod });
+            i++; // 跳过下一行（密码行）
+            continue;
+          }
+        }
+        // 单行格式：邮箱：xxx 密码：xxx
+        const singleLineMatch = line.match(/邮箱[：:]\s*(\S+)\s+密码[：:]\s*(\S+)/);
+        if (singleLineMatch) {
+          const email = singleLineMatch[1].trim();
+          const password = singleLineMatch[2].trim();
+          if (!email || !password) { errors.push(`第 ${i+1} 行邮箱或密码为空`); continue; }
+          // 密码字段是 token，直接用 token 导入
+          if (password.startsWith('auth1_') || password.startsWith('devin-session-token$')) {
+            const tokenKey = password.substring(0, 32);
+            if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
+            seen.add(tokenKey);
+            accts.push({ token: password });
+            continue;
+          }
+          if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
+          seen.add(email.toLowerCase());
+          accts.push({ email, password, authMethod });
+          continue;
+        }
       }
       // 分隔符解析（smart 模式自动尝试多种分隔符）
       let email = '', password = '';
@@ -1455,6 +1530,14 @@
         password = line.substring(idx + delim.length).trim();
       }
       if (!email || !password) { errors.push(`第 ${i+1} 行邮箱或密码为空`); continue; }
+      // 密码字段是 token，直接用 token 导入
+      if (password.startsWith('auth1_') || password.startsWith('devin-session-token$')) {
+        const tokenKey = password.substring(0, 32);
+        if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
+        seen.add(tokenKey);
+        accts.push({ token: password });
+        continue;
+      }
       if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
       seen.add(email.toLowerCase());
       accts.push({ email, password, authMethod });
@@ -1581,14 +1664,14 @@
     if (d === 'custom') d = '<自定义>';
     const am = authMethod || 'auto';
     if (am === 'auth1') {
-      ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789\nauth1_xxxx... 或 devin-session-token$eyJ...`;
-      if (hint) hint.textContent = '每行一组: 邮箱{分隔符}密码 — 或直接粘贴 auth1_ / devin-session-token$ 开头的 token';
+      ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789\n邮箱：xxx 密码：xxx\nauth1_xxxx... 或 devin-session-token$eyJ...`;
+      if (hint) hint.textContent = '智能识别多种格式，直接粘贴即可';
     } else if (am === 'firebase') {
-      ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789`;
-      if (hint) hint.textContent = '每行一组: 邮箱{分隔符}密码（Firebase 登录）';
+      ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789\n邮箱：xxx 密码：xxx`;
+      if (hint) hint.textContent = '智能识别多种格式，直接粘贴即可';
     } else {
-      ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789\nauth1_xxxx... 或 devin-session-token$eyJ...`;
-      if (hint) hint.textContent = '每行一组: 邮箱{分隔符}密码 — 或直接粘贴 auth1_ / devin-session-token$ 开头的 token 自动识别';
+      ta.placeholder = `user1@example.com${d}password123\nuser2@example.com${d}abc456789\n邮箱：xxx 密码：xxx\nauth1_xxxx... 或 devin-session-token$eyJ...`;
+      if (hint) hint.textContent = '智能识别多种格式，直接粘贴即可';
     }
   }
 
@@ -1613,6 +1696,171 @@
     el.textContent = lines.join('\n');
     el.scrollTop = el.scrollHeight;
   }
+
+  // ── 配额历史 ──
+
+  let _qhEntries = [];
+  let _qhEmails = [];
+  let _qhFilterEmail = '';
+  let _qhCurrentEmail = '';
+  let _qhInitialized = false;
+
+  function renderQuotaHistory(entries, emails, currentEmail) {
+    _qhEntries = entries || [];
+    _qhEmails = emails || [];
+    if (currentEmail !== undefined) _qhCurrentEmail = currentEmail;
+
+    // 更新账号下拉
+    const sel = document.getElementById('qhEmailFilter');
+    if (sel) {
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">全部账号</option>';
+      for (const em of _qhEmails) {
+        const opt = document.createElement('option');
+        opt.value = em;
+        opt.textContent = em.length > 28 ? em.slice(0, 14) + '…' + em.slice(-12) : em;
+        sel.appendChild(opt);
+      }
+      // 首次加载：默认选当前活跃账号（而非全部混在一起）
+      if (!_qhInitialized && _qhCurrentEmail && _qhEmails.includes(_qhCurrentEmail)) {
+        sel.value = _qhCurrentEmail;
+        _qhInitialized = true;
+      } else {
+        sel.value = prev || '';
+      }
+      _qhFilterEmail = sel.value;
+    }
+
+    const filtered = _qhFilterEmail
+      ? _qhEntries.filter(e => e.email === _qhFilterEmail)
+      : _qhEntries;
+
+    const emptyEl = document.getElementById('qhEmpty');
+    const listEl = document.getElementById('qhCardList');
+    const chartWrap = document.getElementById('qhChartWrap');
+    if (filtered.length === 0) {
+      if (emptyEl) emptyEl.style.display = '';
+      if (listEl) listEl.style.display = 'none';
+      if (chartWrap) chartWrap.style.display = 'none';
+      return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (listEl) listEl.style.display = '';
+    if (chartWrap) chartWrap.style.display = '';
+
+    // 渲染卡片列表（最新在上）
+    if (listEl) {
+      const items = filtered.slice().reverse().slice(0, 50);
+      listEl.innerHTML = '';
+      for (let idx = 0; idx < items.length; idx++) {
+        const e = items[idx];
+        const card = document.createElement('div');
+        card.className = 'qh-card';
+
+        const d = new Date(e.ts);
+        const timeStr = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0') + ':' + String(d.getSeconds()).padStart(2,'0');
+        const dateStr = String(d.getMonth()+1) + '/' + String(d.getDate());
+        const shortEmail = e.email.length > 24 ? e.email.slice(0, 10) + '…' + e.email.slice(-10) : e.email;
+
+        // 头部：时间 + 账号
+        const header = document.createElement('div');
+        header.className = 'qh-card-header';
+        header.innerHTML = '<span class="qh-card-time">' + dateStr + ' ' + timeStr + '</span>'
+          + (_qhFilterEmail ? '' : '<span class="qh-card-email" title="' + e.email.replace(/"/g, '&quot;') + '">' + shortEmail + '</span>');
+        card.appendChild(header);
+
+        // 日配额行
+        const dailyRow = document.createElement('div');
+        dailyRow.className = 'qh-card-row';
+        const dClass = e.daily <= 10 ? 'qh-bar-danger' : e.daily <= 30 ? 'qh-bar-warn' : 'qh-bar-ok';
+        const dDeltaStr = e.dDelta !== 0 ? ('<span class="' + (e.dDelta < 0 ? 'qh-delta-neg' : 'qh-delta-pos') + '">' + (e.dDelta > 0 ? '+' : '') + e.dDelta + '</span>') : '';
+        dailyRow.innerHTML = '<span class="qh-card-label">日</span>'
+          + '<div class="qh-bar"><div class="qh-bar-fill ' + dClass + '" style="width:' + Math.max(1, e.daily) + '%"></div></div>'
+          + '<span class="qh-card-pct">' + e.daily + '%</span>'
+          + dDeltaStr;
+        card.appendChild(dailyRow);
+
+        // 周配额行
+        const weeklyRow = document.createElement('div');
+        weeklyRow.className = 'qh-card-row';
+        const wClass = e.weekly <= 10 ? 'qh-bar-danger' : e.weekly <= 30 ? 'qh-bar-warn' : 'qh-bar-ok';
+        const wDeltaStr = e.wDelta !== 0 ? ('<span class="' + (e.wDelta < 0 ? 'qh-delta-neg' : 'qh-delta-pos') + '">' + (e.wDelta > 0 ? '+' : '') + e.wDelta + '</span>') : '';
+        weeklyRow.innerHTML = '<span class="qh-card-label">周</span>'
+          + '<div class="qh-bar"><div class="qh-bar-fill ' + wClass + '" style="width:' + Math.max(1, e.weekly) + '%"></div></div>'
+          + '<span class="qh-card-pct">' + e.weekly + '%</span>'
+          + wDeltaStr;
+        card.appendChild(weeklyRow);
+
+        // 底部：重置时间 + 倒计时
+        if (e.resetAt > 0) {
+          const footer = document.createElement('div');
+          footer.className = 'qh-card-footer';
+          const r = new Date(e.resetAt * 1000);
+          const resetStr = String(r.getMonth()+1) + '/' + String(r.getDate()) + ' ' + String(r.getHours()).padStart(2,'0') + ':' + String(r.getMinutes()).padStart(2,'0');
+          const remainMs = e.resetAt * 1000 - Date.now();
+          let countdownStr = '';
+          if (remainMs > 0) {
+            const h = Math.floor(remainMs / 3600000);
+            const m = Math.floor((remainMs % 3600000) / 60000);
+            countdownStr = '<span class="qh-countdown">' + h + 'h' + String(m).padStart(2,'0') + 'm</span>';
+          } else {
+            countdownStr = '<span class="qh-countdown qh-expired">已重置</span>';
+          }
+          footer.innerHTML = '<span class="qh-reset-label">重置</span><span class="qh-reset-time">' + resetStr + '</span>' + countdownStr;
+          card.appendChild(footer);
+        }
+
+        listEl.appendChild(card);
+      }
+    }
+
+    // 渲染折线图
+    renderQuotaChart(filtered);
+  }
+
+  function renderQuotaChart(entries) {
+    const svg = document.getElementById('qhChart');
+    if (!svg || entries.length < 2) {
+      if (svg) svg.innerHTML = '';
+      return;
+    }
+
+    const W = 300, H = 80, PAD = 4;
+    const n = entries.length;
+    const xStep = n > 1 ? (W - PAD * 2) / (n - 1) : 0;
+
+    // 日配额折线
+    let dailyPts = '';
+    let weeklyPts = '';
+    for (let i = 0; i < n; i++) {
+      const x = PAD + i * xStep;
+      const yD = PAD + (100 - entries[i].daily) / 100 * (H - PAD * 2);
+      const yW = PAD + (100 - entries[i].weekly) / 100 * (H - PAD * 2);
+      dailyPts += `${x},${yD} `;
+      weeklyPts += `${x},${yW} `;
+    }
+
+    svg.innerHTML = `
+      <rect x="0" y="0" width="${W}" height="${H}" fill="rgba(255,255,255,0.02)" rx="4"/>
+      <line x1="${PAD}" y1="${PAD + (100-30)/100*(H-PAD*2)}" x2="${W-PAD}" y2="${PAD + (100-30)/100*(H-PAD*2)}" stroke="rgba(255,200,50,0.15)" stroke-dasharray="3,3"/>
+      <line x1="${PAD}" y1="${PAD + (100-10)/100*(H-PAD*2)}" x2="${W-PAD}" y2="${PAD + (100-10)/100*(H-PAD*2)}" stroke="rgba(255,80,80,0.15)" stroke-dasharray="3,3"/>
+      <polyline points="${dailyPts}" fill="none" stroke="#5b9aff" stroke-width="1.5" stroke-linejoin="round"/>
+      <polyline points="${weeklyPts}" fill="none" stroke="#ff9a5b" stroke-width="1.5" stroke-linejoin="round"/>
+      <text x="${W-PAD}" y="${PAD+8}" font-size="8" fill="#5b9aff" text-anchor="end">日</text>
+      <text x="${W-PAD}" y="${PAD+17}" font-size="8" fill="#ff9a5b" text-anchor="end">周</text>
+    `;
+  }
+
+  // 绑定账号筛选
+  document.addEventListener('DOMContentLoaded', () => {
+    const sel = document.getElementById('qhEmailFilter');
+    if (sel) {
+      sel.addEventListener('change', () => {
+        _qhFilterEmail = sel.value;
+        vscode.postMessage({ type: 'getQuotaHistory', email: _qhFilterEmail || undefined });
+      });
+    }
+  });
 
   // 多标签选择器（需在 syncAutoSwitchUI 之前定义）
   function renderTagPicker() {
@@ -1849,10 +2097,9 @@
     renderTagPicker();
     // 更新外部账户提示条
     const banner = document.getElementById('externalBanner');
-    const emailEl = document.getElementById('externalEmail');
     if (banner) {
       banner.hidden = !externalAccount;
-      if (emailEl) emailEl.textContent = externalAccount;
+      setExternalEmailText();
     }
     // 没有缓存额度的账号分批拉取，每批 10 个，间隔 300ms
     const needFetch = accounts.filter(a => !usageCache.has(a.email)).map(a => a.email);
@@ -1967,6 +2214,11 @@
 
       case 'usageStatsSync': {
         updateUsageStatsUI(msg);
+        break;
+      }
+
+      case 'quotaHistorySync': {
+        renderQuotaHistory(msg.entries, msg.emails, msg.currentEmail);
         break;
       }
 
@@ -2493,6 +2745,12 @@
       if (enhAutoSwitchOnQuota) enhAutoSwitchOnQuota.checked = s.autoSwitchOnQuota !== false;
       if (enhAutoSwitchOnRateLimit) enhAutoSwitchOnRateLimit.checked = s.autoSwitchOnRateLimit !== false;
       if (enhAutoRecoveryEnabled) enhAutoRecoveryEnabled.checked = s.autoRecoveryEnabled !== false;
+      // v6.6.0 恢复确认 Banner
+      if (enhRecoveryConfirmEnabled) enhRecoveryConfirmEnabled.checked = s.recoveryConfirmEnabled !== false;
+      if (enhRecoveryCountdownSeconds) {
+        const sec = parseInt(s.recoveryCountdownSeconds, 10);
+        enhRecoveryCountdownSeconds.value = (sec >= 3 && sec <= 15) ? sec : 5;
+      }
       // 恢复规则
       const rules = s.recoveryRules || {};
       if (ruleNetworkAction && rules.networkErrors) ruleNetworkAction.value = rules.networkErrors.action || 'retry';
@@ -2622,6 +2880,11 @@
       brainlessIdleSeconds: idleSec,
       brainlessMaxConsecutive: maxCount,  // 0 = 无限
       autoRecoveryEnabled: enhAutoRecoveryEnabled ? enhAutoRecoveryEnabled.checked : true,
+      // v6.6.0 恢复确认 Banner
+      recoveryConfirmEnabled: enhRecoveryConfirmEnabled ? enhRecoveryConfirmEnabled.checked : true,
+      recoveryCountdownSeconds: enhRecoveryCountdownSeconds
+        ? Math.max(3, Math.min(15, parseInt(enhRecoveryCountdownSeconds.value, 10) || 5))
+        : 5,
       continueText: queue[0] || 'continue',
       recoveryRules: collectRecoveryRules(),
       customRecoveryRules: collectCustomRules(),
@@ -3514,6 +3777,21 @@
     // 刷新全部
     if (refreshAllBtn) refreshAllBtn.addEventListener('click', refreshAll);
 
+    const savedState = vscode.getState() || {};
+    privacyMode = savedState.privacyMode === true;
+    updatePrivacyModeUi();
+    if (privacyModeBtn) {
+      privacyModeBtn.addEventListener('click', () => {
+        privacyMode = !privacyMode;
+        const st = vscode.getState() || {};
+        st.privacyMode = privacyMode;
+        vscode.setState(st);
+        updatePrivacyModeUi();
+        setExternalEmailText();
+        renderCards();
+      });
+    }
+
     // 批量导入按钮（点击后关闭添加模态框，进度由批量进度框显示）
     const batchTextBtn = $('[data-action="batchImportText"]');
     if (batchTextBtn) batchTextBtn.addEventListener('click', () => { doBatchImportText(); closeAddAccountModal(); });
@@ -3980,6 +4258,8 @@
       enhLtLoop, enhLtIdleSeconds, enhLtMaxContinue, enhLtMaxSendRetries, enhLtStopOnIntervention,
       // 兼容旧
       enhAutoSwitchOnQuota, enhAutoSwitchOnRateLimit, enhAutoRecoveryEnabled,
+      // v6.6.0 恢复确认 Banner
+      enhRecoveryConfirmEnabled, enhRecoveryCountdownSeconds,
       // 通知
       enhNotifyEnabled, enhNotifyTrigger, enhNotifySound, enhNotifyDesktop, enhNotifyTone, enhNotifyRepeat, enhCustomTone, enhAudioFile,
       // 恢复规则
@@ -4133,6 +4413,24 @@
       });
     }
 
+    // v6.6.0 清除恢复偏好按钮
+    if (enhRecoveryPrefsClear) {
+      enhRecoveryPrefsClear.addEventListener('click', () => {
+        try {
+          // 优先通过 vscode message 让扩展宿主走桥接通知 windsurf-better.js 清理
+          // 这里直接清空 webview 本地 localStorage 作为兜底
+          localStorage.removeItem('ws-recovery-prefs');
+        } catch {}
+        // 通知 windsurf-better.js 也清理一遍（它有自己独立的 localStorage scope）
+        sendCommand('clear-recovery-prefs');
+        const btn = enhRecoveryPrefsClear;
+        const old = btn.textContent;
+        btn.textContent = '已清除 ✓';
+        btn.disabled = true;
+        setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 1500);
+      });
+    }
+
     // 浏览音频文件按钮
     if (enhAudioFileBrowse) {
       enhAudioFileBrowse.addEventListener('click', () => {
@@ -4204,12 +4502,35 @@
         renderRecoveryLog();
       });
     }
-    // 首次渲染 + 当面板展开时定时刷新
+    // 同步恢复日志到 extension host（供全屏面板使用）
+    function syncRecoveryLogsToHost() {
+      try {
+        const raw = localStorage.getItem('ws-recovery-log');
+        const list = raw ? JSON.parse(raw) : [];
+        vscode.postMessage({ type: 'syncRecoveryLogs', logs: list });
+      } catch {}
+    }
+    // 同步扫描诊断日志到 extension host
+    function syncDiagnoseLogsToHost() {
+      try {
+        const raw = localStorage.getItem('ws-diagnose-log');
+        const list = raw ? JSON.parse(raw) : [];
+        vscode.postMessage({ type: 'syncDiagnoseLogs', logs: list });
+      } catch {}
+    }
+
+    // 首次渲染 + webview 加载时立即同步所有日志
     renderRecoveryLog();
+    syncRecoveryLogsToHost();
+    syncDiagnoseLogsToHost();
+    // 定时刷新（当面板展开时）
     setInterval(() => {
       const details = document.querySelector('.enhance-recovery-log-details');
       if (details && details.open) renderRecoveryLog();
-    }, 3000);
+      // 持续同步日志到 globalState（供全屏面板使用）
+      syncRecoveryLogsToHost();
+      syncDiagnoseLogsToHost();
+    }, 5000);
 
     // 试听按钮：在 webview 中使用 Web Audio API 播放
     let _testAudioCtx = null;

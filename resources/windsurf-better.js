@@ -4,7 +4,7 @@
  */
 (function () {
 	'use strict';
-	const VERSION = '1.4.0';
+	const VERSION = '1.4.1';
 	const LOG_PREFIX = '[WS-Better]';
 
 	// ========== Trusted Types 兼容（Windsurf 新版启用了 require-trusted-types-for 'script'） ==========
@@ -68,11 +68,17 @@
 		continueAfterSwitch: true,  // 切号后自动发送"继续"而非重发原消息
 		recoveryMaxRetries: 3,
 		recoveryBaseDelay: 5000,
+		// 交互式恢复确认 banner（v6.6.0 新增）
+		recoveryConfirmEnabled: true,        // 总开关：所有自动恢复操作都先弹 banner 倒计时
+		recoveryCountdownSeconds: 5,         // 倒计时秒数（3-15）
 		// 分类恢复规则
 		recoveryRules: {
 			networkErrors:      { action: 'retry', maxRetries: 3, delay: 3000 },
 			quotaErrors:        { action: 'switch-account', afterAction: 'auto' },
-			modelErrors:        { action: 'switch-model', afterAction: 'send-continue', modelPriority: ['Claude Opus 4.6 Thinking', 'Claude Opus 4.7', 'GPT-5.5'] },
+			// modelErrors 默认从 switch-model 改为 send-continue：
+			// 实测"模型提供商不可达"等第三方故障是临时性的，等几秒发继续就能恢复，
+			// 切模型反而因 modelPriority 名字对不上而陷入冷却死锁
+			modelErrors:        { action: 'send-continue', afterAction: 'auto', modelPriority: [] },
 			continuationErrors: { action: 'send-continue' },
 			permissionRequests: { action: 'auto-allow', scope: ['web-request', 'terminal', 'file-write'] },
 			userIntervention:   { action: 'notify' },
@@ -329,10 +335,45 @@
 		return true;
 	}
 	
+	// v6.6.1+v6.6.2 审查修订：派发完整的 Enter 键序列（keydown/keypress/keyup）
+	// Lexical / contentEditable 不同框架监听不同事件，全派发覆盖最广
+	// 审查改进：保存并恢复原 focus 元素，避免在多输入框场景下夺走用户焦点
+	function dispatchEnterKey(inputEl) {
+		if (!inputEl) return false;
+		const prevFocus = document.activeElement;
+		const needsFocusRestore = prevFocus && prevFocus !== inputEl && typeof prevFocus.focus === 'function';
+		inputEl.focus();
+		const eventInit = {
+			key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+			bubbles: true, cancelable: true, composed: true
+		};
+		for (const eventType of ['keydown', 'keypress', 'keyup']) {
+			try {
+				inputEl.dispatchEvent(new KeyboardEvent(eventType, eventInit));
+			} catch {}
+		}
+		// 若原本焦点不在 inputEl 上，恢复（异步以免打断 Enter 后续处理）
+		if (needsFocusRestore) {
+			setTimeout(() => { try { prevFocus.focus(); } catch {} }, 0);
+		}
+		return true;
+	}
+
 	// 统一发送策略：标准按钮 → 最右边按钮 → Enter键
+	// v6.6.1：queued 状态下优先走 Enter（按钮策略在配额耗尽/queued 时不可靠）
 	function trySendMessage() {
 		const inputEl = findInputEl();
 		if (!inputEl) return null;
+
+		// v6.6.1 关键修复：检测到 queued 状态时，直接走 Enter 键
+		// 原因：配额耗尽 + queued 状态下，发送按钮被禁用或替换，
+		// 「最右边按钮」策略可能误点到「全部接受/拒绝」权限按钮。
+		// Windsurf 自己的提示就是「按回车发送排队消息 (⏎)」，Enter 是官方推荐路径。
+		if (hasQueuedMessage()) {
+			dispatchEnterKey(inputEl);
+			console.log(LOG_PREFIX, '[trySend] ✅ queued 状态 → Enter 键（绕过按钮策略）');
+			return 'enter-queued';
+		}
 
 		// 策略1: 标准选择器找发送按钮
 		const sendBtn = findSendBtnAdvanced();
@@ -352,6 +393,11 @@
 				if (btn.disabled) continue;
 				const r = btn.getBoundingClientRect();
 				if (r.width === 0 || r.height === 0) continue;
+				// v6.6.1+v6.6.2 审查修订：精确排除「全部接受/全部拒绝」批量权限按钮
+				// 截图证实 queued+配额耗尽场景下这些按钮会出现在输入区附近
+				// 注意：用精确文本匹配（^...$），避免误伤 "Accept changes" / "Accept suggestion" 等
+				const txt = (btn.textContent || '').trim();
+				if (/^(全部接受|全部拒绝|accept all|reject all)$/i.test(txt)) continue;
 				// 只考虑和输入框垂直方向接近的按钮（同一工具栏区域）
 				if (Math.abs(r.top - inputRect.bottom) < 60 || Math.abs(r.bottom - inputRect.bottom) < 60) {
 					if (r.right > rightmostX) {
@@ -370,11 +416,7 @@
 		}
 
 		// 策略3: Enter 键（Lexical state 通过原生 API 同步后 Enter 应触发提交）
-		inputEl.focus();
-		inputEl.dispatchEvent(new KeyboardEvent('keydown', {
-			key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
-			bubbles: true, cancelable: true, composed: true
-		}));
+		dispatchEnterKey(inputEl);
 		console.log(LOG_PREFIX, '[trySend] ✅ 策略3: Enter键');
 		return 'enter';
 	}
@@ -2235,6 +2277,26 @@
 		{ pattern: /配额.*耗尽/,                                               category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /配额.*用完/,                                               category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /用量配额已耗尽/,                                           category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /credit(?:s)?\s*(?:exhausted|depleted|exceeded|run out)/i,    category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /no credits (?:remaining|left|available)/i,                  category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /insufficient credits/i,                                    category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /积分.*(?:耗尽|不足|用完)/,                                  category: 'quotaErrors', signal: 'quota-exhausted' },
+
+		// ── HTTP 服务端错误 / 工具调用失败（走 retry / switch-model 而非切号） ──
+		{ pattern: /HTTP\s*5\d{2}\b/i,                                          category: 'networkErrors' },
+		{ pattern: /\bstatus\s*(?:code\s*)?5\d{2}\b/i,                         category: 'networkErrors' },
+		{ pattern: /Internal Server Error/i,                                   category: 'networkErrors' },
+		{ pattern: /Bad Gateway/i,                                             category: 'networkErrors' },
+		{ pattern: /Service Unavailable/i,                                     category: 'networkErrors' },
+		{ pattern: /Gateway Timeout/i,                                         category: 'networkErrors' },
+		{ pattern: /服务器内部错误/,                                           category: 'networkErrors' },
+		{ pattern: /网关(?:错误|超时)/,                                        category: 'networkErrors' },
+		{ pattern: /服务不可用/,                                               category: 'networkErrors' },
+		{ pattern: /tool call failed/i,                                        category: 'networkErrors' },
+		{ pattern: /failed to (?:call|invoke|execute) tool/i,                  category: 'networkErrors' },
+		{ pattern: /工具调用失败/,                                             category: 'networkErrors' },
+		{ pattern: /failed to fetch/i,                                         category: 'networkErrors' },
+		{ pattern: /network request failed/i,                                  category: 'networkErrors' },
 
 		// ── 模型不可用（第三方提供商故障） ──
 		{ pattern: /third-party model provider is experiencing issues/i,       category: 'modelErrors', signal: 'provider-unavailable' },
@@ -2705,6 +2767,7 @@
 				if (el.closest(USER_MSG_SEL)) continue;
 				if (el.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
 				if (el.closest('.monaco-editor,pre,code')) continue;
+				if (el.dataset && el.dataset._wsRecoveryHandled) continue;
 				const text = getElementErrorText(el);
 				if (text && text.length > 5 && text.length < 1000) {
 					latestError = text;
@@ -2741,6 +2804,34 @@
 		}
 		
 		// 注意：不再扫描正常 AI 回复（之前的"备选"逻辑会把正常回复误判为错误，导致死循环）
+
+		// 兜底 A：Cascade 把错误内嵌在 assistant message 内（如思考过程链尾部的 "⚠ 权限拒绝：Rate limit..." 或工具调用失败提示）
+		// 主路径会通过 closest(ASSISTANT_MSG_SEL) 排除，导致这种内嵌错误被忽略 → 不触发恢复
+		// 这里仅信任高置信关键词（专一的错误词组），避免把 AI 正常回复内容（如解释何谓 rate limit）误判
+		// 命中后会走 checkForErrors → ERROR_PATTERNS 分类 → 对应 action（retry/switch-account/switch-model）
+		const STRICT_RECOVERABLE_KW_RE = /权限拒绝.*rate limit|rate limit exceeded|upgrade to a Pro|quota.*exhausted|monthly acu limit|usage.*limit.*reached|额度.*耗尽|配额.*(?:用完|耗尽|不足)|over their global rate limit|reached.*(?:message|rate)\s*limit|此模型已达到消息速率限制|用量配额已耗尽|insufficient credits|no credits (?:remaining|left|available)|credit(?:s)?\s*(?:exhausted|depleted)|积分.*(?:耗尽|不足|用完)|HTTP\s*5\d{2}\b|\bstatus\s*(?:code\s*)?5\d{2}\b|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout|服务器内部错误|网关(?:错误|超时)|服务不可用|tool call failed|failed to (?:call|invoke|execute) tool|工具调用失败|model provider is currently not available|third-party model provider is experiencing issues|API provider is overloaded|all API providers are over capacity|all API providers are over their global rate limit/i;
+		if (!latestError) {
+			const asstMsgs = scanRoot.querySelectorAll(ASSISTANT_MSG_SEL);
+			// 只看最后一条 assistant 消息（最近的错误），避免历史回复误判
+			const lastAsst = asstMsgs.length > 0 ? asstMsgs[asstMsgs.length - 1] : null;
+			if (lastAsst) {
+				const candidates = lastAsst.querySelectorAll('[role="alert"], [role="status"], [class*="error" i], [class*="warning" i], [class*="banner" i], [class*="notification" i], [class*="alert" i], [class*="toast" i], span, p, div');
+				for (let i = candidates.length - 1; i >= 0; i--) {
+					const el = candidates[i];
+					if (el.dataset && el.dataset._wsRecoveryHandled) continue;
+					if (el.closest('.monaco-editor,pre,code,textarea,input,[contenteditable="true"]')) continue;
+					if (el.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
+					if (el.children.length > 5) continue;  // 跳过大容器，只看叶子/小节点
+					const t = getElementErrorText(el);
+					if (t.length < 10 || t.length > 500) continue;
+					if (!STRICT_RECOVERABLE_KW_RE.test(t)) continue;
+					latestError = t;
+					latestErrorEl = el;
+					console.log(LOG_PREFIX + '[getLatestErrorText] 命中 assistant 内嵌错误: ' + t.substring(0, 80));
+					break;
+				}
+			}
+		}
 
 		// 最终兜底：扫描整个 document.body 查找额度关键词（banner 可能在 chat root 之外）
 		// 注意：必须严格限定在"错误 UI 容器"内，否则会把 AI 聊天消息、代码、文档误判为错误
@@ -2836,6 +2927,13 @@
 				recordRecoveryLog({ category: 'B', error: '', action: 'switch-result', result: 'switched:' + (result.email || '?') });
 				setTimeout(() => {
 					_recoveryCooldownMs = 10000;  // 恢复正常冷却
+					// 用户可能在 3s 切换等待期间关闭自动恢复 → 仍清理 localStorage 但不触发 retry
+					if (!settings.autoRecoveryEnabled) {
+						console.log(LOG_PREFIX + '[Recovery] 切号后 retry setTimeout 短路: autoRecoveryEnabled=false');
+						localStorage.removeItem('ws-pool-result');
+						localStorage.removeItem('ws-pool-signal');
+						return;
+					}
 					retryLastMessage({ afterSwitch: true });
 					localStorage.removeItem('ws-pool-result');
 					localStorage.removeItem('ws-pool-signal');
@@ -2910,10 +3008,11 @@
 			else if (/成功|已切换|已启用|完成|已就绪/i.test(m)) type = 'success';
 			else type = 'info';
 		}
+		// v6.6.0：统一改为实色灰色背景（按用户要求）
 		const palette = {
-			info:    { bg: 'linear-gradient(135deg,#1e3a5f 0%,#1a2d4a 100%)', icon: '🔄' },
-			success: { bg: 'linear-gradient(135deg,#1a3d2e 0%,#162d25 100%)', icon: '✅' },
-			error:   { bg: 'linear-gradient(135deg,#3d1a1a 0%,#2d1616 100%)', icon: '⚠️' },
+			info:    { bg: '#2a2a2a', icon: '🔄' },
+			success: { bg: '#2a2a2a', icon: '✅' },
+			error:   { bg: '#2a2a2a', icon: '⚠️' },
 		};
 		const c = palette[type] || palette.info;
 
@@ -2942,7 +3041,7 @@
 			'opacity:0', 'transform:translateX(16px)',
 		].join(';');
 		setSafeHTML(toast, '<span style="font-size:14px;flex-shrink:0">' + c.icon + '</span>'
-			+ '<span style="word-break:break-word">' + String(message).replace(/[<>&]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch])) + '</span>'
+			+ '<span style="word-break:break-word">' + escapeHtml(message) + '</span>'
 			+ '<span id="ws-toast-close" style="position:absolute;top:6px;right:8px;cursor:pointer;color:rgba(200,220,255,0.5);font-size:13px;line-height:1;padding:2px 4px;user-select:none">✕</span>');
 
 		// 滑入动画
@@ -2979,6 +3078,328 @@
 			while (list.length > RECOVERY_LOG_MAX) list.shift();
 			localStorage.setItem(RECOVERY_LOG_KEY, JSON.stringify(list));
 		} catch {}
+	}
+
+	// ========== 扫描诊断日志 ==========
+	// 用于排查"为什么 banner 没触发"：每次 checkForErrors 扫描时记录一条诊断快照
+	const DIAGNOSE_LOG_KEY = 'ws-diagnose-log';
+	const DIAGNOSE_LOG_MAX = 50;
+	function recordDiagnose(entry) {
+		try {
+			const raw = localStorage.getItem(DIAGNOSE_LOG_KEY);
+			const list = raw ? JSON.parse(raw) : [];
+			list.push(Object.assign({ ts: Date.now() }, entry));
+			while (list.length > DIAGNOSE_LOG_MAX) list.shift();
+			localStorage.setItem(DIAGNOSE_LOG_KEY, JSON.stringify(list));
+		} catch {}
+	}
+	// 扫描全局 DOM，找疑似错误元素，返回候选数组（不修改任何状态）
+	function collectErrorCandidates() {
+		const candidates = [];
+		const RE = /权限拒绝|速率限制|rate limit|quota|额度|配额|all API providers|内部错误|provider unreachable/i;
+		try {
+			const allEls = document.body.querySelectorAll('span, p, div, [role="alert"], [role="status"]');
+			for (const el of allEls) {
+				const txt = (el.textContent || '').trim();
+				if (txt.length < 10 || txt.length > 500) continue;
+				if (el.children.length > 5) continue;
+				if (!RE.test(txt)) continue;
+				if (el.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
+				const selfOrig = el.getAttribute && el.getAttribute('data-ws-orig');
+				const descOrigList = [];
+				try {
+					el.querySelectorAll('[data-ws-orig]').forEach(n => descOrigList.push(n.getAttribute('data-ws-orig')));
+				} catch {}
+				let ancestorOrig = null;
+				let p = el.parentElement;
+				for (let i = 0; i < 5 && p; i++, p = p.parentElement) {
+					if (p.hasAttribute && p.hasAttribute('data-ws-orig')) {
+						ancestorOrig = { level: i + 1, text: p.getAttribute('data-ws-orig').substring(0, 100) };
+						break;
+					}
+				}
+				candidates.push({
+					text: txt.substring(0, 200),
+					inAssistant: !!el.closest(ASSISTANT_MSG_SEL),
+					inUser: !!el.closest(USER_MSG_SEL),
+					handled: !!(el.dataset && el.dataset._wsRecoveryHandled),
+					selfOrig: selfOrig ? selfOrig.substring(0, 100) : null,
+					descOrigCount: descOrigList.length,
+					descOrigSample: descOrigList[0] ? descOrigList[0].substring(0, 100) : null,
+					ancestorOrig: ancestorOrig,
+					tag: el.tagName,
+					childCount: el.children.length
+				});
+				if (candidates.length >= 5) break;
+			}
+		} catch {}
+		return candidates;
+	}
+
+	// ========== v6.6.0 偏好持久化（全局作用域） ==========
+	// 用户在 banner 上勾选"下次同类错误默认用此策略"时，把分类→action 写到 localStorage
+	const RECOVERY_PREFS_KEY = 'ws-recovery-prefs';
+	function loadRecoveryPrefs() {
+		try {
+			const raw = localStorage.getItem(RECOVERY_PREFS_KEY);
+			return raw ? JSON.parse(raw) : {};
+		} catch { return {}; }
+	}
+	function saveRecoveryPref(category, action) {
+		try {
+			const prefs = loadRecoveryPrefs();
+			prefs[category] = action;
+			localStorage.setItem(RECOVERY_PREFS_KEY, JSON.stringify(prefs));
+			console.log(LOG_PREFIX + '[Recovery] 已记住偏好: ' + category + ' → ' + action);
+		} catch {}
+	}
+	function getPreferredAction(category) {
+		const prefs = loadRecoveryPrefs();
+		return prefs[category] || null;
+	}
+	function clearAllRecoveryPrefs() {
+		try { localStorage.removeItem(RECOVERY_PREFS_KEY); } catch {}
+	}
+	// 暴露给侧栏 / 调试用
+	if (typeof window !== 'undefined') {
+		window.__wsClearRecoveryPrefs = clearAllRecoveryPrefs;
+	}
+
+	// ========== v6.6.0 交互式恢复确认 Banner ==========
+	// 单例：同一时间只显示一个 banner，新错误覆盖旧的
+	// 形态：聊天输入框正上方横条，灰色实色背景，倒计时进度条 + 候选策略按钮
+	// 交互：点未选中按钮 = 切换+重置倒计时；点已选中 = 立即执行；
+	//       checkbox = 勾选后该选择写入偏好；取消 = 终止本轮
+	const RECOVERY_BANNER_ID = 'ws-recovery-banner';
+	let _bannerState = null;  // { timer, deadline, defaultAction, options }
+
+	// 候选操作按分类映射（标签 + 排序，默认 action 由调用方传入）
+	const CATEGORY_CANDIDATES = {
+		networkErrors:      [['retry','重试'], ['send-continue','发继续'], ['switch-model','切换模型'], ['switch-account','切换账号']],
+		modelErrors:        [['send-continue','发继续'], ['switch-model','切换模型'], ['switch-account','切换账号'], ['retry','重试']],
+		quotaErrors:        [['switch-account','切换账号'], ['send-continue','发继续'], ['retry','重试']],
+		continuationErrors: [['send-continue','发继续']],
+		permissionRequests: [['auto-allow','自动允许']],
+		userIntervention:   [],  // 不自动恢复
+		custom:             [['retry','重试'], ['send-continue','发继续'], ['switch-account','切换账号'], ['switch-model','切换模型']],
+	};
+
+	const ACTION_LABEL = {
+		'retry': '重试',
+		'send-continue': '发继续',
+		'switch-model': '切换模型',
+		'switch-account': '切换账号',
+		'auto-allow': '自动允许',
+		'notify': '提示',
+	};
+
+	function dismissRecoveryBanner() {
+		if (_bannerState && _bannerState.timer) {
+			clearInterval(_bannerState.timer);
+		}
+		_bannerState = null;
+		const el = document.getElementById(RECOVERY_BANNER_ID);
+		if (el) { try { el.remove(); } catch {} }
+	}
+
+	// 显示恢复确认 banner，倒计时结束后执行 onExecute(chosenAction)
+	// options: { category, defaultAction, errorText, countdownMs, onExecute, onCancel, hint }
+	function showRecoveryPrompt(options) {
+		const opts = options || {};
+		const category = opts.category || 'custom';
+		let chosen = opts.defaultAction || 'retry';
+		// 第五轮架构修复 #2：禁用过滤器，用于把被子开关禁用的 action 标记为不可点
+		const isActionDisabled = typeof opts.isActionDisabled === 'function' ? opts.isActionDisabled : () => false;
+		const candidates = (CATEGORY_CANDIDATES[category] || CATEGORY_CANDIDATES.custom).slice();
+		// 确保 defaultAction 在候选列表里（不在则插到首位）
+		if (!candidates.some(c => c[0] === chosen)) candidates.unshift([chosen, ACTION_LABEL[chosen] || chosen]);
+
+		const countdownMs = Math.max(2000, opts.countdownMs || (settings.recoveryCountdownSeconds || 5) * 1000);
+		let deadline = Date.now() + countdownMs;
+
+		// 单例：先清掉旧 banner
+		dismissRecoveryBanner();
+
+		const banner = document.createElement('div');
+		banner.id = RECOVERY_BANNER_ID;
+		banner.style.cssText = [
+			'position:fixed', 'right:20px', 'bottom:120px',
+			'min-width:380px', 'max-width:520px',
+			'background:#2a2a2a', 'color:#e6edf3',
+			'padding:14px 16px 12px',
+			'border-radius:10px',
+			'border:1px solid #3a3a3a',
+			'box-shadow:0 6px 20px rgba(0,0,0,0.5)',
+			'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+			'font-size:12.5px', 'line-height:1.5',
+			'z-index:2147483647',
+			'pointer-events:auto',
+			'opacity:0', 'transform:translateY(8px)',
+			'transition:opacity 0.25s ease, transform 0.25s ease',
+		].join(';');
+
+		// 头部：标题 + 错误摘要
+		const errSummary = (opts.errorText || opts.hint || '').toString().substring(0, 90);
+		const headTitle = opts.title || '检测到错误';
+
+		// 候选按钮 HTML（第五轮修复 #2：禁用的 action 置灰且不可点）
+		const btnsHtml = candidates.map(c => {
+			const [act, label] = c;
+			const isDefault = act === chosen;
+			const disabled = isActionDisabled(act);
+			let bg, color, border, cursor = 'pointer', extraLabel = '';
+			if (disabled) {
+				bg = '#2a2a2a'; color = '#6b7280'; border = '1px dashed #4a4a4a'; cursor = 'not-allowed';
+				extraLabel = ' (已禁用)';
+			} else if (isDefault) {
+				bg = '#3b82f6'; color = '#fff'; border = '1px solid #2563eb';
+				extraLabel = ' ✓';
+			} else {
+				bg = '#3a3a3a'; color = '#cbd5e1'; border = '1px solid #4a4a4a';
+			}
+			return '<button data-action="' + act + '" data-disabled="' + (disabled ? '1' : '0') + '" class="ws-rb-act' + (isDefault ? ' is-default' : '') + (disabled ? ' is-disabled' : '') + '" '
+				+ 'style="background:' + bg + ';color:' + color + ';border:' + border + ';'
+				+ 'padding:5px 11px;border-radius:5px;font-size:11.5px;cursor:' + cursor + ';'
+				+ 'font-family:inherit;transition:all 0.15s;margin-right:6px;margin-bottom:4px;"'
+				+ (disabled ? ' title="此动作已被子开关禁用，请在侧栏开启"' : '') + '>'
+				+ label + extraLabel + '</button>';
+		}).join('');
+
+		setSafeHTML(banner,
+			'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+			+   '<span style="font-size:14px">⚠️</span>'
+			+   '<span style="font-weight:600;color:#f1f5f9">' + escapeHtml(headTitle) + '</span>'
+			+   '<span class="ws-rb-countdown" style="margin-left:auto;font-size:11.5px;color:#94a3b8;font-variant-numeric:tabular-nums">' + Math.ceil(countdownMs / 1000) + 's</span>'
+			+ '</div>'
+			+ (errSummary ? '<div style="color:#94a3b8;font-size:11px;margin-bottom:8px;word-break:break-word">' + escapeHtml(errSummary) + '</div>' : '')
+			+ '<div style="color:#cbd5e1;font-size:11.5px;margin-bottom:8px">'
+			+   '<span class="ws-rb-status">' + Math.ceil(countdownMs / 1000) + 's 后自动「<b style="color:#fff">' + escapeHtml(ACTION_LABEL[chosen] || chosen) + '</b>」 · 点其他按钮可切换策略，再点一下立即执行</span>'
+			+ '</div>'
+			+ '<div style="margin-bottom:10px">' + btnsHtml + '</div>'
+			+ '<div style="height:3px;background:#1a1a1a;border-radius:2px;overflow:hidden;margin-bottom:10px">'
+			+   '<div class="ws-rb-bar" style="height:100%;background:linear-gradient(90deg,#3b82f6,#60a5fa);width:100%;transition:width 0.1s linear"></div>'
+			+ '</div>'
+			+ '<div style="display:flex;align-items:center;gap:10px">'
+			+   '<label style="display:flex;align-items:center;gap:6px;color:#94a3b8;font-size:11px;cursor:pointer;user-select:none">'
+			+     '<input type="checkbox" class="ws-rb-remember" style="cursor:pointer">'
+			+     '<span>记住此选择</span>'
+			+   '</label>'
+			+   '<div style="margin-left:auto;display:flex;gap:6px">'
+			+     '<button class="ws-rb-cancel" style="background:transparent;color:#94a3b8;border:1px solid #4a4a4a;padding:5px 11px;border-radius:5px;font-size:11.5px;cursor:pointer;font-family:inherit">✕ 取消</button>'
+			+     '<button class="ws-rb-now" style="background:#10b981;color:#fff;border:1px solid #059669;padding:5px 13px;border-radius:5px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">▶ 立即执行</button>'
+			+   '</div>'
+			+ '</div>'
+		);
+
+		document.body.appendChild(banner);
+		requestAnimationFrame(() => {
+			banner.style.opacity = '1';
+			banner.style.transform = 'translateY(0)';
+		});
+
+		// === 状态更新 ===
+		function refreshUI() {
+			const now = Date.now();
+			const remain = Math.max(0, deadline - now);
+			const total = countdownMs;
+			const pct = Math.max(0, Math.min(100, (remain / total) * 100));
+			const bar = banner.querySelector('.ws-rb-bar');
+			if (bar) bar.style.width = pct + '%';
+			const cd = banner.querySelector('.ws-rb-countdown');
+			if (cd) cd.textContent = Math.ceil(remain / 1000) + 's';
+			const status = banner.querySelector('.ws-rb-status');
+			if (status) setSafeHTML(status, Math.ceil(remain / 1000) + 's 后自动「<b style="color:#fff">' + escapeHtml(ACTION_LABEL[chosen] || chosen) + '</b>」 · 点其他按钮可切换策略，再点一下立即执行');
+		}
+
+		function highlightDefault() {
+			banner.querySelectorAll('button.ws-rb-act').forEach(btn => {
+				const act = btn.getAttribute('data-action');
+				// 第五轮修复 #2：禁用按钮保持禁用样式，不参与默认选中切换
+				if (btn.getAttribute('data-disabled') === '1') {
+					btn.style.background = '#2a2a2a';
+					btn.style.color = '#6b7280';
+					btn.style.border = '1px dashed #4a4a4a';
+					btn.textContent = (ACTION_LABEL[act] || act) + ' (已禁用)';
+					return;
+				}
+				if (act === chosen) {
+					btn.classList.add('is-default');
+					btn.style.background = '#3b82f6';
+					btn.style.color = '#fff';
+					btn.style.border = '1px solid #2563eb';
+					btn.textContent = (ACTION_LABEL[act] || act) + ' ✓';
+				} else {
+					btn.classList.remove('is-default');
+					btn.style.background = '#3a3a3a';
+					btn.style.color = '#cbd5e1';
+					btn.style.border = '1px solid #4a4a4a';
+					btn.textContent = (ACTION_LABEL[act] || act);
+				}
+			});
+		}
+
+		function execute() {
+			if (_bannerState && _bannerState.timer) clearInterval(_bannerState.timer);
+			const remember = !!banner.querySelector('.ws-rb-remember')?.checked;
+			if (remember) saveRecoveryPref(category, chosen);
+			// 关闭 banner
+			banner.style.opacity = '0';
+			banner.style.transform = 'translateY(8px)';
+			setTimeout(() => { try { banner.remove(); } catch {} }, 250);
+			_bannerState = null;
+			console.log(LOG_PREFIX + '[Recovery] Banner 执行: ' + chosen + (remember ? ' (已记忆)' : ''));
+			try { opts.onExecute && opts.onExecute(chosen, remember); } catch (e) { console.warn(LOG_PREFIX, '[Recovery] onExecute 异常', e); }
+		}
+
+		function cancel() {
+			if (_bannerState && _bannerState.timer) clearInterval(_bannerState.timer);
+			banner.style.opacity = '0';
+			banner.style.transform = 'translateY(8px)';
+			setTimeout(() => { try { banner.remove(); } catch {} }, 250);
+			_bannerState = null;
+			console.log(LOG_PREFIX + '[Recovery] Banner 取消');
+			try { opts.onCancel && opts.onCancel(); } catch {}
+		}
+
+		// === 事件绑定 ===
+		banner.querySelectorAll('button.ws-rb-act').forEach(btn => {
+			btn.addEventListener('click', () => {
+				const act = btn.getAttribute('data-action');
+				// 第五轮修复 #2：禁用按钮点击无效（保留按钮以便用户看到"为什么没出现这个选项"）
+				if (btn.getAttribute('data-disabled') === '1') {
+					showRecoveryNotification('此动作已被子开关禁用，请在侧栏开启对应开关', 'error');
+					return;
+				}
+				if (act === chosen) {
+					// 点已选中 = 立即执行
+					execute();
+				} else {
+					// 点未选中 = 切换默认 + 重置倒计时
+					chosen = act;
+					deadline = Date.now() + countdownMs;
+					highlightDefault();
+					refreshUI();
+				}
+			});
+		});
+		banner.querySelector('.ws-rb-now').addEventListener('click', execute);
+		banner.querySelector('.ws-rb-cancel').addEventListener('click', cancel);
+
+		// === 倒计时定时器 ===
+		const timer = setInterval(() => {
+			if (Date.now() >= deadline) {
+				clearInterval(timer);
+				execute();
+				return;
+			}
+			refreshUI();
+		}, 100);
+		_bannerState = { timer, deadline, defaultAction: chosen, options: opts };
+	}
+
+	// HTML 转义
+	function escapeHtml(s) {
+		return String(s || '').replace(/[<>&"']/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[ch]));
 	}
 
 	// ── 获取当前分类的恢复规则 ──
@@ -3032,24 +3453,56 @@
 		if (!settings.autoRecoveryEnabled) return;
 
 		const { text: errorText, el: errorEl } = getLatestErrorText();
-		if (!errorText) return;
+		if (!errorText) {
+			// 没找到错误：如果 DOM 里其实有疑似错误候选，记录一条诊断
+			const cands = collectErrorCandidates();
+			if (cands.length > 0) {
+				recordDiagnose({
+					stage: 'no-match',
+					reason: 'getLatestErrorText 未命中，但全局扫描发现疑似错误',
+					hitText: '',
+					hitInAssistant: null,
+					candidatesCount: cands.length,
+					candidates: cands
+				});
+			}
+			return;
+		}
 
 		// 标记已处理的错误元素，防止同一 DOM 元素反复触发
 		if (errorEl) {
 			if (errorEl.dataset && errorEl.dataset._wsRecoveryHandled) return;
-			try { errorEl.dataset._wsRecoveryHandled = '1'; } catch {}
 		}
 
 		// 防抖：同一错误冷却期内不重复处理
 		const now = Date.now();
 		if (now - lastRecoveryTs < _recoveryCooldownMs) {
 			console.log(LOG_PREFIX + '[trigger] checkForErrors 跳过: 冷却中 (' + Math.round((_recoveryCooldownMs - (now - lastRecoveryTs)) / 1000) + 's剩余), error=' + errorText.substring(0, 80));
+			recordDiagnose({
+				stage: 'cooldown-skip',
+				reason: '冷却中 (' + Math.round((_recoveryCooldownMs - (now - lastRecoveryTs)) / 1000) + 's 剩余)',
+				hitText: errorText.substring(0, 200),
+				hitInAssistant: errorEl ? !!errorEl.closest(ASSISTANT_MSG_SEL) : null
+			});
+			return;
+		}
+		if (_bannerState) {
+			console.log(LOG_PREFIX + '[trigger] checkForErrors 跳过: banner 显示中，暂不标记错误元素, error=' + errorText.substring(0, 80));
+			recordDiagnose({
+				stage: 'banner-shown-skip',
+				reason: 'banner 已在显示中',
+				hitText: errorText.substring(0, 200),
+				hitInAssistant: errorEl ? !!errorEl.closest(ASSISTANT_MSG_SEL) : null
+			});
 			return;
 		}
 
 		// 指纹去重：如果当前错误和上次触发切号的错误一样，跳过（避免 DOM 残留反复触发）
 		const fp = makeErrorFingerprint(errorText);
 		if (fp && fp === _lastSwitchFingerprint && now - _lastSwitchTs < 60000) {
+			if (errorEl) {
+				try { errorEl.dataset._wsRecoveryHandled = '1'; } catch {}
+			}
 			console.log(LOG_PREFIX + '[trigger] checkForErrors 跳过: 指纹相同且未超过60s (switchAge=' + Math.round((now - _lastSwitchTs) / 1000) + 's)');
 			return;
 		}
@@ -3058,6 +3511,9 @@
 		// 优先匹配自定义规则
 		const customRule = matchCustomRule(errorText);
 		if (customRule) {
+			if (errorEl) {
+				try { errorEl.dataset._wsRecoveryHandled = '1'; } catch {}
+			}
 			lastRecoveryTs = now;
 			console.log(LOG_PREFIX + '[Recovery] 命中自定义规则: ' + customRule.name);
 			recordRecoveryLog({ category: 'custom', error: errorText.substring(0, 200), action: customRule.action, result: 'matched:' + customRule.name });
@@ -3071,59 +3527,173 @@
 
 			const category = ep.category;
 			const rule = getRuleForCategory(category);
-			if (!rule) continue;
-
-			const action = rule.action || 'notify';
-			console.log(LOG_PREFIX + '[Recovery] 命中 [' + category + '] 动作=' + action);
-
-			// 根据 action 分发处理
-			if (action === 'retry') {
-				// 守护面板「自动重试」开关关闭时跳过 retry（不影响切号/切模型等其他动作）
-				if (settings.guardian && settings.guardian.autoRetry === false) return;
-				handleRetryAction(rule, errorText, now, category);
-			} else if (action === 'switch-account') {
-				if (settings.autoSwitchEnabled === false) {
-					console.log(LOG_PREFIX + '[trigger] checkForErrors: 自动切号已关闭，switch-account 降级为 notify (category=' + category + ')');
-					showRecoveryNotification(ep.hint || errorText.substring(0, 80));
-					recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'notify', result: 'autoSwitch-off-fallback' });
-					return;
-				}
-				handleSwitchAccountAction(rule, ep, errorText, now, category);
-			} else if (action === 'switch-model') {
-				handleSwitchModelAction(rule, ep, errorText, now, category);
-			} else if (action === 'send-continue') {
-				handleSendContinueAction(errorText, now, category);
-			} else if (action === 'notify') {
-				const hint = ep.hint || errorText.substring(0, 80);
-				showRecoveryNotification(hint);
-				recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'notify', result: hint });
+			if (!rule) {
+				recordDiagnose({
+					stage: 'no-rule',
+					reason: 'ERROR_PATTERN 命中 [' + category + ']，但 recoveryRules 中无该分类的规则',
+					hitText: errorText.substring(0, 200),
+					hitInAssistant: errorEl ? !!errorEl.closest(ASSISTANT_MSG_SEL) : null,
+					category: category
+				});
+				continue;
 			}
-			// action === 'ignore' → 什么都不做
+
+			// 用户记忆的偏好优先于 rule.action（v6.6.0）
+			const preferred = getPreferredAction(category);
+			const action = preferred || rule.action || 'notify';
+			console.log(LOG_PREFIX + '[Recovery] 命中 [' + category + '] 动作=' + action + (preferred ? ' (用户偏好)' : ''));
+			recordDiagnose({
+				stage: 'pattern-matched',
+				reason: '命中 ERROR_PATTERN [' + category + ']，将走 banner',
+				hitText: errorText.substring(0, 200),
+				hitInAssistant: errorEl ? !!errorEl.closest(ASSISTANT_MSG_SEL) : null,
+				category: category,
+				action: action,
+				pattern: ep.pattern.source.substring(0, 80)
+			});
+
+			// 走 banner 倒计时（v6.6.0：所有恢复操作都走 banner，让用户知道软件介入了）
+			if (errorEl) {
+				try { errorEl.dataset._wsRecoveryHandled = '1'; } catch {}
+			}
+			maybeShowConfirmAndDispatch(action, rule, ep, errorText, now, category);
 			return;
 		}
+
+		// 走到这里：errorText 拿到了，但所有 ERROR_PATTERNS 都没命中
+		recordDiagnose({
+			stage: 'pattern-miss',
+			reason: '已获取错误文本，但无任何 ERROR_PATTERN 匹配',
+			hitText: errorText.substring(0, 300),
+			hitInAssistant: errorEl ? !!errorEl.closest(ASSISTANT_MSG_SEL) : null,
+			selfOrig: (errorEl && errorEl.getAttribute) ? errorEl.getAttribute('data-ws-orig') : null
+		});
 	}
 
 	// ── 通用规则执行 ──
 	function executeRuleAction(rule, errorText, now) {
 		const action = rule.action || 'notify';
+		// 自定义规则也走 banner 倒计时
+		maybeShowConfirmAndDispatch(action, rule, rule, errorText, now, 'custom');
+	}
+
+	// v6.6.0：执行某个 action 的实际工作（保留原有所有保护逻辑）
+	function dispatchRecoveryAction(action, rule, ep, errorText, now, category) {
 		if (action === 'retry') {
-			handleRetryAction(rule, errorText, now, 'custom');
+			if (settings.guardian && settings.guardian.autoRetry === false) return;
+			handleRetryAction(rule, errorText, now, category);
 		} else if (action === 'switch-account') {
 			if (settings.autoSwitchEnabled === false) {
-				console.log(LOG_PREFIX + '[trigger] executeRuleAction: 自动切号已关闭，switch-account 降级为 notify (rule=' + (rule.name || 'custom') + ')');
-				showRecoveryNotification(rule.hint || errorText.substring(0, 80));
-				recordRecoveryLog({ category: 'custom', error: errorText.substring(0, 200), action: 'notify', result: 'autoSwitch-off-fallback' });
+				console.log(LOG_PREFIX + '[Recovery] 自动切号已关闭，switch-account 降级为 notify (category=' + category + ')');
+				showRecoveryNotification((ep && ep.hint) || errorText.substring(0, 80));
+				recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'notify', result: 'autoSwitch-off-fallback' });
 				return;
 			}
-			handleSwitchAccountAction(rule, rule, errorText, now, 'custom');
+			handleSwitchAccountAction(rule, ep, errorText, now, category);
 		} else if (action === 'switch-model') {
-			handleSwitchModelAction(rule, rule, errorText, now, 'custom');
+			handleSwitchModelAction(rule, ep, errorText, now, category);
 		} else if (action === 'send-continue') {
-			handleSendContinueAction(errorText, now, 'custom');
+			handleSendContinueAction(errorText, now, category);
+		} else if (action === 'auto-allow') {
+			// 权限自动允许：直接调用现有的权限处理逻辑（如果存在）
+			// 如果不存在，仅记录日志
+			if (typeof autoAllowPermission === 'function') {
+				autoAllowPermission(rule);
+			}
+			recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'auto-allow', result: 'executed' });
 		} else if (action === 'notify') {
-			showRecoveryNotification(rule.hint || errorText.substring(0, 80));
-			recordRecoveryLog({ category: 'custom', error: errorText.substring(0, 200), action: 'notify', result: rule.hint || 'notified' });
+			const hint = (ep && ep.hint) || errorText.substring(0, 80);
+			showRecoveryNotification(hint);
+			recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'notify', result: hint });
 		}
+		// 'ignore' / 未知 → 什么都不做
+	}
+
+	// v6.6.0+v6.6.2 第五轮架构审查修订：弹 banner 倒计时确认 → 倒计时结束后执行 dispatchRecoveryAction
+	//
+	// 第五轮保留的修复：
+	// - 修复 #2（子开关一致性）：检查子开关后再决定是否弹 banner / 哪些按钮可用。
+	//   被子开关禁用的 action 在 banner 上置灰，避免用户点了按钮没反应（静默失败）。
+	//
+	// 「记住此选择」的设计语义（Soft 模式，不修改）：
+	// - 勾选 = 下次同类错误时 banner 仍然弹出，但默认选中的策略变成用户偏好的
+	// - banner 的存在意义是「通知用户软件介入了 + 给 5s 反悔窗口」
+	// - 如果跳过 banner 直接执行，会剥夺用户的反悔权 → 违背设计初心
+	//
+	// userIntervention（需用户介入）不倒计时，仅 toast 提示
+	function maybeShowConfirmAndDispatch(action, rule, ep, errorText, now, category) {
+		// userIntervention：不能自动恢复
+		if (category === 'userIntervention') {
+			const hint = (ep && ep.hint) || errorText.substring(0, 80);
+			showRecoveryNotification(hint, 'error');
+			recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'notify', result: 'user-intervention:' + hint });
+			return;
+		}
+
+		// 子开关检查（必须在 recoveryConfirmEnabled 之前，确保关闭 banner 时仍有 fallback）
+		const isActionDisabled = (act) => {
+			if (act === 'retry' && settings.guardian && settings.guardian.autoRetry === false) return true;
+			if (act === 'switch-account' && settings.autoSwitchEnabled === false) return true;
+			if ((act === 'send-continue' || act === 'continue') && settings.continueMode === 'off') return true;
+			return false;
+		};
+		if (isActionDisabled(action)) {
+			console.log(LOG_PREFIX + '[Recovery] 默认动作 [' + action + '] 被子开关禁用，尝试 fallback');
+			const fallback = (CATEGORY_CANDIDATES[category] || []).find(c => !isActionDisabled(c[0]));
+			if (fallback) {
+				action = fallback[0];
+			} else {
+				// 所有候选都被禁用 → 只 toast 提示
+				showRecoveryNotification('自动恢复已禁用（请检查侧栏设置）', 'error');
+				recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'all-disabled', result: 'skipped' });
+				return;
+			}
+		}
+
+		// 总开关关闭 → 走老逻辑直接执行（无 banner）
+		if (settings.recoveryConfirmEnabled === false) {
+			dispatchRecoveryAction(action, rule, ep, errorText, now, category);
+			return;
+		}
+
+		// 第四轮修复：banner 已在显示时不重弹（保护用户当前选择不被新错误覆盖）
+		if (_bannerState) {
+			console.log(LOG_PREFIX + '[Recovery] banner 已在显示中，忽略新错误避免覆盖用户选择: ' + errorText.substring(0, 60));
+			return;
+		}
+
+		// 第四轮修复：弹出 banner 时立即占用冷却（防 banner 倒计时期间被其他错误重弹）
+		const countdownMs = (settings.recoveryCountdownSeconds || 5) * 1000;
+		lastRecoveryTs = now;
+		_recoveryCooldownMs = countdownMs + 5000;
+
+		// 弹 banner，倒计时后执行
+		const titleMap = {
+			networkErrors: '网络/超时错误',
+			modelErrors: '模型提供商不可达',
+			quotaErrors: '配额耗尽 / 限流',
+			continuationErrors: '工具调用上限',
+			permissionRequests: '权限请求',
+			custom: '自定义规则触发',
+		};
+		showRecoveryPrompt({
+			title: titleMap[category] || '检测到错误',
+			category,
+			defaultAction: action,
+			errorText: errorText,
+			countdownMs: countdownMs,
+			// 第五轮修复 #2：把禁用过滤器传给 banner，禁用按钮置灰不可点
+			isActionDisabled: isActionDisabled,
+			onExecute: (chosenAction) => {
+				// banner 已自带禁用过滤，到这里 chosenAction 必定可执行
+				dispatchRecoveryAction(chosenAction, rule, ep, errorText, Date.now(), category);
+			},
+			onCancel: () => {
+				recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'user-cancelled', result: 'cancelled' });
+				lastRecoveryTs = Date.now();
+				_recoveryCooldownMs = 15000;
+			},
+		});
 	}
 
 	// ── 动作: 自动重试 ──
@@ -3152,6 +3722,15 @@
 		showRecoveryNotification(Math.round(delay / 1000) + 's 后重试...');
 		recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'retry', result: 'scheduled', delay, attempt: recoveryRetryCount });
 		setTimeout(() => {
+			// 用户可能在 delay 期间关闭自动恢复或子开关 → 短路（避免违反用户意图）
+			if (!settings.autoRecoveryEnabled) {
+				console.log(LOG_PREFIX + '[Recovery] retry setTimeout 短路: autoRecoveryEnabled=false');
+				return;
+			}
+			if (settings.guardian && settings.guardian.autoRetry === false) {
+				console.log(LOG_PREFIX + '[Recovery] retry setTimeout 短路: guardian.autoRetry=false');
+				return;
+			}
 			if (isInCooldown()) return;
 			const retryBtn = findRetryButton();
 			if (retryBtn) { markActionClick(); retryBtn.click(); }
@@ -3199,7 +3778,13 @@
 				showRecoveryNotification('已切换到 ' + switched);
 				recordRecoveryLog({ category, error: '', action: 'switch-model', result: 'switched:' + switched });
 				// 切换后执行后续动作
-				setTimeout(() => executeAfterAction(afterAction), 1500);
+				setTimeout(() => {
+					if (!settings.autoRecoveryEnabled) {
+						console.log(LOG_PREFIX + '[Recovery] switch-model afterAction setTimeout 短路: autoRecoveryEnabled=false');
+						return;
+					}
+					executeAfterAction(afterAction);
+				}, 1500);
 			} else {
 				// 所有模型都不可用，降级为切号
 				console.log(LOG_PREFIX + '[Recovery] 模型切换失败，降级切号');
@@ -3221,6 +3806,23 @@
 		const cooldown = (settings.sendCooldown && settings.sendCooldown > 0) ? settings.sendCooldown : 10000;
 		if (Date.now() - _lastContinueTs < cooldown) return false;
 		const text = customText || (settings.continueText && String(settings.continueText).trim()) || 'continue';
+
+		// v6.6.1 关键修复：已有 queued 消息时，不再写入新文本+点按钮
+		// 直接派发 Enter 触发 Windsurf 自己处理队列。
+		// 用户反馈场景：配额耗尽 + 1 条"继续"已 queued + 输入框残留"继续" → 死锁
+		// Windsurf DOM 上已经明示「按回车发送排队消息 (⏎)」，Enter 是官方推荐路径。
+		if (hasQueuedMessage()) {
+			const inputEl = findInputEl();
+			if (inputEl) {
+				dispatchEnterKey(inputEl);
+				_lastContinueTs = Date.now();
+				console.log(LOG_PREFIX, '[sendContinue] ✅ 已有 queued 消息 → 直接 Enter 触发队列（不重复入队）');
+				// 等 Windsurf 处理一下队列
+				await new Promise(r => setTimeout(r, 1500));
+				return true;
+			}
+		}
+
 		if (!await setInputText(text)) return false;
 		_lastContinueTs = Date.now();
 		markActionClick();
@@ -3233,12 +3835,82 @@
 		const el = findInputEl();
 		const remaining = (el?.textContent || '').trim();
 		if (remaining.length > 0) {
+			// v6.6.0 Bug C 修复：输入框残留可能是 queued 状态（消息已成功入队），不是真实失败
+			// queued 状态下扩展不应清空输入框，否则会把 Windsurf 入队的消息抹掉
+			if (hasQueuedMessage()) {
+				console.log(LOG_PREFIX, '[sendContinue] ✅ 发送成功（消息已入队，不清空残留）');
+				return true;
+			}
 			console.log(LOG_PREFIX, '[sendContinue] ⚠ 发送未生效（输入框仍有"' + remaining.substring(0, 20) + '"），清空残留');
 			try { if (el) { el.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } } catch {}
 			return false;
 		}
 		console.log(LOG_PREFIX, '[sendContinue] ✅ 发送成功（输入框已清空）');
 		return true;
+	}
+
+	// v6.6.2 终极修订（第四轮审查）：检测 Windsurf 是否处于 queued 状态
+	//
+	// 关键洞察：
+	// 1. 汉化模块翻译每个 textNode 时把原英文存到父元素 data-ws-orig 属性
+	// 2. AI 聊天消息体（[class*="markdown-body"] 等）在 EXCLUDE_SELECTOR 里被排除汉化
+	//    → AI 消息体上不会有 data-ws-orig
+	// 3. 全局扫 [data-ws-orig] 不会扫到聊天历史中的 AI 长对话
+	//
+	// 第四轮审查发现的新隐患（已修复）：
+	// - 修复 A：data-ws-orig 累加只追加不删除，元素 textNode 变空时旧原文残留
+	//   → 加可见性检查（getBoundingClientRect），过滤已隐藏的"幽灵"元素
+	// - 修复 B：实测汉化条目最长 77 字符（"Queued messages will be sent one at a time..."）
+	//   原 100 字符上限只有 23 字符余量；提升到 200 给累加机制留空间
+	// - 修复 C：hint 正则 ^Enter 锚定在累加形态下漏匹配 → 去掉 ^ 锚定
+	//
+	// 当前方案：
+	// - 主路径：全局扫 [data-ws-orig]，正则匹配 + 可见性检查 + 200 字符上限
+	// - 兜底：汉化关闭时，从输入框上爬最多 3 层（严格不跨 chat-root）扫 innerText
+	function hasQueuedMessage() {
+		try {
+			const QUEUED_EN_RE = /\d+\s+messages?\s+queued/i;
+			const QUEUED_HINT_RE = /Enter to send queued message/i;  // 修复 C：去掉 ^ 锚定
+			const QUEUED_CN_RE = /\d+\s*条消息排队/;
+
+			// 主路径：全局扫 [data-ws-orig]
+			const root = findChatRoot() || document.body;
+			const origNodes = root.querySelectorAll('[data-ws-orig]');
+			for (const n of origNodes) {
+				const v = n.getAttribute('data-ws-orig');
+				if (!v) continue;
+				// 修复 B：200 字符上限（汉化最长条目 77 字符 × 2 + 累加换行 ≈ 156，留余量）
+				if (v.length > 200) continue;
+				if (!(QUEUED_EN_RE.test(v) || QUEUED_HINT_RE.test(v))) continue;
+				// 修复 A：可见性检查——过滤已隐藏元素的 data-ws-orig 残留
+				// 同一父元素 textNode 内容变化但元素不重建时，旧原文会留在 data-ws-orig
+				// 真正的 queued indicator 一定可见；不可见的是 stale 数据
+				try {
+					const rect = n.getBoundingClientRect();
+					if (rect.width === 0 || rect.height === 0) continue;
+				} catch {}
+				return true;
+			}
+
+			// 兜底：汉化关闭 / 元素未被翻译时，扫输入框附近的 innerText
+			// 严格限缩 3 层祖先（实测 Windsurf 输入框到 chat-root 通常 4-5 层，3 层一定不跨界）
+			let scope = findInputEl();
+			for (let i = 0; i < 3 && scope && scope.parentElement; i++) {
+				scope = scope.parentElement;
+			}
+			if (scope) {
+				const text = scope.innerText || '';
+				// 长度上限：工具栏区域文本通常 < 2000 字符；超出说明已跨进消息区，不可信
+				if (text.length < 2000) {
+					if (QUEUED_EN_RE.test(text) || QUEUED_HINT_RE.test(text) || QUEUED_CN_RE.test(text)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		} catch {
+			return false;
+		}
 	}
 
 	// ── 动作: 发送继续 ──
@@ -3299,6 +3971,9 @@
 					console.log(LOG_PREFIX + '[Recovery] 工具上限/截断，自动发送 ' + sendText);
 					recordRecoveryLog({ category: 'continuationErrors', error: txt.substring(0, 200), action: 'send-continue', result: 'sent' });
 					sendContinueMessage();
+					// v6.6.6：占用共享冷却，避免 checkForErrors 后续轮重弹无意义 banner
+					lastRecoveryTs = Date.now();
+					_recoveryCooldownMs = 15000;
 					return;
 				}
 			}
@@ -3321,15 +3996,44 @@
 		const scopes = (gdScope && gdScope.length > 0) ? gdScope : (rule.scope || ['web-request']);
 
 		const btns = document.querySelectorAll('button, [role="button"]');
+		// 允许按钮文本白名单（精确匹配，覆盖"允许一次""Allow Once"等一次性放行变体；
+		// 不匹配"不允许/deny/never/cancel"；也不自动点"始终允许/allow all"等永久性放行，避免越权）
+		const ALLOW_TEXTS = new Set([
+			'allow', '允许',
+			'allow once', '允许一次', 'allow this time', '仅此一次',
+			'approve', '批准',
+			'accept', '接受',
+			'run', '运行',
+			'allow and run', '允许并运行',
+		]);
 		for (const btn of btns) {
 			const txt = (btn.textContent || '').trim().toLowerCase();
-			const isAllow = txt === 'allow' || txt === '允许' || txt === 'approve' || txt === '批准'
-				|| txt === 'accept' || txt === '接受' || txt === 'run' || txt === '运行'
-				|| txt === 'allow and run' || txt === '允许并运行';
+			if (!txt) continue;
+			// 明确排除否定/取消类按钮，避免 "不允许"/"don't allow" 这类误点
+			if (txt.includes('不允许') || txt.includes('拒绝') || txt.includes('取消')
+				|| txt.includes("don't allow") || txt.includes('deny') || txt.includes('cancel')
+				|| txt.includes('never')) continue;
+			const isAllow = ALLOW_TEXTS.has(txt);
 			if (!isAllow) continue;
 
 			// 检查上下文判断权限类型
-			const container = btn.closest('[class*="approval"], [class*="permission"], [class*="request"], [class*="dialog"], [class*="modal"], [class*="notification"]');
+			// 主路径：就近找已知容器 class；兜底路径：向上 6 层匹配文本特征（容忍 Windsurf UI 改版）
+			let container = btn.closest('[class*="approval"], [class*="permission"], [class*="request"], [class*="dialog"], [class*="modal"], [class*="notification"]');
+			if (!container) {
+				let p = btn.parentElement;
+				for (let i = 0; i < 6 && p; i++) {
+					const pt = (p.textContent || '').toLowerCase();
+					if (pt.includes('允许 web') || pt.includes('allow web')
+						|| pt.includes('cascade wants') || pt.includes('cascade 想要')
+						|| pt.includes('wants to fetch') || pt.includes('想要访问')
+						|| pt.includes('wants to run') || pt.includes('wants to edit')
+						|| pt.includes('wants to create') || pt.includes('wants to modify')) {
+						container = p;
+						break;
+					}
+					p = p.parentElement;
+				}
+			}
 			if (!container) continue;
 			const ctx = (container.textContent || '').toLowerCase();
 
@@ -3608,8 +4312,17 @@
 		}
 
 		// 防止无限循环：如果输入框已有文本（上次发送失败残留），记录失败并清空
+		// v6.6.1：queued 状态下不是"失败"，是 Windsurf 在排队等发送
+		// → 直接 Enter 触发队列处理，而不是傻等下一轮
 		const existingInput = findInputEl();
 		if (existingInput && (existingInput.textContent || '').trim().length > 0) {
+			if (hasQueuedMessage()) {
+				console.log(LOG_PREFIX + '[Brainless] 输入框有内容 + queued 状态 → 派发 Enter 推动队列');
+				dispatchEnterKey(existingInput);
+				_brainlessLastChangeTs = now;
+				_brainlessLastFireTs = now;  // 占用冷却避免立刻又触发
+				return;
+			}
 			_brainlessSendFailCount++;
 			console.log(LOG_PREFIX + '[Brainless] 输入框残留，发送失败 #' + _brainlessSendFailCount);
 			try { existingInput.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch {}
@@ -3650,6 +4363,19 @@
 				markExpectingNewResponse(); // 标记等待新回复，信号2开始检测
 				// 推送计数到侧栏
 				bridgePostResult({ action: 'lt-count', count: _brainlessConsecutive, text });
+				// v6.6.0 Bug B 修复：发送后 3s 主动 poll 错误，不等下一轮 idle
+				// 避免"发完继续 → 立刻报错（如配额耗尽）→ 8s 后才反应"的死锁
+				setTimeout(() => {
+					try {
+						const { text: errText2 } = getLatestErrorText();
+						if (errText2) {
+							console.log(LOG_PREFIX + '[Brainless] 发送后 3s 主动检测错误: ' + errText2.substring(0, 100));
+							checkForErrors();
+						}
+					} catch (e) {
+						console.warn(LOG_PREFIX + '[Brainless] 主动错误检测异常:', e);
+					}
+				}, 3000);
 			} else {
 				_brainlessSendFailCount++;
 				_brainlessQueueIndex--; // 发送失败，队列指针回退
@@ -4022,6 +4748,37 @@
 				}
 				break;
 			}
+			case 'clear-recovery-prefs': {
+				// v6.6.0：清除已学习的恢复偏好
+				try {
+					clearAllRecoveryPrefs();
+					respond({ status: 'done', message: '已清除所有恢复偏好' });
+					console.log(LOG_PREFIX + '[Recovery] 偏好已清除（来自侧栏）');
+				} catch (err) {
+					respond({ status: 'error', message: '清除失败: ' + (err.message || err) });
+				}
+				break;
+			}
+			case 'syncLogs': {
+				// 同步日志到扩展 globalState（供全屏统计面板使用）
+				try {
+					let recoveryLogs = [];
+					let diagnoseLogs = [];
+					try {
+						const rawRecovery = localStorage.getItem('ws-recovery-log');
+						if (rawRecovery) recoveryLogs = JSON.parse(rawRecovery) || [];
+					} catch {}
+					try {
+						const rawDiagnose = localStorage.getItem('ws-diagnose-log');
+						if (rawDiagnose) diagnoseLogs = JSON.parse(rawDiagnose) || [];
+					} catch {}
+					respond({ status: 'done', payload: { recoveryLogs, diagnoseLogs } });
+					console.log(LOG_PREFIX + '[syncLogs] 已同步 ' + recoveryLogs.length + ' 条恢复日志, ' + diagnoseLogs.length + ' 条诊断日志');
+				} catch (err) {
+					respond({ status: 'error', message: '同步失败: ' + (err.message || err) });
+				}
+				break;
+			}
 			case 'fetch-models': {
 				respond({ status: 'running' });
 				try {
@@ -4243,6 +5000,80 @@
 		console.log(LOG_PREFIX + ' 设置已实时应用 ' + (source || ''));
 	}
 	
+	// 诊断工具：扫描当前 DOM，看哪些元素被识别为错误、哪些被过滤
+	window.wsDiagnoseError = function() {
+		const result = getLatestErrorText();
+		console.group('%c[wsDiagnose] getLatestErrorText 结果', 'color:#10b981;font-weight:bold');
+		console.log('text:', result.text);
+		console.log('el:', result.el);
+		if (result.el) {
+			console.log('el.dataset._wsRecoveryHandled:', result.el.dataset._wsRecoveryHandled);
+			console.log('closest assistant:', result.el.closest(ASSISTANT_MSG_SEL));
+		}
+		console.groupEnd();
+
+		// 找出所有可能含错误的元素（不论是否被过滤）
+		console.group('%c[wsDiagnose] 全局扫描含「速率限制/rate limit/权限拒绝/quota」的元素', 'color:#f59e0b;font-weight:bold');
+		const allEls = document.body.querySelectorAll('span, p, div, [role="alert"], [role="status"]');
+		const RE = /权限拒绝|速率限制|rate limit|quota|额度|配额|all API providers/i;
+		let count = 0;
+		for (const el of allEls) {
+			const txt = (el.textContent || '').trim();
+			if (txt.length < 10 || txt.length > 500) continue;
+			if (el.children.length > 5) continue;
+			if (!RE.test(txt)) continue;
+			if (el.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
+			count++;
+			if (count > 10) break;
+			const orig = el.getAttribute('data-ws-orig');
+			const descOrig = [];
+			el.querySelectorAll('[data-ws-orig]').forEach(n => descOrig.push(n.getAttribute('data-ws-orig')));
+			let ancestorOrig = null;
+			let p = el.parentElement;
+			for (let i = 0; i < 5 && p; i++, p = p.parentElement) {
+				if (p.hasAttribute && p.hasAttribute('data-ws-orig')) {
+					ancestorOrig = { level: i + 1, text: p.getAttribute('data-ws-orig').substring(0, 100) };
+					break;
+				}
+			}
+			console.log({
+				idx: count,
+				text: txt.substring(0, 150),
+				inAssistant: !!el.closest(ASSISTANT_MSG_SEL),
+				inUser: !!el.closest(USER_MSG_SEL),
+				selfOrig: orig ? orig.substring(0, 100) : null,
+				descOrigCount: descOrig.length,
+				descOrigSample: descOrig[0] ? descOrig[0].substring(0, 100) : null,
+				ancestorOrig: ancestorOrig,
+				el: el
+			});
+		}
+		console.log('共找到', count, '个候选');
+		console.groupEnd();
+	};
+	console.log(LOG_PREFIX + '[Diag] 已暴露诊断函数: window.wsDiagnoseError()');
+
+	// 暴露测试函数到全局，方便调试
+	window.wsTestRecoveryBanner = function() {
+		console.log(LOG_PREFIX + '[Test] 手动触发恢复 banner 测试');
+		showRecoveryPrompt({
+			title: '测试：网络错误',
+			category: 'networkErrors',
+			defaultAction: 'retry',
+			errorText: 'Model provider unreachable (测试)',
+			countdownMs: 5000,
+			onExecute: (chosenAction) => {
+				console.log(LOG_PREFIX + '[Test] 用户选择了: ' + chosenAction);
+				showRecoveryNotification('测试完成：选择了 ' + chosenAction);
+			},
+			onCancel: () => {
+				console.log(LOG_PREFIX + '[Test] 用户取消了');
+				showRecoveryNotification('测试完成：用户取消了');
+			}
+		});
+	};
+	console.log(LOG_PREFIX + '[Test] 已暴露测试函数: window.wsTestRecoveryBanner()');
+
 	if (document.readyState === 'loading') {
 		window.addEventListener('DOMContentLoaded', () => setTimeout(init, 800));
 	} else {

@@ -79,7 +79,11 @@ export type WebviewMessageType =
   | 'enhForceStop'
   | 'requestBridgeInfo'
   | 'getUsageStats'
-  | 'savePoolTags';
+  | 'savePoolTags'
+  | 'getQuotaHistory'
+  | 'openLogPanel'
+  | 'syncRecoveryLogs'
+  | 'syncDiagnoseLogs';
 
 /**
  * Webview 消息

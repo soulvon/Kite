@@ -202,6 +202,24 @@ details > summary::marker { display: none; content: ''; }
 .as-top-summary:hover { background: var(--hover-bg); }
 .as-top-icon { color: var(--muted); flex-shrink: 0; }
 .as-top-title { font-size: 13px; font-weight: 600; }
+.as-open-panel-btn {
+    background: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    padding: 2px 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    transition: all 0.15s;
+    margin-left: auto;
+    margin-right: 4px;
+}
+.as-open-panel-btn:hover {
+    color: var(--vscode-editor-foreground);
+    border-color: var(--border-dim);
+    background: var(--hover-bg);
+}
 .as-top-arrow {
     font-size: 8px;
     color: var(--muted);
@@ -385,6 +403,174 @@ details > summary::marker { display: none; content: ''; }
     white-space: pre-wrap;
     word-break: break-all;
     margin: 0;
+}
+
+/* ─── Quota History Panel ─── */
+.qh-body {
+    padding: 10px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    animation: fadeSlideIn 0.2s ease-out;
+}
+.qh-filter-row {
+    display: flex;
+    gap: 6px;
+}
+.qh-email-filter {
+    flex: 1;
+    font-size: 11px;
+}
+.qh-chart-wrap {
+    border-radius: var(--radius-sm);
+    background: var(--surface-bg);
+    border: 1px solid var(--card-border);
+    padding: 4px 4px 2px;
+    overflow: hidden;
+}
+.qh-chart {
+    width: 100%;
+    height: 80px;
+    display: block;
+}
+.qh-chart-legend {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    padding: 2px 0 3px;
+    font-size: 9px;
+    color: var(--vscode-descriptionForeground, rgba(255,255,255,0.45));
+}
+.qh-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+.qh-legend-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.qh-legend-line {
+    width: 10px;
+    height: 0;
+    border-top: 1.5px dashed;
+    display: inline-block;
+}
+
+/* ─── Quota History Cards ─── */
+.qh-card-list {
+    max-height: 340px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.qh-card {
+    border-radius: var(--radius-sm);
+    background: var(--surface-bg);
+    border: 1px solid var(--card-border);
+    padding: 6px 8px;
+    transition: border-color 0.15s;
+}
+.qh-card:hover {
+    border-color: var(--card-border-hover);
+}
+.qh-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+    font-size: 10px;
+}
+.qh-card-time {
+    font-family: var(--vscode-editor-font-family, monospace);
+    color: var(--vscode-descriptionForeground, rgba(255,255,255,0.5));
+    font-size: 10px;
+}
+.qh-card-email {
+    font-size: 9px;
+    color: var(--vscode-descriptionForeground, rgba(255,255,255,0.35));
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 配额行：标签 + 进度条 + 数值 + 变化 */
+.qh-card-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    height: 16px;
+    font-size: 10px;
+}
+.qh-card-label {
+    width: 13px;
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--vscode-descriptionForeground, rgba(255,255,255,0.5));
+    flex-shrink: 0;
+    text-align: center;
+}
+.qh-bar {
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.06);
+    overflow: hidden;
+}
+.qh-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+.qh-bar-ok   { background: linear-gradient(90deg, #3fb950, #5b9aff); }
+.qh-bar-warn { background: linear-gradient(90deg, #e5a445, #d4842a); }
+.qh-bar-danger { background: linear-gradient(90deg, #f14c4c, #c73434); }
+.qh-card-pct {
+    width: 30px;
+    text-align: right;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 10px;
+    flex-shrink: 0;
+}
+
+/* 变化量 */
+.qh-delta-neg { color: #f14c4c; font-size: 9px; font-weight: 600; margin-left: 1px; }
+.qh-delta-pos { color: #3fb950; font-size: 9px; font-weight: 600; margin-left: 1px; }
+
+/* 底部：重置时间 */
+.qh-card-footer {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 3px;
+    padding-top: 3px;
+    border-top: 1px solid var(--card-border);
+    font-size: 9px;
+    color: var(--vscode-descriptionForeground, rgba(255,255,255,0.4));
+}
+.qh-reset-label {
+    font-weight: 600;
+}
+.qh-reset-time {
+    font-family: var(--vscode-editor-font-family, monospace);
+}
+.qh-countdown {
+    margin-left: auto;
+    color: var(--vscode-descriptionForeground, rgba(255,255,255,0.5));
+    font-family: var(--vscode-editor-font-family, monospace);
+}
+.qh-expired {
+    color: #3fb950;
+}
+.qh-empty {
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, rgba(255,255,255,0.4));
+    text-align: center;
+    padding: 16px 0;
 }
 
 /* ─── Auto-Continue Panel ─── */
@@ -711,6 +897,7 @@ details > summary::marker { display: none; content: ''; }
 .sort-direction-btn:hover,
 .toolbar-icon-btn:hover { background: var(--hover-bg); border-color: var(--card-border-hover); }
 .toolbar-icon-btn.is-spinning svg { animation: spin 0.8s linear infinite; }
+.toolbar-icon-btn.is-active { color: var(--ac-blue); background: rgba(59, 130, 246, 0.12); border-color: rgba(59, 130, 246, 0.35); }
 
 .group-select-mode-btn {
     padding: 3px 10px;
@@ -890,7 +1077,7 @@ details > summary::marker { display: none; content: ''; }
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 8px;
 }
-.account-grid.is-select-mode { /* keep original column width */ }
+.account-grid.is-select-mode { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
 
 .group-check-input { margin: 0; }
 
@@ -1485,9 +1672,10 @@ details > summary::marker { display: none; content: ''; }
     font-size: 10px;
     font-weight: 600;
     color: var(--muted);
-    width: 36px;
+    min-width: 72px;
     text-align: right;
     flex-shrink: 0;
+    white-space: nowrap;
 }
 
 /* ═══════ External Banner ═══════ */
@@ -1615,6 +1803,8 @@ details > summary::marker { display: none; content: ''; }
     color: var(--vscode-foreground);
     cursor: pointer;
     transition: all 0.15s;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 .modal-cancel-btn:hover { background: var(--hover-bg); }
 

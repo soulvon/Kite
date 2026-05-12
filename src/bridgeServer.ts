@@ -137,6 +137,11 @@ export function stopBridgeServer(): void {
   }
 }
 
+/** 发送命令请求同步日志（用于全屏面板打开时拉取主窗口日志） */
+export function requestSyncLogs(): void {
+  enqueueCommand({ id: Date.now(), action: 'syncLogs', payload: {} });
+}
+
 /**
  * 扩展宿主入队一条命令，等待 windsurf-better.js 来 GET /pending 取走
  */

@@ -68,6 +68,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._autoSwitcher.onRefreshUI = () => {
       this.refresh();
     };
+    // 配额变动时实时推送历史
+    this._usageTracker.onHistoryUpdate = () => {
+      this._pushQuotaHistory();
+    };
     // 定时器自动切号成功后 → 通知 bridge（windsurf-better.js 显示通知 + 重试消息）
     this._autoSwitcher.onAutoSwitchDone = (newEmail, reason) => {
       // 推送 pool-result 到 bridge，让 windsurf-better.js 处理（显示通知 + 重试）
@@ -431,6 +435,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._pushAutoSwitchSettings();
       this._pushEnhancementStatus();
       this._pushUsageStats();
+      this._pushQuotaHistory();
       // 恢复持久化的切号日志
       const savedLogs: string[] = this._context.globalState.get('autoSwitchLogs', []);
       if (savedLogs.length > 0) {
@@ -479,6 +484,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._pushAutoSwitchSettings();
         this._pushEnhancementStatus();
         this._pushUsageStats();
+        this._pushQuotaHistory();
         this.refreshBridgeInfo();
       }
     });
@@ -500,6 +506,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _pushUsageStats(): void {
     const summary = this._usageTracker.getSummary();
     this.postMessage({ type: 'usageStatsSync', ...summary } as any);
+  }
+
+  /** 推送配额变动历史给 webview */
+  private _pushQuotaHistory(email?: string): void {
+    const currentEmail = this._context.globalState.get<string>('lastEmail') || '';
+    const entries = this._usageTracker.getQuotaHistory(email, 100);
+    const emails = this._usageTracker.getHistoryEmails();
+    this.postMessage({ type: 'quotaHistorySync', entries, emails, currentEmail } as any);
   }
 
   /** 推送 Windsurf 增强状态给 webview */
@@ -767,6 +781,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
 
+      case 'getQuotaHistory': {
+        this._pushQuotaHistory((message as any).email);
+        break;
+      }
+
+      case 'openLogPanel': {
+        vscode.commands.executeCommand('windsurfPool.openLogPanel', (message as any).tab);
+        break;
+      }
+
+      case 'syncRecoveryLogs': {
+        const logs = (message as any).logs;
+        if (Array.isArray(logs)) {
+          this._context.globalState.update('recoveryLogs', logs);
+        }
+        break;
+      }
+
+      case 'syncDiagnoseLogs': {
+        const logs = (message as any).logs;
+        if (Array.isArray(logs)) {
+          this._context.globalState.update('diagnoseLogs', logs);
+        }
+        break;
+      }
+
       case 'savePoolTags': {
         const m = message as any;
         const tags: string[] = m.poolTags || [];
@@ -874,18 +914,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         // 真正启用/关闭：操作文件而非仅改配置
         const { ensureEnhancement, restoreWorkbench } = await import('./enhancementInjector');
-        const { injectBubbleRules, removeBubbleRules } = await import('./rulesInjector');
+        const { injectBubbleRules, removeBubbleRules, injectScriptDisciplineRules, removeScriptDisciplineRules } = await import('./rulesInjector');
         let fileChanged = false;
         try {
           if (next) {
-            // 启用：注入 workbench.html + 注入 bubble rules
+            // 启用：注入 workbench.html + 注入增强相关规则（气泡+脚本纪律）
             const r = ensureEnhancement();
             if (r.injected && r.needRestart) fileChanged = true;
             injectBubbleRules();
+            injectScriptDisciplineRules();
           } else {
-            // 关闭：恢复 workbench.html + 移除 bubble rules
+            // 关闭：恢复 workbench.html + 移除增强相关规则
             if (restoreWorkbench()) fileChanged = true;
             removeBubbleRules();
+            removeScriptDisciplineRules();
           }
         } catch (err) {
           console.error('[windsurf-pool] toggleEnhancement file op failed:', err);
@@ -1626,11 +1668,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
           </details>
 
-          <div id="autoSwitchStatus" class="as-status" hidden></div>
-          <pre id="autoSwitchLog" class="as-log" hidden></pre>
+          <div style="margin-top:10px;padding:8px 10px;background:var(--vscode-textBlockQuote-background,rgba(127,127,127,.08));border-radius:6px;font-size:11px;color:var(--vscode-descriptionForeground,#888);display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <span>切号记录已移至统计面板</span>
+            <button class="as-open-panel-btn" onclick="vscode.postMessage({type:'openLogPanel',tab:'switch'})" style="padding:2px 10px;font-size:11px;border-radius:4px;border:1px solid rgba(255,255,255,0.12);background:transparent;color:inherit;cursor:pointer">查看日志 →</button>
+          </div>
+
         </div>
       </details>
     </div>
+
 
     <!-- 自动继续面板 -->
     <div class="card auto-switch-card ac-root" id="autoContinueArea">
@@ -1798,6 +1844,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 </div>
                 <div class="v2-mini-toggle is-on" id="enhAutoRecoveryEnabledToggle" data-target="enhAutoRecoveryEnabled"></div>
                 <input type="checkbox" id="enhAutoRecoveryEnabled" checked hidden>
+              </div>
+
+              <!-- v6.6.0 恢复确认 Banner 设置 -->
+              <div class="v2-strip" style="margin-bottom:6px;padding:8px 10px;background:color-mix(in srgb, var(--vscode-foreground) 3%, transparent);border-radius:4px">
+                <div class="v2-strip-band c-blue"></div>
+                <div class="v2-strip-info" style="flex:1">
+                  <span class="v2-strip-name">恢复确认 Banner</span>
+                  <span class="v2-strip-desc">所有自动操作前弹倒计时，可切换策略或取消</span>
+                </div>
+                <div class="v2-mini-toggle is-on" id="enhRecoveryConfirmEnabledToggle" data-target="enhRecoveryConfirmEnabled"></div>
+                <input type="checkbox" id="enhRecoveryConfirmEnabled" checked hidden>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:4px 10px 4px;font-size:11.5px;color:var(--vscode-foreground);opacity:0.85">
+                <span style="flex:1">倒计时秒数</span>
+                <input type="number" min="3" max="15" step="1" id="enhRecoveryCountdownSeconds" value="5" style="width:58px;padding:3px 6px;border-radius:3px;border:1px solid var(--vscode-input-border, transparent);background:var(--vscode-input-background);color:var(--vscode-input-foreground);font-size:11.5px">
+                <span style="opacity:0.6">秒（3-15）</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:4px 10px 10px;font-size:11.5px;color:var(--vscode-foreground);opacity:0.85">
+                <span style="flex:1">已学习的偏好</span>
+                <button type="button" id="enhRecoveryPrefsClear" style="padding:4px 10px;border-radius:3px;border:1px solid var(--vscode-button-border, transparent);background:var(--vscode-button-secondaryBackground, #3a3a3a);color:var(--vscode-button-secondaryForeground, #cbd5e1);font-size:11px;cursor:pointer">清除所有偏好</button>
               </div>
 
               <div style="display:flex;flex-direction:column;gap:2px">
@@ -1977,29 +2043,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 </details>
               </div>
 
-              <!-- 历史日志 -->
-              <details class="ac-log-collapse">
-                <summary class="ac-log-summary">
-                  <span>查看恢复执行日志</span>
-                  <span class="ac-log-count" id="recoveryLogCount">0</span>
-                </summary>
-                <div class="ac-log-body">
-                  <div class="ac-log-toolbar">
-                    <select id="recoveryLogFilter" class="ac-select-mini">
-                      <option value="">所有日志</option>
-                      <option value="networkErrors">网络</option>
-                      <option value="quotaErrors">配额</option>
-                      <option value="modelErrors">模型</option>
-                      <option value="continuationErrors">截断</option>
-                      <option value="permissionRequests">权限</option>
-                      <option value="userIntervention">介入</option>
-                      <option value="custom">自定义</option>
-                    </select>
-                    <button class="ac-btn-icon" id="recoveryLogRefresh" title="刷新">刷新</button>
-                    <button class="ac-btn-icon" id="recoveryLogClear" title="清空">清空</button>
-                </div>
-                <div class="recovery-log-list" id="recoveryLogList"></div>
-              </details>
             </div>
           </details>
         </div>
@@ -2174,6 +2217,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
             <span>用量统计</span>
             <span class="usage-stats-date" id="usageStatsDate"></span>
+            <button class="as-open-panel-btn" title="打开统计面板（Ctrl+Shift+Q）" onclick="event.stopPropagation(); vscode.postMessage({type:'openLogPanel'})" style="margin-left:auto;display:inline-flex;align-items:center;gap:3px;padding:2px 8px;font-size:11px;border-radius:4px;border:1px solid rgba(255,255,255,0.12);background:transparent;color:var(--vscode-descriptionForeground);cursor:pointer">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              统计面板
+            </button>
           </summary>
           <div class="usage-stats-body">
             <div class="usage-stats-grid">
@@ -2271,6 +2318,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+        </button>
+        <button class="toolbar-icon-btn" id="privacyModeBtn" title="隐私模式：隐藏邮箱">
+          <svg class="privacy-eye" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+          <svg class="privacy-eye-off" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
+            <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19C5 19 1 12 1 12a20.29 20.29 0 0 1 5.06-5.94"/>
+            <path d="M9.9 4.24A10.84 10.84 0 0 1 12 4c7 0 11 8 11 8a20.88 20.88 0 0 1-2.16 3.19"/>
+            <path d="M14.12 14.12A3 3 0 0 1 9.88 9.88"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
           </svg>
         </button>
         <div style="flex:1"></div>
@@ -2376,19 +2435,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
             <select id="batchDelimiter" hidden><option value="smart">智能识别</option><option value="----">----</option><option value="\\t">Tab</option><option value=" ">空格</option><option value=",">逗号</option><option value="|">竖线</option><option value="custom">自定义</option></select>
 
-            <label class="batch-hint">每行一组: 邮箱{分隔符}密码 — 或直接粘贴 auth1_ / devin-session-token$ 开头的 token 自动识别</label>
-            <textarea id="batchText" class="batch-textarea" rows="6" placeholder="user1@example.com----password123&#10;邮箱：user2@example.com 密码：abc456789&#10;auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
+            <label class="batch-hint">智能识别多种格式，直接粘贴即可</label>
+            <textarea id="batchText" class="batch-textarea" rows="6" placeholder="user1@example.com----password123&#10;user2@example.com----abc456789&#10;邮箱：xxx 密码：xxx&#10;auth1_xxxx... 或 devin-session-token$eyJ..."></textarea>
 
             <details class="batch-example">
               <summary>格式示例（点击展开）</summary>
               <div class="batch-example-content">
-                <div class="batch-example-label">邮箱 + 密码</div>
+                <div class="batch-example-label">邮箱 + 密码（分隔符）</div>
                 <pre class="batch-example-code">user1@example.com----password123
-user2@example.com----abc456789
-邮箱：user3@example.com 密码：mypass789</pre>
+user2@example.com:abc456789</pre>
+                <div class="batch-example-label" style="margin-top:8px">中文标签格式（单行或多行）</div>
+                <pre class="batch-example-code">邮箱：user@example.com 密码：mypass
+邮箱：user2@example.com
+密码：auth1_xxxxxxxx...</pre>
                 <div class="batch-example-label" style="margin-top:8px">Token 直接导入</div>
                 <pre class="batch-example-code">auth1_xxxxxxxxxxxx...
 devin-session-token$eyJhbGciOi...</pre>
+                <div class="batch-example-label" style="margin-top:8px">💡 密码字段为 auth1_ token 时自动识别</div>
               </div>
             </details>
 

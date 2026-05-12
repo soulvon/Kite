@@ -10,7 +10,7 @@ import { initDiskCache } from './usageDiskCache';
 import { StatusBarManager } from './statusBar';
 import { checkForUpdates, autoCheckOnStartup } from './updater';
 import { ensureEnhancement, restoreWorkbench } from './enhancementInjector';
-import { ensureBubbleRules, injectBubbleRules, removeBubbleRules, hasBubbleRules } from './rulesInjector';
+import { ensureBubbleRules, injectBubbleRules, removeBubbleRules, hasBubbleRules, injectScriptDisciplineRules, removeScriptDisciplineRules, removeAllEnhancementRules } from './rulesInjector';
 import { fixChecksums, restoreProductJson, getChecksumStatus } from './checksumFixer';
 import { startBridgeServer, stopBridgeServer } from './bridgeServer';
 import { initAccountLock, acquireLock, releaseLock, startHeartbeat, stopHeartbeat } from './accountLock';
@@ -18,6 +18,7 @@ import { mergeEnhSettings, readEnhSettings } from './enhSettingsStore';
 import { isWindows, isMac, isWritable } from './utils';
 import { beginElevatedBatch, flushElevatedBatch, cancelElevatedBatch, ElevationError } from './elevatedFs';
 import { UsageTracker } from './usageTracker';
+import { openLogPanel } from './logPanelProvider';
 import { warmupSoundPlayer } from './soundPlayer';
 
 let sidebarProvider: SidebarProvider;
@@ -100,6 +101,11 @@ export function activate(context: vscode.ExtensionContext) {
     sidebarProvider.openLogFile();
   });
   context.subscriptions.push(openLogFileCmd);
+
+  const openLogPanelCmd = vscode.commands.registerCommand('windsurfPool.openLogPanel', (tab?: string) => {
+    openLogPanel(context, usageTracker, context.extensionUri, tab, autoSwitcher);
+  });
+  context.subscriptions.push(openLogPanelCmd);
 
   const addAccountCmd = vscode.commands.registerCommand('windsurfPool.addAccount', () => {
     vscode.commands.executeCommand('workbench.view.extension.windsurfPool');
@@ -285,9 +291,9 @@ export function activate(context: vscode.ExtensionContext) {
   const restoreCmd = vscode.commands.registerCommand('windsurfPool.restoreWorkbench', async () => {
     const restored = restoreWorkbench();
     const productRestored = restoreProductJson();
-    // 同步关闭开关，避免下次 activate 又自动注入；并清理 bubble rules
+    // 同步关闭开关，避免下次 activate 又自动注入；并清理增强相关规则（气泡+脚本纪律）
     await vscode.workspace.getConfiguration('windsurfPool.enhancement').update('enabled', false, vscode.ConfigurationTarget.Global);
-    try { removeBubbleRules(); } catch {}
+    removeAllEnhancementRules();
 
     // 通知 webview 刷新状态
     try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
@@ -372,6 +378,29 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
   context.subscriptions.push(removeRulesCmd);
+
+  // [Windsurf 增强] 手动注入/移除脚本纪律规则命令
+  const injectScriptCmd = vscode.commands.registerCommand('windsurfPool.injectScriptDisciplineRules', () => {
+    const result = injectScriptDisciplineRules();
+    try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
+    if (result.injected) {
+      vscode.window.showInformationMessage('脚本纪律规则已注入到 ~/.windsurfrules');
+    } else {
+      vscode.window.showInformationMessage(result.error || '规则已存在，无需重复注入');
+    }
+  });
+  context.subscriptions.push(injectScriptCmd);
+
+  const removeScriptCmd = vscode.commands.registerCommand('windsurfPool.removeScriptDisciplineRules', () => {
+    const removed = removeScriptDisciplineRules();
+    try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
+    if (removed) {
+      vscode.window.showInformationMessage('已从 ~/.windsurfrules 移除脚本纪律规则');
+    } else {
+      vscode.window.showInformationMessage('未找到已注入的脚本纪律规则');
+    }
+  });
+  context.subscriptions.push(removeScriptCmd);
 
   // [Windsurf 增强] 重新注入命令
   const reinjectCmd = vscode.commands.registerCommand('windsurfPool.reinjectEnhancement', async () => {

@@ -18,6 +18,16 @@ export interface AccountStats {
   lastCheckTs: number;
 }
 
+export interface QuotaHistoryEntry {
+  ts: number;
+  email: string;
+  daily: number;       // dailyRemainingPercent
+  weekly: number;      // weeklyRemainingPercent
+  dDelta: number;      // daily change (negative = consumed)
+  wDelta: number;      // weekly change
+  resetAt: number;     // earlier reset unix timestamp
+}
+
 export interface PoolStats {
   totalSwitches: number;
   totalPoolSignals: number;
@@ -28,17 +38,44 @@ export interface PoolStats {
 }
 
 const STORAGE_KEY = 'usageTracker.stats';
+const HISTORY_KEY = 'usageTracker.quotaHistory';
+const MAX_HISTORY = 500;
 
 export class UsageTracker {
   private _ctx: vscode.ExtensionContext;
   private _stats: PoolStats;
   private _dirty = false;
   private _saveTimer: NodeJS.Timeout | null = null;
+  private _quotaHistory: QuotaHistoryEntry[] = [];
+  private _lastQuotaMap: Map<string, { daily: number; weekly: number }> = new Map();
+  private _historyDirty = false;
+  private _historySaveTimer: NodeJS.Timeout | null = null;
+  private _historyListeners = new Set<() => void>();
 
   constructor(ctx: vscode.ExtensionContext) {
     this._ctx = ctx;
     this._stats = this._load();
     this._maybeResetDaily();
+    this._quotaHistory = this._ctx.globalState.get<QuotaHistoryEntry[]>(HISTORY_KEY, []);
+    // 初始化 _lastQuotaMap（从历史末尾恢复每个账号的最后已知配额）
+    for (let i = this._quotaHistory.length - 1; i >= 0; i--) {
+      const e = this._quotaHistory[i];
+      if (!this._lastQuotaMap.has(e.email)) {
+        this._lastQuotaMap.set(e.email, { daily: e.daily, weekly: e.weekly });
+      }
+    }
+  }
+
+  set onHistoryUpdate(cb: (() => void) | null) {
+    // 兼容旧 API：侧栏用 setter
+    if ((this as any)._legacyHistoryCb) this._historyListeners.delete((this as any)._legacyHistoryCb);
+    (this as any)._legacyHistoryCb = cb;
+    if (cb) this._historyListeners.add(cb);
+  }
+
+  addHistoryListener(cb: () => void): { dispose(): void } {
+    this._historyListeners.add(cb);
+    return { dispose: () => { this._historyListeners.delete(cb); } };
   }
 
   private _load(): PoolStats {
@@ -104,12 +141,41 @@ export class UsageTracker {
     this._debounceSave();
   }
 
-  recordUsage(email: string, dailyRemaining: number, weeklyRemaining: number): void {
+  recordUsage(email: string, dailyRemaining: number, weeklyRemaining: number, dailyResetAt?: number, weeklyResetAt?: number): void {
     this._maybeResetDaily();
     const acct = this._ensureAccount(email);
     acct.dailyUsedPct = Math.max(0, 100 - dailyRemaining);
     acct.weeklyUsedPct = Math.max(0, 100 - weeklyRemaining);
     acct.lastCheckTs = Date.now();
+
+    // 配额变动历史：仅在数值变化时记录（避免轮询产生大量重复条目）
+    const daily = Math.round(dailyRemaining);
+    const weekly = Math.round(weeklyRemaining);
+    const last = this._lastQuotaMap.get(email);
+    if (!last || last.daily !== daily || last.weekly !== weekly) {
+      const dDelta = last ? daily - last.daily : 0;
+      const wDelta = last ? weekly - last.weekly : 0;
+      const resetAt = Math.min(
+        dailyResetAt || Infinity,
+        weeklyResetAt || Infinity
+      );
+      this._quotaHistory.push({
+        ts: Date.now(),
+        email,
+        daily,
+        weekly,
+        dDelta,
+        wDelta,
+        resetAt: resetAt === Infinity ? 0 : resetAt,
+      });
+      if (this._quotaHistory.length > MAX_HISTORY) {
+        this._quotaHistory.splice(0, this._quotaHistory.length - MAX_HISTORY);
+      }
+      this._lastQuotaMap.set(email, { daily, weekly });
+      this._debounceHistorySave();
+      for (const cb of this._historyListeners) { try { cb(); } catch {} }
+    }
+
     this._debounceSave();
   }
 
@@ -151,6 +217,48 @@ export class UsageTracker {
     };
   }
 
+  // ── 配额历史 ──
+
+  getQuotaHistory(email?: string, limit = 100): QuotaHistoryEntry[] {
+    let result = this._quotaHistory;
+    if (email) {
+      result = result.filter(e => e.email === email);
+    }
+    return result.slice(-limit);
+  }
+
+  /** 清除配额历史（不传 email 则清除全部） */
+  clearQuotaHistory(email?: string): void {
+    if (email) {
+      this._quotaHistory = this._quotaHistory.filter(e => e.email !== email);
+      this._lastQuotaMap.delete(email);
+    } else {
+      this._quotaHistory = [];
+      this._lastQuotaMap.clear();
+    }
+    this._ctx.globalState.update(HISTORY_KEY, this._quotaHistory);
+    for (const cb of this._historyListeners) { try { cb(); } catch {} }
+  }
+
+  /** 获取历史中涉及的所有账号（去重） */
+  getHistoryEmails(): string[] {
+    const set = new Set<string>();
+    for (const e of this._quotaHistory) set.add(e.email);
+    return Array.from(set);
+  }
+
+  private _debounceHistorySave(): void {
+    this._historyDirty = true;
+    if (this._historySaveTimer) return;
+    this._historySaveTimer = setTimeout(() => {
+      this._historySaveTimer = null;
+      if (this._historyDirty) {
+        this._historyDirty = false;
+        this._ctx.globalState.update(HISTORY_KEY, this._quotaHistory);
+      }
+    }, 3000);
+  }
+
   // ── 内部 ──
 
   private _ensureAccount(email: string): AccountStats {
@@ -169,6 +277,10 @@ export class UsageTracker {
     if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
     if (this._dirty) {
       this._ctx.globalState.update(STORAGE_KEY, this._stats);
+    }
+    if (this._historySaveTimer) { clearTimeout(this._historySaveTimer); this._historySaveTimer = null; }
+    if (this._historyDirty) {
+      this._ctx.globalState.update(HISTORY_KEY, this._quotaHistory);
     }
   }
 }

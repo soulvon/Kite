@@ -369,9 +369,9 @@ export class AutoSwitcher implements vscode.Disposable {
       diskCache.writeEntry(acct.email, entry);
       this._onUsageUpdate?.(acct.email, snapshot, error);
       this._didUpdate.fire();
-      // 记录用量统计
+      // 记录用量统计（含 resetAt 用于配额变动历史）
       if (snapshot) {
-        this._tracker.recordUsage(acct.email, snapshot.dailyRemainingPercent, snapshot.weeklyRemainingPercent);
+        this._tracker.recordUsage(acct.email, snapshot.dailyRemainingPercent, snapshot.weeklyRemainingPercent, snapshot.dailyResetAtUnix, snapshot.weeklyResetAtUnix);
       }
       this._tracker.recordRefresh();
     } finally {
@@ -480,7 +480,8 @@ export class AutoSwitcher implements vscode.Disposable {
       const candidates = this._findAllCandidates(curEmail, s.threshold, s.scoreMode, findScore);
       if (candidates.length === 0) {
         const noHint = hardExhausted ? '低于额度下限' : '低于阈值';
-        const log = `[${ts()}] ${curEmail} ${reason} ${noHint}，无可用候选`;
+        const curDetail = `日${Math.round(dPct)}%周${Math.round(wPct)}%`;
+        const log = `[${ts()}] ${curEmail}(${curDetail}) ${reason} ${noHint}，无可用候选`;
         this._onSwitchEvent?.(log, `${curEmail} ${reason} ${noHint}，无可用候选`, 'warn');
         console.log(`[autoSwitch] ${curEmail} curScore=${Math.round(curScore)} d=${Math.round(dPct)} w=${Math.round(wPct)} no candidates`);
         return;
@@ -530,13 +531,18 @@ export class AutoSwitcher implements vscode.Disposable {
 
       if (!verified) {
         const noHint = hardExhausted ? '低于额度下限' : '低于阈值';
-        const log = `[${ts()}] ${curEmail} ${reason} ${noHint}，${maxVerify} 个候选均验证失败`;
+        const curDetail = `日${Math.round(dPct)}%周${Math.round(wPct)}%`;
+        const log = `[${ts()}] ${curEmail}(${curDetail}) ${reason} ${noHint}，${maxVerify} 个候选均验证失败`;
         this._onSwitchEvent?.(log, `${reason} ${noHint}，候选验证失败`, 'warn');
         console.log(`[autoSwitch] ${curEmail} 所有候选验证失败 (tried=${maxVerify}, total=${candidates.length})`);
         return;
       }
 
-      const log = `[${ts()}] ${curEmail} ${reason} → ${verified.email}`;
+      const curDetail = `日${Math.round(dPct)}%周${Math.round(wPct)}%`;
+      const candEntry = this._cache.get(verified.email);
+      const candSnap = candEntry?.snapshot;
+      const targetDetail = candSnap ? `日${Math.round(candSnap.dailyRemainingPercent)}%周${Math.round(candSnap.weeklyRemainingPercent)}%` : '?';
+      const log = `[${ts()}] ${curEmail}(${curDetail}) ${reason} → ${verified.email}(${targetDetail})`;
       const triggerHint = hardExhausted ? `低于额度下限 ${minQ}%` : `低于阈值 ${s.threshold}%`;
       this._onSwitchEvent?.(log, `${reason} ${triggerHint}，切换至 ${verified.email}`, '');
 
@@ -647,7 +653,13 @@ export class AutoSwitcher implements vscode.Disposable {
       // 记录切号统计
       this._tracker.recordSwitch(cand.email);
 
-      const log = `[${ts()}] 信号切号(${reason}): ${curEmail} → ${cand.email}`;
+      const curCacheEntry = this._cache.get(curEmail);
+      const curSnap = curCacheEntry?.snapshot;
+      const curDetail = curSnap ? `日${Math.round(curSnap.dailyRemainingPercent)}%周${Math.round(curSnap.weeklyRemainingPercent)}%` : '?';
+      const candCacheEntry = this._cache.get(cand.email);
+      const candSnap = candCacheEntry?.snapshot;
+      const targetDetail = candSnap ? `日${Math.round(candSnap.dailyRemainingPercent)}%周${Math.round(candSnap.weeklyRemainingPercent)}%` : '?';
+      const log = `[${ts()}] 信号切号(${reason}): ${curEmail}(${curDetail}) → ${cand.email}(${targetDetail})`;
       this._onSwitchEvent?.(log, `${reason} → ${cand.email}`, '');
 
       // 后台异步刷新新旧账号配额（不阻塞返回）

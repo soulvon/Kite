@@ -6,7 +6,7 @@
 
 无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-6.4.0-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-6.7.12-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -130,6 +130,116 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
+
+### v6.7.13
+- 修复换号日志表格右侧列数据为空问题：改用 indexOf 定位箭头字符，彻底解决正则编码不一致导致的解析失败
+- 配额历史新增"当前"和"最近"快捷筛选按钮，点击即切换账号筛选
+- 修复图表在所有数据点集中于同一小时时显示空白：直接用原始点绘制
+- 修复换号日志表格多列内容被横向截断：table-wrap 改为 overflow-x: auto
+- 修复侧栏"日/周总用量"数值溢出卡片右边框：bar-val 宽度从 36px 改为 min-width 72px
+
+### v6.7.3
+- 统计卡片扩展：新增正常/配额耗尽/异常账号数、平均日/周配额剩余
+- 配额历史图表优化：改为按小时聚合统计，更清晰的趋势展示
+- 配额历史筛选：新增"最近使用"选项，显示最近 7 天有配额变动的账号
+- 日志同步机制：全屏面板打开时通过 bridgeServer 从主窗口拉取恢复日志和诊断日志
+- 浅色主题适配：CSS 变量分深色/浅色两套，修复浅色主题下文字和边框不可见问题
+- 表格优化：删除不存在的"套餐"和"Flex"列
+
+### v6.7.1
+- 侧栏配额历史卡片移除，数据整合至统计面板
+- "统计面板"入口移至「用量统计」行右侧，更自然
+- 移除不必要的"清除历史"功能
+- 修复模态框/Toast 透明背景问题
+
+### v6.7.0
+- **🟢 监控面板增强**（借鉴 Antigravity Cockpit）：
+  - **账号总览 Tab**：统计卡片行（总账号/今日切号/请求信号/配额检查）+ 全账号配额表（日/周进度条、Flex 额度、缓存年龄、状态、标签），当前账号蓝色高亮
+  - **恢复日志 Tab**：错误恢复执行记录（时间、分类彩色徽章、错误文本、执行动作、耗时），支持分类筛选（网络/配额/模型/截断/权限/介入/自定义）
+  - **隐私模式**：一键脱敏所有邮箱（`a***@domain.com`），方便截图分享
+  - **历史清除**：清除单账号或全部配额历史，带确认弹窗
+  - **刷新冷却**：10 秒冷却 + 旋转动画，防止频繁请求
+  - **Toast 通知**：操作反馈（刷新、清除、隐私切换）
+  - **快捷键** `Ctrl+Shift+Q` / `Cmd+Shift+Q` 快速打开监控面板
+
+### v6.6.9
+- **🟢 全屏监控面板**：新增独立 WebView 面板（命令面板搜索「打开监控面板」或侧栏「配额历史」右上角 ↗ 按钮），包含：
+  - **配额历史 Tab**：全宽折线图（带 Y 轴刻度、20% 网格、面积阴影）+ 分页明细表（记录时间、账号、日/周剩余进度条、变化量、重置时间、倒计时），支持账号筛选 + 时间范围（24h/7天/30天/全部）
+  - **换号日志 Tab**：结构化解析切号日志，展示来源/目标账号、配额详情、切换原因和结果
+  - 底部状态栏显示数据条数和当前账号
+- **🟢 侧栏入口按钮**：配额历史面板标题旁新增外链图标，点击直接跳转全屏面板
+
+### v6.6.8
+- **🟢 配额变动历史面板**：新增「配额历史」侧栏卡片，包含：
+  - **SVG 折线图**：日配额（蓝）/ 周配额（橙）趋势可视化，30% 警告线 + 10% 危险线
+  - **配额变动表格**：时间、日%、周%、变化量（红/绿色标）、重置时间，最新 50 条，hover 显示完整邮箱
+  - **账号筛选**：下拉选择单个账号或查看全部
+  - **变化检测记录**：仅在配额数值变化时记录（避免轮询产生重复），持久化最多 500 条（`globalState`），跨会话保留
+- **🟢 切号日志增强**：切号日志现包含源/目标账号的日周配额数值，格式：`[HH:MM:SS] src(日X%周Y%) 原因 → target(日A%周B%)`，覆盖定时切号、信号切号、无候选、验证失败四种场景
+
+### v6.6.6
+- **🔴 Bug F 修复：banner 倒计时在 Trusted Types CSP 严格模式下崩溃**：`showRecoveryPrompt` 内 `refreshUI` 直接对 `.ws-rb-status` 元素 `innerHTML = ...` 赋值，绕过了 `_ttPolicy.createHTML` 包装。Windsurf 启用 `require-trusted-types-for 'script'` 时该行抛 `TypeError`，导致整个倒计时刷新失败、banner 卡住不动。改为统一调用 `setSafeHTML`，与其他 HTML 注入路径一致。
+- **🟡 Bug G 修复：`checkForContinuePrompts` 不占用共享冷却**：smart 模式下检测到工具上限并发送 continue 后，未更新 `lastRecoveryTs` / `_recoveryCooldownMs`。后续 `checkForErrors` 仍可能找到同一错误并弹 banner，倒计时结束尝试再次发送（被 `sendContinueMessage` 内部 `_lastContinueTs` 拦截）。修复后发送即占用 15s 共享冷却，避免无意义二次 banner。
+- **🟢 Bug H 修复：`showRecoveryNotification` escape 不一致**：toast 用了简化版 `replace(/[<>&]/g, ...)`，未转义 `"` 和 `'`，与代码库已有 `escapeHtml` 工具不一致。当前安全（message 在 span 文本内非属性内），改用统一 `escapeHtml` 防止未来重构出意外 XSS。
+
+### v6.6.5
+- **🔴 Bug C/D/E 修复：setTimeout 残留绕过开关检查**：第八轮审查发现三处恢复流程内嵌 `setTimeout` 在延迟期间不检查用户开关变化，违反"用户意图优先"原则。
+  - **Bug C** (`handleRetryAction`)：retry 延迟最长 9s，原 setTimeout 只检查 3s 行为冷却，未检查 `autoRecoveryEnabled` / `guardian.autoRetry`。用户在 delay 期间关闭开关后，setTimeout 仍会触发重试。
+  - **Bug D** (`checkForPoolResult`)：切号成功 3s 后调用 `retryLastMessage`，未检查 `autoRecoveryEnabled`。用户切号过程中关闭自动恢复，仍会触发重试。
+  - **Bug E** (`handleSwitchModelAction`)：切模型 1.5s 后执行 afterAction，未检查 `autoRecoveryEnabled`。
+  - **修复**：每个 setTimeout 闭包内加入 settings 短路检查，记录日志 `setTimeout 短路: <reason>` 便于排查。
+
+### v6.6.4
+- **🔴 Bug A 修复：`getLatestErrorText()` 路径 1 遮蔽新错误**：`.error-message` 等选择器扫描路径未过滤 `_wsRecoveryHandled`，导致已处理的错误 DOM 残留时，路径 2-4（文本匹配 / assistant 内嵌 / body 全局兜底）发现的新错误永远不被处理。现已在路径 1 加入 `_wsRecoveryHandled` 检查，四条路径行为一致。
+- **🔴 Bug B 修复：关闭 banner 时子开关 fallback 被绕过**：当 `recoveryConfirmEnabled = false`（关闭确认 banner）时，`isActionDisabled` + fallback 逻辑在 `recoveryConfirmEnabled` 检查之后，完全被跳过。导致禁用的 action（如 `retry`）在 `dispatchRecoveryAction` 里静默 return，元素已标记但无任何动作执行也无通知。现已将子开关检查移到 `recoveryConfirmEnabled` 之前，确保无论 banner 开关状态如何都有 fallback。
+- **📝 脚本纪律规则改为英文原版**：`resources/script-discipline-rules.md` 从中文翻译版替换为英文 `[Script File Discipline — HIGHEST PRIORITY / ZERO TOLERANCE]` 原文，与全局规则文件 `~/.codeium/windsurf/memories/global_rules.md` 保持单一真相源。AI 模型对英文原版指令的遵循度更稳定，无翻译损耗。注入流程不变。
+
+### v6.6.3
+- **第六轮状态机审查修复**：调整 `checkForErrors` 中 `_wsRecoveryHandled` 的标记时机，避免冷却期间、banner 显示期间、或未命中任何规则的错误元素被提前标记，导致后续恢复流程永久跳过。
+- **Banner 与恢复流程更稳健**：banner 正在显示时，新错误只跳过本轮检测但不标记 DOM，保留后续重检机会；只有命中指纹去重、自定义规则或内置恢复规则时才标记已处理。
+- **保持偏好 Soft 模式**：「记住此选择」仍表示下次默认选中该策略，但 banner 继续显示，保留通知与 5 秒反悔窗口。
+
+### v6.6.2
+- **� 关键修复「queued 状态下继续发不出去」**：用户反馈截图——配额耗尽 + 「1 消息 queued」+ 输入框残留「继续」 → 死锁好几天。根因：Windsurf 在 queued 状态下「发送按钮」被禁用或替换，扩展的「点最右边按钮」策略**误点到「全部接受/全部拒绝」权限按钮**。
+- **修复路径**：检测到 queued 状态时直接派发 **Enter 键**（这是 Windsurf 自己的官方推荐路径，DOM 上明示「按回车发送排队消息 (⏎)」）：
+  - `sendContinueMessage` 入口处：已有 queued 时**不重复入队**，直接 Enter 推队列。
+  - `trySendMessage` 入口处：queued 时优先走 Enter 策略，绕过按钮策略。
+  - 长任务模式输入框残留检测：queued 时不当作"失败"，直接 Enter 推队列。
+- **强化 Enter 事件**：同时派发 `keydown`/`keypress`/`keyup` 三个事件，覆盖 Lexical / React / contentEditable 不同框架的监听。
+- **按钮策略加保护**：`trySendMessage` 在找"最右边按钮"时排除「全部接受/全部拒绝/Accept all/Reject all」文本的按钮。
+- **queued 检测扩展**：原正则只匹配纯英文 (`N message queued`) 或纯中文 (`N 条消息排队中`)。实测 Windsurf 汉化是分词替换的，DOM 上实际出现的是**「1 消息 queued」混合形态**——已加上混合正则 + 提示文本检测 (`按回车发送排队消息`)。
+- **🔧 修复「允许 Web 请求」弹窗无法自动点击**：根因是按钮文本匹配用了 `txt === '允许'` 精确相等，Windsurf 新版按钮文本是「**允许一次**」（"Allow Once"），导致匹配失败自动放行失效。改为白名单集合匹配，覆盖 `允许一次 / allow once / allow this time / 仅此一次` 等变体；同时显式排除「不允许 / deny / never / cancel」避免误点。
+- **容忍 UI 改版的容器兜底路径**：原 `closest('[class*="approval|permission|..."]')` 在 Windsurf 的 inline banner（非 modal）上失败；新增向上最多 6 层祖先节点的**文本特征兜底**（匹配 `允许 Web / Cascade wants / 想要访问` 等关键短语），即使 Windsurf 改了 class 名也能继续工作。
+- **安全策略不变**：仍然只点「允许一次」这种一次性放行按钮，**永远不会**自动点击「始终允许此页面 / 允许所有请求」这类永久性授权，避免越权。
+
+### v6.6.1
+- **🛡️ 脚本纪律规则自动注入（Script File Discipline）**：启用 Windsurf 增强时自动在 `~/.windsurfrules` 追加"脚本文件纪律"规则，让 Cascade AI 禁止在 `python -c "..."`、`node -e "..."`、`bash -c "..."`、heredoc 等形式里塞入多语句代码，强制写到 `scripts/` 目录的真实文件中执行，用完即删。解决 AI 频繁"黑箱"执行一长串内联代码导致难以审查、难以复现的问题。
+- **独立 marker + 独立开关命令**：新规则使用 `<!-- ws-better-script-discipline-start -->` / `<!-- ws-better-script-discipline-end -->` 独立标记，与智能建议规则互不干扰；新增命令面板命令 `注入脚本纪律规则` / `移除脚本纪律规则`，可单独管理。
+- **与增强开关联动**：打开"Windsurf 增强"开关时自动注入两条规则（智能建议+脚本纪律），关闭时一并移除；恢复原始 workbench.html 时也会清理。
+- **规则模板**：位于 `resources/script-discipline-rules.md`，用户可按需自定义内容，插件重新注入时会同步更新。
+
+### v6.6.0
+- **🎯 交互式恢复确认 Banner**：所有自动恢复操作（重试 / 发继续 / 切换模型 / 切换账号 / 自动允许权限）都先弹出右下角 banner，5 秒倒计时后自动执行。让用户清楚知道"软件正在介入"。
+- **可点选的策略切换**：banner 上有候选策略按钮（如「发继续 ✓」「切换模型」「切换账号」「重试」），点未选中按钮 = 切换默认 + 重置倒计时；再点一下 = 立即执行；点「✕ 取消」= 终止本轮。
+- **偏好持久化**：banner 上的 ☐ 记住此选择 checkbox，勾选后该分类下次用此策略，跨重启生效。可通过 `localStorage.removeItem('ws-recovery-prefs')` 重置。
+- **「模型提供商不可达」默认策略修正**：从 `switch-model`（实测因模型名硬编码对不上而陷入死锁）改为 `send-continue`（实测等几秒发继续即恢复）。不再切到根本不存在的"Claude Opus 4.6 Thinking / 4.7 / GPT-5.5"。
+- **配额耗尽 queued 死锁修复（Bug C）**：发送继续后输入框残留时，先检测「N message queued / N 条消息排队中」标记。若是 queued 入队成功，**不清空残留**也**不计入失败**——避免越积越多最终触发 `stopBrainlessMode('发送失败')`。
+- **长任务发送后主动 poll 错误（Bug B）**：发完继续后 3 秒主动调用 `checkForErrors`，不等下一轮 8 秒 idle，避免"发完继续 → 立刻报错 → 8 秒后才反应"导致重复入队。
+- **toast 改实色灰色背景**：右上角 toast 从渐变改为 `#2a2a2a` 实色，跟新 banner 视觉风格统一。
+- **新增设置项**：`recoveryConfirmEnabled`（总开关，默认 true，关闭后退回老逻辑直接执行）、`recoveryCountdownSeconds`（倒计时时长，默认 5 秒，可在 3-15 之间调）。
+
+### v6.5.8
+- **完成提示音零卡顿**：根因是 `[Console]::Beep` 同步阻塞 PowerShell 主线程整个音符时长（funk 三连音 ~420ms × repeat），导致音符之间出现停顿、连续触发被 stdin 队列推延。改用 `[System.Media.SystemSounds]::*.Play()` 异步 fire-and-forget API（由 Windows 音频子系统调度），PS 进程零阻塞。
+- **音调映射**：`funk → Asterisk`、`ding → Beep`、`chime → Exclamation`、`beep → Hand`，名称兼容、音色为 Windows 标准提示音。`custom` 自定义频率仍走 `[Console]::Beep`（保留精细控制）。
+- **WAV 文件异步化**：`Media.SoundPlayer.PlaySync()` → `Play()`，repeat 间隔由 Node 端 `setTimeout` 调度，单条命令短，避免 PS stdin 队列堆积。
+
+### v6.5.7
+- **扩展工具失败错误识别**：补充 HTTP 5xx（500/502/503/504、`Internal Server Error`、`Bad Gateway`、`Gateway Timeout`、`Service Unavailable` 及中文版本）、工具调用失败（`tool call failed` / `failed to call|invoke|execute tool` / `工具调用失败` / `failed to fetch` / `network request failed`）、积分/credits 相关配额耗尽（`insufficient credits` / `no credits remaining` / `积分耗尽` 等）共 20+ 条新模式，分别归入 `networkErrors`（走 retry）和 `quotaErrors`（走切号）。
+- **兜底 A 同步扩展**：assistant 消息内嵌错误检测的关键词白名单同步加入上述新模式，Cascade 把工具失败渲染在思考过程链内时也能触发恢复流程。
+
+### v6.5.6
+- **修复 Cascade 内嵌错误漏检**：Cascade 把 "⚠ 权限拒绝：Rate limit exceeded..." 渲染在思考过程链尾部（DOM 上落在 `assistantMessage` 容器内），导致主检测路径通过 `closest(ASSISTANT_MSG_SEL)` 排除掉、不触发自动切号/切模型。新增"兜底 A"分支：扫描最后一条 assistant 消息内符合高置信额度/速率关键词的短文本元素，命中即触发恢复流程。
+- 关键词白名单严格限定（如 `权限拒绝.*rate limit`、`upgrade to a Pro`、`用量配额已耗尽` 等），避免把 AI 解释类回复内容误判。
 
 ### v6.4.0
 - **标签设置持久化**：重构标签保存机制，专用轻量消息通道 + dirty 标记防覆盖 + 后端确认回执，彻底解决标签重启丢失问题。
