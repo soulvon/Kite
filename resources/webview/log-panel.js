@@ -378,6 +378,10 @@
   }
 
   // ── 换号日志渲染 ──
+  var TYPE_LABELS = { auto: '自动', signal: '信号', manual: '手动' };
+  var TYPE_COLORS = { auto: '#388bfd', signal: '#f0883e', manual: '#3fb950' };
+  var RESULT_COLORS = { ok: '#3fb950', warn: '#d29922', fail: '#f85149' };
+
   function renderSwitch() {
     const tbody = document.getElementById('lpSwitchBody');
     const countEl = document.getElementById('lpSwitchCount');
@@ -389,64 +393,106 @@
       return;
     }
 
-    // 解析日志字符串
     const logs = allSwitchLogs.slice().reverse();
     let html = '';
     for (const raw of logs) {
-      const parsed = parseSwitchLog(raw);
-      const resultCls = parsed.success ? ' lp-c-green' : ' lp-c-yellow';
-      html += '<tr>'
-        + '<td>' + esc(parsed.time) + '</td>'
-        + '<td class="lp-email-cell" title="' + esc(maskEmail(parsed.from)) + '">' + maskEmailShort(parsed.from) + '</td>'
-        + '<td>' + esc(parsed.fromQuota) + '</td>'
-        + '<td>' + esc(parsed.reason) + '</td>'
-        + '<td class="lp-email-cell" title="' + esc(maskEmail(parsed.to)) + '">' + maskEmailShort(parsed.to) + '</td>'
-        + '<td>' + esc(parsed.toQuota) + '</td>'
-        + '<td class="' + resultCls + '">' + esc(parsed.result) + '</td>'
+      const p = parseSwitchLog(raw);
+      const typeLabel = TYPE_LABELS[p.type] || p.type;
+      const typeColor = TYPE_COLORS[p.type] || '#888';
+      const resultOk = p.success;
+      const resultColor = resultOk ? RESULT_COLORS.ok : (p.result === '无候选' ? RESULT_COLORS.warn : RESULT_COLORS.fail);
+      const typeBadge = '<span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;background:' + typeColor + '22;color:' + typeColor + ';border:1px solid ' + typeColor + '44">' + esc(typeLabel) + '</span>';
+      const resultBadge = '<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;background:' + resultColor + '22;color:' + resultColor + ';border:1px solid ' + resultColor + '44">' + esc(p.result) + '</span>';
+      const rowOpacity = p.success ? '' : 'opacity:0.65;';
+      html += '<tr style="' + rowOpacity + '">'
+        + '<td style="white-space:nowrap">' + esc(p.time) + '</td>'
+        + '<td style="text-align:center">' + typeBadge + '</td>'
+        + '<td class="lp-email-cell" title="' + esc(maskEmail(p.from)) + '">' + maskEmailShort(p.from) + '</td>'
+        + '<td style="white-space:nowrap;font-size:11px;color:var(--vscode-descriptionForeground)">' + esc(p.fromQuota) + '</td>'
+        + '<td style="font-size:11px">' + esc(p.trigger) + '</td>'
+        + '<td class="lp-email-cell" title="' + esc(maskEmail(p.to)) + '">' + (p.to === '—' ? '<span style="color:var(--vscode-descriptionForeground)">—</span>' : maskEmailShort(p.to)) + '</td>'
+        + '<td style="text-align:center">' + resultBadge + '</td>'
         + '</tr>';
     }
     tbody.innerHTML = html;
   }
 
   function parseSwitchLog(raw) {
-    const m = raw.match(/^\[([^\]]+)\]\s*(.*)$/);
-    const time = m ? m[1] : '';
-    const body = m ? m[2] : raw;
+    // 支持新格式 [time][type] 和旧格式 [time]
+    var m = raw.match(/^\[([^\]]+)\](?:\[([^\]]+)\])?\s*(.*)$/);
+    var time = m ? m[1] : '';
+    var typeTag = m ? (m[2] || '') : '';
+    var body = m ? m[3] : raw;
 
-    // 用字符位置找箭头（避免正则字符编码不匹配），支持 → 和 ->
-    var arrowIdx = body.indexOf('\u2192');
+    // 确定类型
+    var type = 'auto';
+    var signalReason = '';
+    if (typeTag === 'manual') {
+      type = 'manual';
+    } else if (typeTag.slice(0, 7) === 'signal:') {
+      type = 'signal';
+      signalReason = typeTag.slice(7);
+    } else if (!typeTag && body.slice(0, 4) === '信号切') {
+      type = 'signal'; // 旧格式向宾
+    }
+
+    // 手动切号: [time][manual] from → to
+    if (type === 'manual') {
+      var ai = body.indexOf('→');
+      var from = ai > 0 ? body.slice(0, ai).trim() : body;
+      var to   = ai > 0 ? body.slice(ai + 1).trim() : '—';
+      return { time: time, type: 'manual', from: from, fromQuota: '', trigger: '手动切号', to: to, result: '成功', success: true };
+    }
+
+    // 找箭头（寻找 → 或 ->）
+    var arrowIdx = body.indexOf('→');
     if (arrowIdx < 0) arrowIdx = body.indexOf('->');
 
     if (arrowIdx > 0) {
-      var left = body.slice(0, arrowIdx).trim();
-      var right = body.slice(arrowIdx + (body[arrowIdx] === '\u2192' ? 1 : 2)).trim();
+      var left  = body.slice(0, arrowIdx).trim();
+      var right = body.slice(arrowIdx + (body[arrowIdx] === '→' ? 1 : 2)).trim();
 
-      // 信号切号：信号切号(reason): from(quota)
-      var sigLeft = left.match(/^信号切号\(([^)]+)\):\s*([^(]+)\(([^)]+)\)$/);
-      if (sigLeft) {
-        var sigRight = right.match(/^([^(]+)\(([^)]+)\)/);
-        return { time, from: sigLeft[2].trim(), fromQuota: sigLeft[3],
-          reason: '信号: ' + sigLeft[1],
-          to: sigRight ? sigRight[1].trim() : right, toQuota: sigRight ? sigRight[2] : '',
-          result: '成功', success: true };
+      // 旧格式信号切号: 信号切号(reason): from(quota) → to(quota)
+      var sigM = left.match(/^信号切号\(([^)]+)\):\s*([^(]+)\(([^)]+)\)$/);
+      if (sigM) {
+        var rM = right.match(/^([^(]+?)(?:\(([^)]+)\))?$/);
+        return { time: time, type: 'signal', from: sigM[2].trim(), fromQuota: sigM[3],
+          trigger: '信号: ' + sigM[1], to: rM ? rM[1].trim() : right, result: '成功', success: true };
       }
 
-      // 普通切号：from(quota) reason
-      var leftM = left.match(/^(.+?)\(([^)]+)\)\s*(.*?)$/);
-      var rightM = right.match(/^([^(]+)\(([^)]+)\)/);
-      if (leftM) {
-        return { time, from: leftM[1].trim(), fromQuota: leftM[2], reason: leftM[3].trim(),
-          to: rightM ? rightM[1].trim() : right, toQuota: rightM ? rightM[2] : '',
-          result: '成功', success: true };
+      // 新格式信号切号: [time][signal:reason] from(quota) → to(quota)
+      if (type === 'signal') {
+        var slm = left.match(/^(.+?)\(([^)]+)\)$/);
+        var srm = right.match(/^([^(]+?)(?:\(([^)]+)\))?$/);
+        return { time: time, type: 'signal',
+          from: slm ? slm[1].trim() : left, fromQuota: slm ? slm[2] : '',
+          trigger: '信号: ' + signalReason,
+          to: srm ? srm[1].trim() : right, result: '成功', success: true };
+      }
+
+      // 自动切号成功: from(quota) reason → to(quota)
+      var lm = left.match(/^(.+?)\(([^)]+)\)\s*(.*?)$/);
+      var rm = right.match(/^([^(]+?)(?:\(([^)]+)\))?$/);
+      if (lm) {
+        var trigger = lm[3].trim() || '阈值触发';
+        return { time: time, type: 'auto', from: lm[1].trim(), fromQuota: lm[2],
+          trigger: trigger, to: rm ? rm[1].trim() : right, result: '成功', success: true };
       }
     }
 
-    // 无候选 / 验证失败：from(quota) reason
+    // 失败: from(quota) reason
     var fail = body.match(/^([^(]+)\(([^)]+)\)\s+(.+)/);
-    if (fail) return { time, from: fail[1].trim(), fromQuota: fail[2], reason: fail[3].trim(), to: '—', toQuota: '—', result: '未切换', success: false };
+    if (fail) {
+      var reasonFull = fail[3].trim();
+      var triggerM = reasonFull.match(/^(日配额[\u4e00-\u9fff \d%]*|周配额[\u4e00-\u9fff \d%]*|日 \d+% \/ 周 \d+%)/);
+      var trigger = triggerM ? triggerM[1].replace(/\s+/g,' ').trim() : reasonFull.split('，')[0].split(',')[0];
+      var result = reasonFull.indexOf('无可用候选') >= 0 ? '无候选'
+                 : reasonFull.indexOf('验证失败') >= 0 ? '验证失败' : '未切换';
+      return { time: time, type: 'auto', from: fail[1].trim(), fromQuota: fail[2],
+        trigger: trigger, to: '—', result: result, success: false };
+    }
 
-    // 兜底：显示原始日志
-    return { time, from: body, fromQuota: '', reason: body, to: '', toQuota: '', result: '', success: false };
+    return { time: time, type: 'auto', from: body, fromQuota: '', trigger: '', to: '—', result: '未知', success: false };
   }
 
   function esc(s) {

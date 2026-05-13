@@ -24,6 +24,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _disposables: vscode.Disposable[] = [];
   private _output = vscode.window.createOutputChannel('Windsurf 号池');
+  onManualSwitch?: () => void;
   private _startTs = Date.now();
   private _logFilePath: string;
   private _autoSwitcher: AutoSwitcher;
@@ -61,7 +62,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (log) {
         const logs: string[] = this._context.globalState.get('autoSwitchLogs', []);
         logs.push(log);
-        if (logs.length > 30) logs.splice(0, logs.length - 30);
+        if (logs.length > 200) logs.splice(0, logs.length - 200);
         this._context.globalState.update('autoSwitchLogs', logs);
       }
     };
@@ -122,6 +123,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     });
     this._disposables.push({ dispose: unsubscribeBridge });
+  }
+
+  private _recordSwitchLog(log: string, status: string, statusType: string = ''): void {
+    this.postMessage({ type: 'autoSwitchEvent', log, status, statusType } as any);
+    if (log) {
+      const logs: string[] = this._context.globalState.get('autoSwitchLogs', []);
+      logs.push(log);
+      if (logs.length > 200) logs.splice(0, logs.length - 200);
+      this._context.globalState.update('autoSwitchLogs', logs);
+    }
+  }
+
+  private _tsFmt(): string {
+    const n = new Date();
+    return `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
   }
 
   private log(msg: string) {
@@ -682,12 +698,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           return;
         }
 
+        const prevEmail = this._context.globalState.get<string>('lastEmail') || '';
         const success = await injectSession(this._context, account);
         if (success) {
           this._usageTracker.recordSwitch(email);
           await accountStore.setCurrentAccount(this._context, email);
+          const log = `[${this._tsFmt()}][manual] ${prevEmail} → ${email}`;
+          this._recordSwitchLog(log, `手动切号 → ${email}`);
           // 无感切号：成功不弹任何提示，UI 高亮自动转移即为反馈
           this.refresh();
+          this.onManualSwitch?.();
         } else {
           this.showAlert('切换失败', '切换失败：' + email, 'error');
         }
@@ -785,6 +805,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._pushQuotaHistory((message as any).email);
         break;
       }
+
 
       case 'openLogPanel': {
         vscode.commands.executeCommand('windsurfPool.openLogPanel', (message as any).tab);
@@ -2060,7 +2081,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <button class="inst-import-btn" id="instImportBtn" title="从 Cockpit Tools 导入">Cockpit</button>
           <button class="inst-add-btn" id="instAddBtn" title="新建实例">+</button>
           <button class="inst-refresh-btn" id="instRefreshBtn" title="刷新">
-            <svg width="16" height="16" viewBox="0 0 1402 1024" fill="currentColor"><path d="M136.479 521.213a45.223 45.223 0 0 1-30.526-78.01l156.02-145.845a45.223 45.223 0 0 1 62.182 1.13l149.237 145.845a45.223 45.223 0 0 1-63.313 64.443L291.369 392.326 167.005 508.776a45.223 45.223 0 0 1-30.526 12.437zM1051.12 740.545a45.223 45.223 0 0 1-30.526-12.436L863.443 582.264a45.596 45.596 1 1 62.182-66.704l124.364 117.58 118.711-116.45a45.223 45.223 0 0 1 63.313 64.443l-149.237 146.976a45.223 45.223 0 0 1-31.656 12.436z"/><path d="M1048.859 737.154a45.223 45.223 0 0 1-45.224-45.224V513.298c0-183.154-149.236-332.391-332.391-332.391a332.391 332.391 0 0 0-218.202 81.402 45.255 45.255 0 0 1-59.921-67.835 422.838 422.838 0 0 1 700.961 318.824v178.632a45.223 45.223 0 0 1-45.223 45.224zM671.244 933.875a422.838 422.838 0 0 1-422.838-422.838V332.405a45.223 45.223 0 0 1 90.447 0v178.632c0 183.154 149.237 332.391 332.391 332.391a331.261 331.261 0 0 0 223.856-87.055 45.223 45.223 0 0 1 61.051 66.705 421.707 421.707 0 0 1-284.907 110.797z"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           </button>
         </summary>
         <div class="inst-body">

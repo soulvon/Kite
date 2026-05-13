@@ -62,6 +62,7 @@ export class StatusBarManager implements vscode.Disposable {
   private _auto: AutoSwitcher;
   private _disposables: vscode.Disposable[] = [];
   private _cooldownTimer: NodeJS.Timeout | null = null;
+  private _redrawTimer: NodeJS.Timeout | null = null;
 
   constructor(ctx: vscode.ExtensionContext, auto: AutoSwitcher) {
     this._ctx = ctx;
@@ -76,6 +77,8 @@ export class StatusBarManager implements vscode.Disposable {
     this._registerCommands();
     // 订阅 AutoSwitcher 更新事件：刷新 / 切号完成时自动重绘
     this._disposables.push(auto.onDidUpdate(() => this.update()));
+    // 每 5 秒重绘一次（只读缓存，不调 API），保持 tooltip 时间戳同步
+    this._redrawTimer = setInterval(() => this.update(), 5000);
   }
 
   private _registerCommands(): void {
@@ -354,6 +357,7 @@ export class StatusBarManager implements vscode.Disposable {
     }
     this._disposables = [];
     if (this._cooldownTimer) { clearTimeout(this._cooldownTimer); this._cooldownTimer = null; }
+    if (this._redrawTimer) { clearInterval(this._redrawTimer); this._redrawTimer = null; }
   }
 }
 

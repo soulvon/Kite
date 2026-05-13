@@ -266,13 +266,13 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
     <div class="lp-table-wrap">
       <table class="lp-table">
         <thead><tr>
-          <th>时间</th>
+          <th style="width:62px">时间</th>
+          <th style="width:46px">类型</th>
           <th>来源账号</th>
-          <th>来源配额</th>
-          <th>原因</th>
+          <th style="width:90px">来源配额</th>
+          <th style="width:100px">触发原因</th>
           <th>目标账号</th>
-          <th>目标配额</th>
-          <th>结果</th>
+          <th style="width:62px">结果</th>
         </tr></thead>
         <tbody id="lpSwitchBody"></tbody>
       </table>

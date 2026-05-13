@@ -481,7 +481,7 @@ export class AutoSwitcher implements vscode.Disposable {
       if (candidates.length === 0) {
         const noHint = hardExhausted ? '低于额度下限' : '低于阈值';
         const curDetail = `日${Math.round(dPct)}%周${Math.round(wPct)}%`;
-        const log = `[${ts()}] ${curEmail}(${curDetail}) ${reason} ${noHint}，无可用候选`;
+        const log = `[${ts()}][auto] ${curEmail}(${curDetail}) ${reason} ${noHint}，无可用候选`;
         this._onSwitchEvent?.(log, `${curEmail} ${reason} ${noHint}，无可用候选`, 'warn');
         console.log(`[autoSwitch] ${curEmail} curScore=${Math.round(curScore)} d=${Math.round(dPct)} w=${Math.round(wPct)} no candidates`);
         return;
@@ -532,7 +532,7 @@ export class AutoSwitcher implements vscode.Disposable {
       if (!verified) {
         const noHint = hardExhausted ? '低于额度下限' : '低于阈值';
         const curDetail = `日${Math.round(dPct)}%周${Math.round(wPct)}%`;
-        const log = `[${ts()}] ${curEmail}(${curDetail}) ${reason} ${noHint}，${maxVerify} 个候选均验证失败`;
+        const log = `[${ts()}][auto] ${curEmail}(${curDetail}) ${reason} ${noHint}，${maxVerify} 个候选均验证失败`;
         this._onSwitchEvent?.(log, `${reason} ${noHint}，候选验证失败`, 'warn');
         console.log(`[autoSwitch] ${curEmail} 所有候选验证失败 (tried=${maxVerify}, total=${candidates.length})`);
         return;
@@ -542,7 +542,7 @@ export class AutoSwitcher implements vscode.Disposable {
       const candEntry = this._cache.get(verified.email);
       const candSnap = candEntry?.snapshot;
       const targetDetail = candSnap ? `日${Math.round(candSnap.dailyRemainingPercent)}%周${Math.round(candSnap.weeklyRemainingPercent)}%` : '?';
-      const log = `[${ts()}] ${curEmail}(${curDetail}) ${reason} → ${verified.email}(${targetDetail})`;
+      const log = `[${ts()}][auto] ${curEmail}(${curDetail}) ${reason} → ${verified.email}(${targetDetail})`;
       const triggerHint = hardExhausted ? `低于额度下限 ${minQ}%` : `低于阈值 ${s.threshold}%`;
       this._onSwitchEvent?.(log, `${reason} ${triggerHint}，切换至 ${verified.email}`, '');
 
@@ -659,7 +659,7 @@ export class AutoSwitcher implements vscode.Disposable {
       const candCacheEntry = this._cache.get(cand.email);
       const candSnap = candCacheEntry?.snapshot;
       const targetDetail = candSnap ? `日${Math.round(candSnap.dailyRemainingPercent)}%周${Math.round(candSnap.weeklyRemainingPercent)}%` : '?';
-      const log = `[${ts()}] 信号切号(${reason}): ${curEmail}(${curDetail}) → ${cand.email}(${targetDetail})`;
+      const log = `[${ts()}][signal:${reason}] ${curEmail}(${curDetail}) → ${cand.email}(${targetDetail})`;
       this._onSwitchEvent?.(log, `${reason} → ${cand.email}`, '');
 
       // 后台异步刷新新旧账号配额（不阻塞返回）

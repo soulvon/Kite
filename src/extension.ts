@@ -73,6 +73,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // 创建侧栏提供器
   sidebarProvider = new SidebarProvider(context.extensionUri, context, autoSwitcher, usageTracker);
+  // 侧栏手动切号成功后立即更新状态栏
+  sidebarProvider.onManualSwitch = () => statusBar?.update();
 
   // 注册侧栏视图
   const sidebarView = vscode.window.registerWebviewViewProvider(
@@ -139,6 +141,7 @@ export function activate(context: vscode.ExtensionContext) {
           await accountStore.setCurrentAccount(context, email);
           vscode.window.showInformationMessage('已切换至 ' + email);
           sidebarProvider.refresh();
+          statusBar?.update();
         } else {
           vscode.window.showErrorMessage('切换失败');
         }
@@ -167,6 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
       await accountStore.setCurrentAccount(context, nextAccount.email);
       vscode.window.showInformationMessage('已切换至 ' + nextAccount.email);
       sidebarProvider.refresh();
+      statusBar?.update();
     }
   });
   context.subscriptions.push(switchNextCmd);

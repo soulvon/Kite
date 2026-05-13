@@ -628,9 +628,6 @@ details > summary::marker { display: none; content: ''; }
 .inst-import-btn,
 .inst-add-btn,
 .inst-refresh-btn {
-    padding: 4px 10px;
-    font-size: 12px;
-    font-weight: 600;
     border-radius: var(--radius-sm);
     border: 1px solid var(--card-border);
     background: transparent;
@@ -640,6 +637,24 @@ details > summary::marker { display: none; content: ''; }
     display: inline-flex;
     align-items: center;
     justify-content: center;
+}
+.inst-import-btn {
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.inst-add-btn {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1;
+}
+.inst-refresh-btn {
+    width: 22px;
+    height: 22px;
+    padding: 0;
 }
 .inst-import-btn:hover,
 .inst-add-btn:hover,
@@ -1395,6 +1410,7 @@ details > summary::marker { display: none; content: ''; }
     font-size: 12px;
 }
 .icon-btn:hover { color: var(--vscode-foreground); background: var(--hover-bg); }
+.icon-btn.is-spinning svg { animation: spin 0.8s linear infinite; }
 .status-toggle-btn {
     cursor: pointer;
     padding: 2px 8px;

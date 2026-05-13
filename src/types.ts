@@ -83,7 +83,9 @@ export type WebviewMessageType =
   | 'getQuotaHistory'
   | 'openLogPanel'
   | 'syncRecoveryLogs'
-  | 'syncDiagnoseLogs';
+  | 'syncDiagnoseLogs'
+  | 'testModel'
+  | 'testModelAll';
 
 /**
  * Webview 消息

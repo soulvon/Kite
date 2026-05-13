@@ -536,7 +536,7 @@
         <div class="grid-actions-right">
           <button class="status-toggle-btn ${account.disabled ? 'is-disabled' : 'is-enabled'}" data-action="toggleDisabled" title="${account.disabled ? '点击启用账号' : '点击禁用账号'}">${account.disabled ? '已禁用' : '已启用'}</button>
           <button class="icon-btn" data-action="refresh" title="刷新配额">
-            <svg width="18" height="18" viewBox="0 0 1402 1024" fill="currentColor"><path d="M136.479 521.213a45.223 45.223 0 0 1-30.526-78.01l156.02-145.845a45.223 45.223 0 0 1 62.182 1.13l149.237 145.845a45.223 45.223 0 0 1-63.313 64.443L291.369 392.326 167.005 508.776a45.223 45.223 0 0 1-30.526 12.437zM1051.12 740.545a45.223 45.223 0 0 1-30.526-12.436L863.443 582.264a45.596 45.596 0 1 1 62.182-66.704l124.364 117.58 118.711-116.45a45.223 45.223 0 0 1 63.313 64.443l-149.237 146.976a45.223 45.223 0 0 1-31.656 12.436z"/><path d="M1048.859 737.154a45.223 45.223 0 0 1-45.224-45.224V513.298c0-183.154-149.236-332.391-332.391-332.391a332.391 332.391 0 0 0-218.202 81.402 45.255 45.255 0 0 1-59.921-67.835 422.838 422.838 0 0 1 700.961 318.824v178.632a45.223 45.223 0 0 1-45.223 45.224zM671.244 933.875a422.838 422.838 0 0 1-422.838-422.838V332.405a45.223 45.223 0 0 1 90.447 0v178.632c0 183.154 149.237 332.391 332.391 332.391a331.261 331.261 0 0 0 223.856-87.055 45.223 45.223 0 0 1 61.051 66.705 421.707 421.707 0 0 1-284.907 110.797z"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           </button>
           <button class="icon-btn danger" data-action="delete" title="删除账号">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
@@ -1436,111 +1436,69 @@
     const errors = [];
     const seen = new Set();
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      // 检测 token 直接导入（auth1_ 或 devin-session-token$）
-      if (line.startsWith('auth1_') || line.startsWith('devin-session-token$')) {
-        const tokenKey = line.substring(0, 32);
+      const raw = lines[i].trim().replace(/\\$/, ''); // 去掉行末反斜杠
+      if (!raw || raw.startsWith('#')) continue;
+
+      // ── 优先级1：整行就是 token ──────────────────────────────────
+      if (/^auth1_[A-Za-z0-9_]+$/.test(raw) || /^devin-session-token\$/.test(raw)) {
+        const tokenKey = raw.substring(0, 32);
         if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
         seen.add(tokenKey);
-        accts.push({ token: line });
+        accts.push({ token: raw });
         continue;
       }
-      // 智能识别: 行内包含 token（支持 email----token、email -- token | auth1=auth1_xxx 等混合格式）
-      {
-        let embeddedToken = '';
-        const auth1Match = line.match(/\bauth1[=_](auth1_[A-Za-z0-9_]+)/);
-        if (auth1Match) {
-          embeddedToken = auth1Match[1];
-        } else {
-          const devinMatch = line.match(/\b(devin-session-token\$[A-Za-z0-9._\-]+)/);
-          if (devinMatch) embeddedToken = devinMatch[1];
-        }
-        if (embeddedToken) {
-          const tokenKey = embeddedToken.substring(0, 32);
-          if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
-          seen.add(tokenKey);
-          accts.push({ token: embeddedToken });
-          continue;
-        }
+
+      // ── 优先级2：行内任意位置有 auth1_ 或 devin-session-token$ → 直接取 token ──
+      const tokenMatch = raw.match(/\b(auth1_[A-Za-z0-9_]+)/) || raw.match(/(devin-session-token\$[A-Za-z0-9._\-]+)/);
+      if (tokenMatch) {
+        const tok = tokenMatch[1];
+        const tokenKey = tok.substring(0, 32);
+        if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
+        seen.add(tokenKey);
+        accts.push({ token: tok });
+        continue;
       }
-      // 智能识别: 邮箱：xxx 密码：xxx 格式（支持单行和多行）
-      const cnFmtMatch = line.match(/邮箱[：:]\s*(\S+)/);
-      if (cnFmtMatch) {
-        const email = cnFmtMatch[1].trim();
-        // 查找下一行的密码
-        if (i + 1 < lines.length) {
-          const nextLine = lines[i + 1].trim();
-          const pwdMatch = nextLine.match(/密码[：:]\s*(\S+)/);
-          if (pwdMatch) {
-            const password = pwdMatch[1].trim();
-            if (!email || !password) { errors.push(`第 ${i+1} 行邮箱或密码为空`); continue; }
-            // 密码字段是 token，直接用 token 导入
-            if (password.startsWith('auth1_') || password.startsWith('devin-session-token$')) {
-              const tokenKey = password.substring(0, 32);
-              if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); i++; continue; }
-              seen.add(tokenKey);
-              accts.push({ token: password });
-              i++; continue;
-            }
-            if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
-            seen.add(email.toLowerCase());
-            accts.push({ email, password, authMethod });
-            i++; // 跳过下一行（密码行）
-            continue;
-          }
-        }
-        // 单行格式：邮箱：xxx 密码：xxx
-        const singleLineMatch = line.match(/邮箱[：:]\s*(\S+)\s+密码[：:]\s*(\S+)/);
-        if (singleLineMatch) {
-          const email = singleLineMatch[1].trim();
-          const password = singleLineMatch[2].trim();
-          if (!email || !password) { errors.push(`第 ${i+1} 行邮箱或密码为空`); continue; }
-          // 密码字段是 token，直接用 token 导入
-          if (password.startsWith('auth1_') || password.startsWith('devin-session-token$')) {
-            const tokenKey = password.substring(0, 32);
-            if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
-            seen.add(tokenKey);
-            accts.push({ token: password });
-            continue;
-          }
-          if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
+
+      // ── 优先级3：行内找邮箱，剩余作为密码 ──────────────────────
+      const emailMatch = raw.match(/([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/);
+      if (emailMatch) {
+        const email = emailMatch[1];
+        // 把邮箱从原串里去掉，剩余部分去掉分隔符得到密码
+        const rest = raw.replace(email, '').replace(/^[\s\-,|:：]+|[\s\-,|:：]+$/g, '').trim();
+        if (!rest) { errors.push(`第 ${i+1} 行缺少密码: ${raw.substring(0,40)}`); continue; }
+        if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
+        seen.add(email.toLowerCase());
+        accts.push({ email, password: rest, authMethod });
+        continue;
+      }
+
+      // ── 优先级4：中文格式"邮箱：xxx 密码：xxx"或多行 ─────────────
+      const cnEmail = raw.match(/邮箱[：:]\s*(\S+)/);
+      if (cnEmail) {
+        const email = cnEmail[1].trim();
+        const cnPwd = raw.match(/(?:密码|[Pp]assword)[：:]\s*(\S+)/);
+        if (cnPwd) {
+          const password = cnPwd[1].trim();
+          if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复`); continue; }
           seen.add(email.toLowerCase());
           accts.push({ email, password, authMethod });
           continue;
         }
-      }
-      // 分隔符解析（smart 模式自动尝试多种分隔符）
-      let email = '', password = '';
-      if (delim === 'smart') {
-        const smartDelims = ['----', '\t', ',', '|', ' '];
-        let found = false;
-        for (const d of smartDelims) {
-          const idx = line.indexOf(d);
-          if (idx > 0) {
-            const e = line.substring(0, idx).trim();
-            const p = line.substring(idx + d.length).trim();
-            if (e && p) { email = e; password = p; found = true; break; }
+        // 密码在下一行
+        if (i + 1 < lines.length) {
+          const nextLine = lines[i + 1].trim();
+          const pwdMatch = nextLine.match(/(?:密码|[Pp]assword)[：:]\s*(\S+)/);
+          if (pwdMatch) {
+            const password = pwdMatch[1].trim();
+            if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复`); i++; continue; }
+            seen.add(email.toLowerCase());
+            accts.push({ email, password, authMethod });
+            i++; continue;
           }
         }
-        if (!found) { errors.push(`第 ${i+1} 行格式错误: ${line.substring(0,40)}`); continue; }
-      } else {
-        const idx = line.indexOf(delim);
-        if (idx <= 0) { errors.push(`第 ${i+1} 行格式错误: ${line.substring(0,40)}`); continue; }
-        email = line.substring(0, idx).trim();
-        password = line.substring(idx + delim.length).trim();
       }
-      if (!email || !password) { errors.push(`第 ${i+1} 行邮箱或密码为空`); continue; }
-      // 密码字段是 token，直接用 token 导入
-      if (password.startsWith('auth1_') || password.startsWith('devin-session-token$')) {
-        const tokenKey = password.substring(0, 32);
-        if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
-        seen.add(tokenKey);
-        accts.push({ token: password });
-        continue;
-      }
-      if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
-      seen.add(email.toLowerCase());
-      accts.push({ email, password, authMethod });
+
+      errors.push(`第 ${i+1} 行格式无法识别: ${raw.substring(0, 40)}`);
     }
     const batchTagEl = document.getElementById('batchTag');
     const batchTag = batchTagEl ? batchTagEl.value.trim() : '';
@@ -1959,7 +1917,7 @@
     postMsg('refreshAllUsage', {});
     if (refreshAllBtn) {
       refreshAllBtn.classList.add('is-spinning');
-      setTimeout(() => refreshAllBtn.classList.remove('is-spinning'), 15000);
+      refreshAllBtn._pendingCount = accounts.length || 1;
     }
   }
 
@@ -2029,11 +1987,8 @@
         break;
       case 'refresh':
         postMsg('fetchUsageFor', { email });
-        const refreshBtn = card.querySelector('[data-action="refresh"]');
-        if (refreshBtn) {
-          refreshBtn.classList.add('is-spinning');
-          setTimeout(() => refreshBtn.classList.remove('is-spinning'), 1500);
-        }
+        { const refreshBtn = card.querySelector('[data-action="refresh"]');
+          if (refreshBtn) refreshBtn.classList.add('is-spinning'); }
         break;
       case 'delete': {
         // 淡出动画后发送删除消息（原版风格，无 confirm 弹窗）
@@ -2138,10 +2093,15 @@
           const errEl = card.querySelector('.grid-card-error');
           if (errEl) { errEl.textContent = error; errEl.hidden = false; }
         }
+        // 刷新完成：停止单卡转圈
+        if (card) { const rb = card.querySelector('[data-action="refresh"]'); if (rb) rb.classList.remove('is-spinning'); }
+        // 刷新完成：refreshAll 计数递减，到 0 停转
+        if (refreshAllBtn?.classList.contains('is-spinning')) {
+          refreshAllBtn._pendingCount = Math.max(0, (refreshAllBtn._pendingCount || 1) - 1);
+          if (refreshAllBtn._pendingCount <= 0) refreshAllBtn.classList.remove('is-spinning');
+        }
         // 新额度到达后防抖重排（按日配额降序）
         scheduleRerender();
-        // 即时更新汇总面板（不用等防抖重排）
-        updateSummary();
         break;
       }
 
