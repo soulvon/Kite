@@ -7,6 +7,7 @@ export interface StoredAccount {
   apiServerUrl: string;
   name?: string;
   tag?: string;
+  tags?: string[];
   disabled?: boolean;
 }
 
@@ -62,6 +63,8 @@ export type WebviewMessageType =
   | 'autoSwitchSettings'
   | 'refreshAllUsage'
   | 'batchTokenImport'
+  | 'batchStoredAccountImport'
+  | 'exportAccounts'
   | 'poolSignal'
   | 'batchDelete'
   | 'batchEnable'
@@ -85,7 +88,12 @@ export type WebviewMessageType =
   | 'syncRecoveryLogs'
   | 'syncDiagnoseLogs'
   | 'testModel'
-  | 'testModelAll';
+  | 'testModelAll'
+  | 'stopHealthCheck'
+  | 'oauthLogin'
+  | 'syncTagColors'
+  | 'clearHealthRateLimit'
+  | 'resetMachineId';
 
 /**
  * Webview 消息
@@ -117,6 +125,7 @@ export interface WebviewMessage {
   assignedTag?: string;
   settings?: Record<string, any>;
   payload?: Record<string, any>;
+  force?: boolean;
 }
 
 /**
@@ -137,7 +146,21 @@ export type BackendMessageType =
   | 'enhLoaded'
   | 'enhSaved'
   | 'enhCommandResult'
-  | 'usageStatsSync';
+  | 'usageStatsSync'
+  | 'testModelResult'
+  | 'switchResult'
+  | 'diagnosticSync'
+  | 'oauthStatus';
+
+export interface TestModelResultMessage {
+  type: 'testModelResult';
+  email: string;
+  ok: boolean;
+  reason?: string;
+  status?: number;
+  done?: boolean;       // true = this is the last result in a batch
+  progress?: string;    // e.g. "3/10"
+}
 
 export interface UsageMessage {
   type: 'usage';
@@ -208,6 +231,9 @@ export interface AutoSwitchSettingsSyncMessage {
   checkSec: number;
   cooldownSec: number;
   refreshMin: number;
+  refreshConcurrency: number;
+  refreshBatchDelayMs: number;
+  periodRefreshHours: number;
   scoreMode: string;
   switchStrategy: string;
   minQuota: number;
@@ -231,7 +257,7 @@ export interface UsageStatsSyncMessage {
   perAccount: Record<string, { switchToCount: number; dailyUsedPct: number; weeklyUsedPct: number; lastCheckTs: number }>;
 }
 
-export type BackendMessage = UsageMessage | AccountsChangedMessage | BatchResultMessage | InstanceListResultMessage | InstanceProgressMessage | InstanceErrorMessage | CockpitListResultMessage | ShowAlertMessage | AutoSwitchEventMessage | AutoSwitchSettingsSyncMessage | UsageStatsSyncMessage;
+export type BackendMessage = UsageMessage | AccountsChangedMessage | BatchResultMessage | InstanceListResultMessage | InstanceProgressMessage | InstanceErrorMessage | CockpitListResultMessage | ShowAlertMessage | AutoSwitchEventMessage | AutoSwitchSettingsSyncMessage | UsageStatsSyncMessage | TestModelResultMessage;
 
 /**
  * 批量导入账号

@@ -381,9 +381,18 @@ export function getCurrentInstanceTag(): string | undefined {
 
 export function getCurrentInstanceName(): string {
   const store = loadStore();
+  try { ensureDefaultInstance(store); } catch { }
   const currentDir = normalizePath(getCurrentUserDataDir());
   const inst = store.instances.find(i => normalizePath(i.userDataDir) === currentDir);
   return inst?.name || '默认实例';
+}
+
+export function getCurrentInstanceId(): string {
+  const store = loadStore();
+  try { ensureDefaultInstance(store); } catch { }
+  const currentDir = normalizePath(getCurrentUserDataDir());
+  const inst = store.instances.find(i => normalizePath(i.userDataDir) === currentDir);
+  return inst?.id || `pid-${process.pid}`;
 }
 
 // ─── 启动 / 停止 ───────────────────────────────────────
@@ -412,12 +421,13 @@ async function doDetectWindsurfExePath(): Promise<string | null> {
 }
 
 async function doDetectWindsurfExePathWindows(): Promise<string | null> {
-  // 1. 从已运行的 Windsurf 进程取 exe 路径（异步，不阻塞）
+  // 1. 从已运行的 Windsurf 进程取 exe 路径（wmic 原生命令，不触发安全软件）
   const entries = await getRunningWindsurfEntries();
   for (const [pid] of entries) {
-    const out = await runPowerShellAsync(`(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).Path`, 3000);
-    const exePath = out?.trim().split(/\r?\n/).find(l => l.toLowerCase().endsWith('windsurf.exe'));
-    if (exePath && fs.existsSync(exePath)) return exePath;
+    const out = await runShellAsync(`wmic process where "ProcessId=${pid}" get ExecutablePath /FORMAT:LIST`, 3000);
+    const match = out?.match(/ExecutablePath=(.+)/);
+    const exePath = match?.[1]?.trim();
+    if (exePath && exePath.toLowerCase().endsWith('windsurf.exe') && fs.existsSync(exePath)) return exePath;
   }
 
   // 2. 常见安装路径（最快，先于注册表）
@@ -438,23 +448,31 @@ async function doDetectWindsurfExePathWindows(): Promise<string | null> {
     if (c && fs.existsSync(c)) { return c; }
   }
 
-  // 3. PowerShell 查询卸载注册表（更快，只查 DisplayName 含 Windsurf 的项）
-  const psReg = `
-$paths = @(
-  'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
-  'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
-  'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
-)
-Get-ItemProperty $paths -ErrorAction SilentlyContinue |
-  Where-Object { $_.DisplayName -like '*Windsurf*' -and $_.InstallLocation } |
-  Select-Object -First 1 -ExpandProperty InstallLocation
-`.trim();
-  const regOut = await runPowerShellAsync(psReg, 5000);
-  if (regOut) {
-    const installDir = regOut.split(/\r?\n/).find(l => l.trim());
-    if (installDir) {
-      const exe = path.join(installDir.trim(), 'Windsurf.exe');
-      if (fs.existsSync(exe)) return exe;
+  // 3. 注册表查询安装位置（reg query 原生命令，不需要 PowerShell）
+  const regBases = [
+    'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    'HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+  ];
+  for (const regBase of regBases) {
+    const regOut = await runShellAsync(
+      `reg query "${regBase}" /s /f "Windsurf" /d 2>nul`,
+      5000
+    );
+    if (!regOut) continue;
+    for (const line of regOut.split(/\r?\n/)) {
+      if (!line.startsWith('HK')) continue;
+      const keyPath = line.trim();
+      const locOut = await runShellAsync(`reg query "${keyPath}" /v InstallLocation 2>nul`, 2000);
+      if (!locOut) continue;
+      const locMatch = locOut.match(/InstallLocation\s+REG_SZ\s+(.+)/i);
+      if (locMatch) {
+        const installDir = locMatch[1].trim();
+        if (installDir) {
+          const exe = path.join(installDir, 'Windsurf.exe');
+          if (fs.existsSync(exe)) return exe;
+        }
+      }
     }
   }
 
@@ -625,10 +643,9 @@ export async function stopInstance(instanceId: string): Promise<void> {
   if (targetPids.length > 0) {
     // 1. 先优雅关闭（让 Windsurf 自动保存）
     if (isWindows) {
-      const closeScript = targetPids
-        .map(p => `(Get-Process -Id ${p} -ErrorAction SilentlyContinue).CloseMainWindow() | Out-Null`)
-        .join('; ');
-      await runPowerShellAsync(closeScript, 5000);
+      // taskkill 不带 /F 会发送 WM_CLOSE，等价于 CloseMainWindow（不需要 PowerShell）
+      const pidArgs = targetPids.map(p => `/PID ${p}`).join(' ');
+      await runShellAsync(`taskkill ${pidArgs}`, 5000);
     } else {
       // Unix: 发送 SIGTERM
       for (const p of targetPids) {
@@ -708,11 +725,11 @@ function runPowerShellAsync(script: string, timeoutMs: number): Promise<string |
   });
 }
 
-/** 异步 Shell 执行（Linux/macOS 用） */
+/** 异步 Shell 执行（跨平台通用，windowsHide 避免弹窗） */
 function runShellAsync(cmd: string, timeoutMs: number): Promise<string | null> {
   return new Promise((resolve) => {
     try {
-      cp.exec(cmd, { encoding: 'utf8', timeout: timeoutMs }, (err, stdout) => resolve(err ? null : stdout));
+      cp.exec(cmd, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true }, (err, stdout) => resolve(err ? null : stdout));
     } catch {
       resolve(null);
     }
@@ -739,7 +756,31 @@ async function getRunningWindsurfEntries(forceFresh = false): Promise<Array<[num
 async function getRunningWindsurfEntriesWindows(): Promise<Array<[number, string | null]>> {
   const entries: Array<[number, string | null]> = [];
 
-  // 1. 优先使用 PowerShell（异步，不阻塞事件循环）
+  // 1. 优先使用 wmic（原生命令，不触发 360 等安全软件拦截）
+  try {
+    const stdout = await runShellAsync(
+      'wmic process where "name=\'Windsurf.exe\'" get ProcessId,CommandLine /FORMAT:LIST',
+      10000
+    );
+    if (stdout && stdout.trim()) {
+      const blocks = stdout.split(/\r?\n\r?\n/);
+      for (const block of blocks) {
+        const cmdMatch = block.match(/CommandLine=(.*)/);
+        const pidMatch = block.match(/ProcessId=(\d+)/);
+        if (!pidMatch) continue;
+        const pid = parseInt(pidMatch[1], 10);
+        const cmd = cmdMatch ? cmdMatch[1] : '';
+        if (cmd.includes('--type=')) continue;
+        const m = cmd.match(/--user-data-dir[= ]+["']?([^"']+?)["']?(?:\s+--|\s*$)/i);
+        entries.push([pid, m ? m[1].trim() : getDefaultUserDataDir()]);
+      }
+      if (entries.length > 0) return entries;
+    }
+  } catch {
+    /* fallback PowerShell */
+  }
+
+  // 2. 回退：PowerShell（某些新系统 wmic 已移除）
   try {
     const psCmd = `Get-CimInstance Win32_Process -Filter "name='Windsurf.exe'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
     const stdout = await runPowerShellAsync(psCmd, 10000);
@@ -751,31 +792,9 @@ async function getRunningWindsurfEntriesWindows(): Promise<Array<[number, string
         const cmd: string = p.CommandLine || '';
         if (!pid || cmd.includes('--type=')) continue;
         const m = cmd.match(/--user-data-dir[= ]+["']?([^"']+?)["']?(?:\s+--|\s*$)/i);
-        // 没有 --user-data-dir 的主进程 = 使用默认目录
         entries.push([pid, m ? m[1].trim() : getDefaultUserDataDir()]);
       }
       return entries;
-    }
-  } catch {
-    /* fallback wmic */
-  }
-
-  // 2. 回退：wmic（旧 Windows 兼容）
-  try {
-    const stdout = cp.execSync(
-      'wmic process where "name=\'Windsurf.exe\'" get ProcessId,CommandLine /FORMAT:LIST',
-      { encoding: 'utf8', timeout: 8000, windowsHide: true }
-    );
-    const blocks = stdout.split(/\r?\n\r?\n/);
-    for (const block of blocks) {
-      const cmdMatch = block.match(/CommandLine=(.*)/);
-      const pidMatch = block.match(/ProcessId=(\d+)/);
-      if (!pidMatch) continue;
-      const pid = parseInt(pidMatch[1], 10);
-      const cmd = cmdMatch ? cmdMatch[1] : '';
-      if (cmd.includes('--type=')) continue;
-      const m = cmd.match(/--user-data-dir[= ]+["']?([^"']+?)["']?(?:\s+--|\s*$)/i);
-      entries.push([pid, m ? m[1].trim() : getDefaultUserDataDir()]);
     }
   } catch { /* ignore */ }
 

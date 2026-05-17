@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Windsurf Pool - 全模块极简科技拟物面板</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        /* ==========================================================
+           Design Tokens (支持深浅色主题 - 继承 Liquid Glass 风格)
+           ========================================================== */
+        :root {
+            /* 浅色主题 */
+            --bg-primary: #f5f6f8;
+            --bg-card: #ffffff;
+            --bg-fill: #eef0f3;
+            --bg-fill-hover: #e4e7ec;
+            
+            --accent-blue: #2b66ff;
+            --accent-black: #1a1a1a;
+            --accent-green: #10b981;
+            
+            --text-primary: #1a1a20;
+            --text-secondary: #5c6370;
+            --text-muted: #8c95a5;
+            --text-inverse: #ffffff;
+
+            --border: rgba(0, 0, 0, 0.04);
+            --border-strong: rgba(0, 0, 0, 0.08);
+
+            --shadow-sm:
+                0 1px 2px rgba(0, 0, 0, 0.03),
+                inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            
+            --shadow-card:
+                0 2px 8px rgba(0, 0, 0, 0.02),
+                0 10px 30px rgba(0, 0, 0, 0.03);
+
+            --shadow-blue-glow: 0 4px 12px rgba(43, 102, 255, 0.35);
+            --shadow-black-glow: 0 4px 12px rgba(26, 26, 26, 0.2);
+
+            --radius-pill: 100px;
+            --radius-lg: 16px;
+            --radius-md: 10px;
+        }
+
+        [data-theme="dark"] {
+            /* 深色主题 */
+            --bg-primary: #0b0d11;
+            --bg-card: #151922;
+            --bg-fill: #202632;
+            --bg-fill-hover: #2a3242;
+            
+            --accent-blue: #3b82f6;
+            --accent-black: #f5f6f8;
+            --accent-green: #34d399;
+            
+            --text-primary: #f5f6f8;
+            --text-secondary: #a0aec0;
+            --text-muted: #64748b;
+            --text-inverse: #0b0d11;
+
+            --border: rgba(255, 255, 255, 0.03);
+            --border-strong: rgba(255, 255, 255, 0.08);
+
+            --shadow-sm:
+                0 1px 2px rgba(0, 0, 0, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            
+            --shadow-card:
+                0 4px 12px rgba(0, 0, 0, 0.3),
+                0 1px 3px rgba(0, 0, 0, 0.2);
+
+            --shadow-blue-glow: 0 4px 12px rgba(59, 130, 246, 0.4);
+            --shadow-black-glow: 0 4px 12px rgba(245, 246, 248, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s, box-shadow 0.3s;
+        }
+
+        body {
+            font-family: 'Manrope', 'Noto Sans SC', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            letter-spacing: -0.01em;
+        }
+
+        /* 主栅格布局：左侧控制面板，右侧数据看板 */
+        .dashboard-layout {
+            width: 100%;
+            max-width: 1400px;
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 25px;
+            align-items: start;
+        }
+
+        @media (max-width: 1024px) {
+            .dashboard-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ==========================================================
+           通用组件样式
+           ========================================================== */
+        .card {
+            background-color: var(--bg-card);
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: var(--shadow-card);
+            border: 1px solid var(--border);
+        }
+
+        .pill {
+            border: 1px solid var(--border);
+            outline: none;
+            background-color: var(--bg-card);
+            padding: 6px 14px;
+            border-radius: var(--radius-pill);
+            box-shadow: var(--shadow-sm);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+        }
+
+        .pill:hover {
+            border-color: var(--border-strong);
+            color: var(--text-primary);
+        }
+
+        .pill.active-black {
+            background-color: var(--accent-black);
+            color: var(--text-inverse);
+            border-color: var(--accent-black);
+            box-shadow: var(--shadow-black-glow);
+        }
+
+        .pill.active-blue {
+            background-color: var(--accent-blue);
+            color: #ffffff;
+            border-color: var(--accent-blue);
+            box-shadow: var(--shadow-blue-glow);
+        }
+
+        .pill.tag-blue {
+            background-color: rgba(43, 102, 255, 0.08);
+            color: var(--accent-blue);
+            border-color: rgba(43, 102, 255, 0.15);
+            box-shadow: none;
+        }
+
+        .pill.tag-green {
+            background-color: rgba(16, 185, 129, 0.08);
+            color: var(--accent-green);
+            border-color: rgba(16, 185, 129, 0.15);
+            box-shadow: none;
+        }
+
+        /* ==========================================================
+           左侧：插件控制面板 (Sidebar)
+           ========================================================== */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .plugin-block {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 15px;
+        }
+
+        .block-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .block-title {
+            font-size: 13px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Switch 开关 */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 40px;
+            height: 22px;
+        }
+
+        .switch input { opacity: 0; width: 0; height: 0; }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--bg-fill);
+            transition: .3s;
+            border-radius: 24px;
+            border: 1px solid var(--border);
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px; width: 16px;
+            left: 2px; bottom: 2px;
+            background-color: #ffffff;
+            transition: .3s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        [data-theme="dark"] .slider:before { background-color: #e4e7ec; }
+
+        input:checked + .slider { background-color: var(--accent-blue); border-color: var(--accent-blue); }
+        input:checked + .slider:before { transform: translateX(18px); }
+
+        .input-inline {
+            background-color: var(--bg-fill);
+            border: none;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-primary);
+            width: 35px;
+            text-align: center;
+        }
+
+        .tag-cloud {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 8px;
+        }
+
+        /* 子卡片 */
+        .sub-card-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .sub-card {
+            background-color: var(--bg-fill);
+            border-radius: var(--radius-md);
+            padding: 10px;
+        }
+
+        .sub-card-title { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
+        .sub-card-value { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; }
+
+        /* ==========================================================
+           右侧：数据统计面板 (Main Content)
+           ========================================================== */
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* 顶部导航与操作 */
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent-blue) 0%, #60a5fa 100%);
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #ffffff;
+            font-size: 16px;
+            font-weight: bold;
+            box-shadow: var(--shadow-blue-glow);
+        }
+
+        .top-bar h2 {
+            font-size: 18px;
+            font-weight: 800;
+        }
+
+        /* 分段控制器 */
+        .segmented-control {
+            display: flex;
+            background-color: var(--bg-fill);
+            padding: 4px;
+            border-radius: var(--radius-pill);
+            gap: 2px;
+        }
+
+        .segment-item {
+            padding: 6px 14px;
+            border-radius: var(--radius-pill);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .segment-item.active {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-sm);
+        }
+
+        /* 表格 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            padding: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+            text-transform: uppercase;
+        }
+
+        td {
+            padding: 14px 12px;
+            font-size: 12px;
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        tr:hover td {
+            background-color: rgba(0,0,0,0.01);
+        }
+
+        [data-theme="dark"] tr:hover td {
+            background-color: rgba(255,255,255,0.01);
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard-layout">
+        
+        <!-- ════════════════════ 左侧：插件控制面板 ════════════════════ -->
+        <div class="sidebar">
+            
+            <!-- 主题切换卡片 -->
+            <div class="plugin-block" style="display: flex; justify-content: space-between; align-items: center;">
+                <div class="block-title">🌙 夜间模式</div>
+                <label class="switch">
+                    <input type="checkbox" id="themeToggle">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <!-- Windsurf 增强 -->
+            <div class="plugin-block">
+                <div class="block-header">
+                    <div class="block-title">⚡ Windsurf 增强</div>
+                    <span class="pill tag-green">已启用</span>
+                </div>
+            </div>
+
+            <!-- 自动切号 -->
+            <div class="plugin-block">
+                <div class="block-header">
+                    <div class="block-title">🔄 自动切号</div>
+                    <label class="switch">
+                        <input type="checkbox" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                
+                <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 10px;">
+                    额度低于 <input type="text" value="15" class="input-inline"> % 时自动换号
+                </div>
+
+                <div class="tag-cloud">
+                    <span class="pill">5.13</span>
+                    <span class="pill">QQ</span>
+                    <span class="pill">三块五</span>
+                </div>
+
+                <div class="tag-cloud" style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border);">
+                    <span class="pill tag-blue">5月9号 ✕</span>
+                    <span class="pill tag-blue">必成功 ✕</span>
+                    <span class="pill tag-blue">海绵 ✕</span>
+                </div>
+            </div>
+
+            <!-- 多实例分身 -->
+            <div class="plugin-block">
+                <div class="block-header">
+                    <div class="block-title">🖥 多实例分身</div>
+                    <div style="display: flex; gap: 4px;">
+                        <span class="pill active-blue">Cockpit</span>
+                        <span class="pill">＋</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 我的账号 -->
+            <div class="plugin-block">
+                <div class="block-header">
+                    <div class="block-title">👤 我的账号</div>
+                    <span class="pill tag-green">添加账号</span>
+                </div>
+
+                <div class="sub-card-grid">
+                    <div class="sub-card">
+                        <div class="sub-card-title">☀️ 本日消耗</div>
+                        <div class="sub-card-value">1200/12100</div>
+                    </div>
+                    <div class="sub-card">
+                        <div class="sub-card-title">📅 本周消耗</div>
+                        <div class="sub-card-value">8400/84700</div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 10px; font-size: 11px; display: flex; justify-content: space-between;">
+                    <span style="color: var(--text-secondary);">活跃 / 禁用</span>
+                    <span class="mono" style="color: var(--accent-green);">121 / 0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════ 右侧：数据看板 ════════════════════ -->
+        <div class="main-content">
+            
+            <!-- 顶部导航 -->
+            <div class="card top-bar">
+                <div class="logo-area">
+                    <div class="logo-icon">W</div>
+                    <h2>WINDSURF POOL</h2>
+                    <span class="version-badge" style="font-size: 11px; background: var(--bg-fill); padding: 2px 6px; border-radius: 4px; color: var(--text-secondary); font-family: 'JetBrains Mono';">v6.9.11</span>
+                </div>
+                
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <div class="segmented-control">
+                        <div class="segment-item active">当前</div>
+                        <div class="segment-item">最近</div>
+                    </div>
+                    <button class="pill active-black">⟳ 刷新数据</button>
+                </div>
+            </div>
+
+            <!-- 数据分类快捷栏 -->
+            <div class="top-bar">
+                <div style="display: flex; gap: 8px;">
+                    <button class="pill active-black">🖼 图片</button>
+                    <button class="pill">🌐 网页</button>
+                    <button class="pill">≡ 文本</button>
+                </div>
+                
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <span style="font-size: 12px; color: var(--text-muted);">时间跨度:</span>
+                    <div class="segmented-control">
+                        <div class="segment-item">1小时</div>
+                        <div class="segment-item active">24h</div>
+                        <div class="segment-item">7天</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 图表卡片 -->
+            <div class="card">
+                <div style="font-size: 14px; font-weight: 700; margin-bottom: 15px;">配额历史趋势</div>
+                <div style="height: 120px; display: flex; align-items: flex-end;">
+                    <!-- 极简 SVG 拟物图表 -->
+                    <svg width="100%" height="100%" viewBox="0 0 1000 100" preserveAspectRatio="none">
+                        <path d="M 0,80 Q 250,20 500,60 T 1000,30" fill="none" stroke="var(--accent-blue)" stroke-width="3" stroke-linecap="round"/>
+                        <path d="M 0,80 Q 250,20 500,60 T 1000,30 L 1000,100 L 0,100 Z" fill="url(#gradient)" opacity="0.05"/>
+                        <defs>
+                            <linearGradient id="gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stop-color="var(--accent-blue)"/>
+                                <stop offset="100%" stop-color="var(--accent-blue)" stop-opacity="0"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- 明细列表卡片 -->
+            <div class="card">
+                <div style="font-size: 14px; font-weight: 700; margin-bottom: 15px;">实时账号状态明细</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>记录时间</th>
+                            <th>账号</th>
+                            <th>日变化</th>
+                            <th>倒计时</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="mono">05/14 19:27:22</td>
+                            <td style="font-weight: 600;">suvon2501@gmail.com</td>
+                            <td class="mono" style="color: #EF4444; font-weight: 600;">-2</td>
+                            <td class="mono">20h 32m</td>
+                        </tr>
+                        <tr>
+                            <td class="mono">05/14 19:13:55</td>
+                            <td style="font-weight: 600;">alpha@gmail.com</td>
+                            <td class="mono" style="color: #EF4444; font-weight: 600;">-1</td>
+                            <td class="mono">20h 45m</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主题切换脚本 -->
+    <script>
+        const toggle = document.getElementById('themeToggle');
+        
+        // 读取缓存
+        const currentTheme = localStorage.getItem('theme') || 'light';
+        if (currentTheme === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            toggle.checked = true;
+        }
+
+        toggle.addEventListener('change', () => {
+            if (toggle.checked) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+                localStorage.setItem('theme', 'dark');
+            } else {
+                document.documentElement.setAttribute('data-theme', 'light');
+                localStorage.setItem('theme', 'light');
+            }
+        });
+    </script>
+</body>
+</html>

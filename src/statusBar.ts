@@ -77,8 +77,9 @@ export class StatusBarManager implements vscode.Disposable {
     this._registerCommands();
     // 订阅 AutoSwitcher 更新事件：刷新 / 切号完成时自动重绘
     this._disposables.push(auto.onDidUpdate(() => this.update()));
-    // 每 5 秒重绘一次（只读缓存，不调 API），保持 tooltip 时间戳同步
-    this._redrawTimer = setInterval(() => this.update(), 5000);
+    // 每 30 秒重绘一次（只读缓存，不调 API），保持 tooltip 时间戳同步
+    // 事件驱动已覆盖大多数变化，30s 已足够
+    this._redrawTimer = setInterval(() => this.update(), 30000);
   }
 
   private _registerCommands(): void {

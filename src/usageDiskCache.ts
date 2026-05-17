@@ -83,11 +83,19 @@ export function readEntry(email: string): UsageCacheEntry | null {
 /**
  * 队列化写入单条记录（atomic：tmp + rename）
  * 多窗口并发安全：每次写入前重新读盘合并，避免互相覆盖。
+ *
+ * 跨进程注意：本进程内 _writeQueue 串行化避免本进程内竞争；
+ * 跨进程（多扩展宿主）依靠 doWrite 内部"先读后写 + atomic rename"做 best-effort 合并，
+ * 极少数情况下后写入会覆盖前者最新 ts，但下次刷新会自愈。
+ *
+ * @returns Promise 在该次写入完成（或失败被 catch 后）resolve，让调用方可选择 await
  */
-export function writeEntry(email: string, entry: UsageCacheEntry): void {
-  _writeQueue = _writeQueue.then(() => doWrite(email, entry)).catch(err => {
+export function writeEntry(email: string, entry: UsageCacheEntry): Promise<void> {
+  const task = _writeQueue.then(() => doWrite(email, entry)).catch(err => {
     console.warn('[usageDiskCache] write queue error:', err);
   });
+  _writeQueue = task;
+  return task;
 }
 
 async function doWrite(email: string, entry: UsageCacheEntry): Promise<void> {

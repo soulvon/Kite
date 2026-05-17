@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { StoredAccount } from './types';
 import { writeFileWithElevation, copyFileWithElevation, ElevationError } from './elevatedFs';
+import { scheduleAcpConnectionRecovery } from './acpRecovery';
+import { checkCascadeSendReady, DEFAULT_CASCADE_CHECK_MODEL } from './usageService';
 
 /**
  * Session 注入器
@@ -143,6 +145,23 @@ export function applyI18nOnly(): boolean {
 // ── 全局切号计数器（用于快速判断是否在频繁切号）──
 let _switchSeqNo = 0;
 let _switchTimestamps: number[] = [];  // 最近 N 次切号时间
+let _rejectUntil = 0;                  // 频率熔断截止时间：< 此时直接拒绝切号
+let _lastInjectFailure: { email: string; reason: string; kind: 'blocked' | 'error'; ts: number } | null = null;
+
+const RATE_LIMIT_WINDOW_MS = 60_000;   // 60s 窗口
+const RATE_LIMIT_MAX = 8;              // 60s 内最多 8 次切号
+const RATE_LIMIT_COOLDOWN_MS = 10_000; // 触发熔断后冷却 10s
+
+function setInjectFailure(email: string, reason: string, kind: 'blocked' | 'error' = 'error'): void {
+  _lastInjectFailure = { email, reason, kind, ts: Date.now() };
+}
+
+export function getLastInjectFailure(email?: string): { email: string; reason: string; kind: 'blocked' | 'error'; ts: number } | null {
+  if (!_lastInjectFailure) return null;
+  if (email && _lastInjectFailure.email !== email) return null;
+  if (Date.now() - _lastInjectFailure.ts > 60_000) return null;
+  return _lastInjectFailure;
+}
 
 export async function injectSession(
   context: vscode.ExtensionContext,
@@ -152,14 +171,42 @@ export async function injectSession(
   const silent = options?.silent ?? false;
   const seqNo = ++_switchSeqNo;
   const t0 = Date.now();
+  _lastInjectFailure = null;
   const caller = new Error().stack?.split('\n').slice(2, 5).map(l => l.trim()).join(' <- ') || 'unknown';
   console.log(`[injectSession][#${seqNo}] ▶ 入口: email=${account.email}, silent=${silent}, caller=${caller}`);
 
-  // 频率检测：记录时间戳，检测 60s 内是否超过 5 次
+  // 频率熔断：上次触发熔断的冷却期内直接拒绝
+  if (t0 < _rejectUntil) {
+    const waitS = Math.ceil((_rejectUntil - t0) / 1000);
+    console.warn(`[injectSession][#${seqNo}] ✗ 频率熔断中（剩 ${waitS}s），拒绝切号 → ${account.email}`);
+    setInjectFailure(account.email, `切号过快，${waitS}s 后再试`, 'blocked');
+    return false;
+  }
+
+  // 频率检测：记录时间戳，检测 60s 内是否超过阈值
   _switchTimestamps.push(t0);
-  _switchTimestamps = _switchTimestamps.filter(ts => t0 - ts < 60_000);
-  if (_switchTimestamps.length > 5) {
-    console.warn(`[injectSession][#${seqNo}] ⚠ 60s 内已触发 ${_switchTimestamps.length} 次切号！可能存在循环切号`);
+  _switchTimestamps = _switchTimestamps.filter(ts => t0 - ts < RATE_LIMIT_WINDOW_MS);
+  if (_switchTimestamps.length > RATE_LIMIT_MAX) {
+    const count = _switchTimestamps.length;
+    _rejectUntil = t0 + RATE_LIMIT_COOLDOWN_MS;
+    // 关键：清空时间戳，避免熔断期过后第一次调用立即又触发（因为 60s 窗口内仍有 8+ 次记录）
+    _switchTimestamps = [];
+    console.warn(`[injectSession][#${seqNo}] ⚠ 60s 内触发 ${count} 次切号 → 触发熔断，${RATE_LIMIT_COOLDOWN_MS / 1000}s 内拒绝新切号`);
+    setInjectFailure(account.email, `切号过快，暂停 ${RATE_LIMIT_COOLDOWN_MS / 1000}s`, 'blocked');
+    return false;
+  }
+
+  // 切号前先做一次轻量限速检查：有些账号能注入、配额看起来也有，但当前模型消息额度已被服务端限流。
+  // 这类账号切过去后 Windsurf 会表现为“发消息回弹”，所以直接拦截，保留原来的正常账号。
+  const ready = await checkCascadeSendReady(account, DEFAULT_CASCADE_CHECK_MODEL);
+  if (!ready.ok) {
+    const reason = ready.reason || '当前模型不可用';
+    const hardBlock = /消息额度|频率限制|剩余 0|已用尽|Key 已失效|账号无权限|封禁|401|403/.test(reason);
+    console.warn(`[injectSession][#${seqNo}] ✗ 账号发送前检查失败 → ${account.email}: ${reason}`);
+    if (hardBlock) {
+      setInjectFailure(account.email, reason, 'blocked');
+      return false;
+    }
   }
 
   // 先确认补丁命令是否已注册（等待 Windsurf 内置扩展激活）
@@ -197,6 +244,7 @@ export async function injectSession(
       if (!silent && ok) {
         vscode.commands.executeCommand('workbench.action.reloadWindow');
       }
+      setInjectFailure(account.email, '补丁命令缺失，已尝试重新应用补丁', 'error');
       return false;
     }
 
@@ -205,6 +253,7 @@ export async function injectSession(
       if (silent) {
         // 启动时静默失败，不弹窗不重启
         console.warn('[windsurf-pool] Patch exists but command not loaded after ' + maxWait + 's, skipping auto-switch.');
+        setInjectFailure(account.email, 'Windsurf 补丁命令尚未加载', 'error');
         return false;
       }
       // 用户手动切号 — 提示重启
@@ -216,6 +265,7 @@ export async function injectSession(
           vscode.commands.executeCommand('workbench.action.reloadWindow');
         }
       });
+      setInjectFailure(account.email, '补丁已写入但未生效，请重启 Windsurf', 'error');
       return false;
     }
 
@@ -224,7 +274,10 @@ export async function injectSession(
       vscode.window.showInformationMessage('首次切号：正在自动应用补丁…');
     }
     const ok = await applyPatch(context);
-    if (!ok) return false;
+    if (!ok) {
+      setInjectFailure(account.email, '自动应用补丁失败', 'error');
+      return false;
+    }
     if (!silent) {
       vscode.window.showWarningMessage(
         '补丁已应用，需要重启 Windsurf 后才能切换账号。',
@@ -235,6 +288,7 @@ export async function injectSession(
         }
       });
     }
+    setInjectFailure(account.email, '补丁已应用，需重启 Windsurf 后再切换', 'error');
     return false;
   }
 
@@ -251,15 +305,21 @@ export async function injectSession(
     const totalMs = Date.now() - t0;
     if (result && result.error) {
       console.error(`[injectSession][#${seqNo}] ✗ 命令返回错误 (${totalMs}ms):`, result.error);
+      setInjectFailure(account.email, String(result.error), 'error');
       return false;
     }
 
     console.log(`[injectSession][#${seqNo}] ✓ 切号成功 → ${account.email} (${totalMs}ms)`);
+    scheduleAcpConnectionRecovery('switch-account', 1500);
     return true;
   } catch (err) {
     const totalMs = Date.now() - t0;
     console.error(`[injectSession][#${seqNo}] ✗ 切号异常 (${totalMs}ms):`, err);
-    vscode.window.showWarningMessage('切换失败：' + (err instanceof Error ? err.message : String(err)));
+    const reason = err instanceof Error ? err.message : String(err);
+    setInjectFailure(account.email, reason, 'error');
+    if (!silent) {
+      vscode.window.showWarningMessage('切换失败：' + reason);
+    }
     return false;
   }
 }
@@ -358,6 +418,17 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
 
     // 从匹配中提取变量名
     const [fullMatch, paramA, varE, modW, varT, varI, varN, modH] = match;
+
+    // 安全检查：所有从被混淆代码提取出来的变量名必须是合法 JS 标识符
+    // 防御：如果 Windsurf 改了混淆方式或文件被恶意污染，避免我们拼出语法错误/危险的字符串
+    const VALID_ID = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+    const ids = { paramA, varE, modW, varT, varI, varN, modH };
+    for (const [name, val] of Object.entries(ids)) {
+      if (!VALID_ID.test(val)) {
+        vscode.window.showWarningMessage(`补丁中止：提取到非法标识符 ${name}="${val.substring(0, 20)}"，Windsurf 版本可能有变化`);
+        return false;
+      }
+    }
 
     const handleAuthIdx = content.indexOf(fullMatch);
 

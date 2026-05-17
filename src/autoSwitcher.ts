@@ -6,6 +6,7 @@ import { getCurrentInstanceTag } from './instanceManager';
 import { getOtherLockedEmails, acquireLock, releaseLock } from './accountLock';
 import * as diskCache from './usageDiskCache';
 import { UsageTracker } from './usageTracker';
+import { clearHealthResult } from './healthCheckPanel';
 
 // ─── 类型 ───────────────────────────────────────────────
 
@@ -14,6 +15,13 @@ export interface UsageCacheEntry {
   error?: string;
   ts: number;
   skipUntil?: number;
+}
+
+export interface RefreshResult {
+  total: number;
+  success: number;
+  failed: number;
+  skippedExhausted: number;
 }
 
 export type ScoreMode = 'min' | 'daily' | 'weekly';
@@ -26,6 +34,9 @@ export interface AutoSwitchSettings {
   checkSec: number;
   cooldownSec: number;
   refreshMin: number;
+  refreshConcurrency: number;
+  refreshBatchDelayMs: number;
+  periodRefreshHours: number;
   scoreMode: ScoreMode;
   switchStrategy: SwitchStrategy;
   minQuota: number;             // 低于此值视为“额度耗尽”，挑号时排除
@@ -47,7 +58,10 @@ const DEFAULTS: AutoSwitchSettings = {
   checkSec: 5,
   cooldownSec: 15,
   scoreMode: 'min' as ScoreMode,
-  refreshMin: 5,
+  refreshMin: 3,
+  refreshConcurrency: 12,
+  refreshBatchDelayMs: 250,
+  periodRefreshHours: 6,
   switchStrategy: 'highestFirst' as SwitchStrategy,
   minQuota: 10,
   preferUsedThreshold: 50,
@@ -99,6 +113,9 @@ export class AutoSwitcher implements vscode.Disposable {
       checkSec: this._ctx.globalState.get('as.checkSec', DEFAULTS.checkSec),
       cooldownSec: this._ctx.globalState.get('as.cooldownSec', DEFAULTS.cooldownSec),
       refreshMin: this._ctx.globalState.get('as.refreshMin', DEFAULTS.refreshMin),
+      refreshConcurrency: this._ctx.globalState.get('as.refreshConcurrency', DEFAULTS.refreshConcurrency),
+      refreshBatchDelayMs: this._ctx.globalState.get('as.refreshBatchDelayMs', DEFAULTS.refreshBatchDelayMs),
+      periodRefreshHours: this._ctx.globalState.get('as.periodRefreshHours', DEFAULTS.periodRefreshHours),
       scoreMode: this._ctx.globalState.get('as.scoreMode', DEFAULTS.scoreMode) as ScoreMode,
       switchStrategy: this._ctx.globalState.get('as.switchStrategy', DEFAULTS.switchStrategy) as SwitchStrategy,
       minQuota: this._ctx.globalState.get('as.minQuota', DEFAULTS.minQuota),
@@ -114,6 +131,9 @@ export class AutoSwitcher implements vscode.Disposable {
     if (p.checkSec !== undefined) await this._ctx.globalState.update('as.checkSec', p.checkSec);
     if (p.cooldownSec !== undefined) await this._ctx.globalState.update('as.cooldownSec', p.cooldownSec);
     if (p.refreshMin !== undefined) await this._ctx.globalState.update('as.refreshMin', p.refreshMin);
+    if (p.refreshConcurrency !== undefined) await this._ctx.globalState.update('as.refreshConcurrency', p.refreshConcurrency);
+    if (p.refreshBatchDelayMs !== undefined) await this._ctx.globalState.update('as.refreshBatchDelayMs', p.refreshBatchDelayMs);
+    if (p.periodRefreshHours !== undefined) await this._ctx.globalState.update('as.periodRefreshHours', p.periodRefreshHours);
     if (p.scoreMode !== undefined) await this._ctx.globalState.update('as.scoreMode', p.scoreMode);
     if (p.switchStrategy !== undefined) await this._ctx.globalState.update('as.switchStrategy', p.switchStrategy);
     if (p.minQuota !== undefined) await this._ctx.globalState.update('as.minQuota', p.minQuota);
@@ -198,12 +218,12 @@ export class AutoSwitcher implements vscode.Disposable {
     // 磁盘缓存已加载，立即用缓存数据判断是否需要切号（0 延迟）
     if (this._cache.size > 0 && this.settings.enabled) {
       console.log(`[autoSwitch][trigger] start() 基于磁盘缓存立即检查切号 (cacheSize=${this._cache.size})`);
-      this._checkAndSwitch();
+      this._checkAndSwitch().catch(() => {});
     }
 
     // 3s 后再发网络请求刷新最新额度
     console.log(`[autoSwitch][trigger] start() 将在 3s 后执行首次 refreshAll`);
-    setTimeout(() => this.refreshAll(), 3000);
+    setTimeout(() => this.refreshAll().catch(err => console.warn('[autoSwitch] initial refreshAll error:', err)), 3000);
   }
 
   dispose(): void {
@@ -227,46 +247,70 @@ export class AutoSwitcher implements vscode.Disposable {
 
   // ── 刷新 ──
 
-  // 并行批量大小：同时查询的账号数
-  private static readonly BATCH_SIZE = 5;
-  // 批次间等待时间（ms）
-  private static readonly BATCH_DELAY = 1500;
+  /** 当前正在执行的 refreshAll promise（用于并发去重） */
+  private _currentRefresh: Promise<RefreshResult> | null = null;
 
-  async refreshAll(force = false): Promise<void> {
-    if (this._refreshing) return;
+  async refreshAll(force = false): Promise<RefreshResult> {
+    // 并发去重：已有刷新在跑则复用其 promise，避免静默丢失用户的"再次刷新"请求
+    if (this._currentRefresh) return this._currentRefresh;
+    this._currentRefresh = this._doRefreshAll(force);
+    try {
+      return await this._currentRefresh;
+    } finally {
+      this._currentRefresh = null;
+    }
+  }
+
+  private async _doRefreshAll(force = false): Promise<RefreshResult> {
     this._refreshing = true;
+    let success = 0, failed = 0, skippedExhausted = 0;
     try {
       const accounts = await accountStore.readAccounts(this._ctx);
       const ttlMs = this.settings.refreshMin * 60_000;
+      const batchSize = Math.max(1, Math.min(50, Math.floor(this.settings.refreshConcurrency || DEFAULTS.refreshConcurrency)));
+      const batchDelayMs = Math.max(0, Math.min(10000, Math.floor(this.settings.refreshBatchDelayMs ?? DEFAULTS.refreshBatchDelayMs)));
+      const diskEntries = diskCache.loadAll();
 
       // 过滤需要刷新的账号
       const toRefresh = accounts.filter(acct => {
         if (acct.disabled) return false;
         // 优先使用磁盘和内存中较新的那条（其他窗口可能刚刷过）
         const memEntry = this._cache.get(acct.email);
-        const diskEntry = diskCache.readEntry(acct.email);
+        const diskEntry = diskEntries.get(acct.email);
         const cached = diskCache.pickNewer(memEntry, diskEntry);
         if (cached && cached !== memEntry) {
           this._cache.set(acct.email, cached);
           this._onUsageUpdate?.(acct.email, cached.snapshot ?? null, cached.error);
         }
-        // 额度耗尽的号始终跳过（不论 force），等重置时间到再查
-        if (cached?.skipUntil && Date.now() < cached.skipUntil) return false;
+        // 额度耗尽的号：非 force 时跳过；force 时强制刷新（用户手动操作的明确意图）
+        if (!force && cached?.skipUntil && Date.now() < cached.skipUntil) {
+          skippedExhausted++;
+          return false;
+        }
         // force 时跳过 TTL 检查，否则遵守 TTL
         if (!force && cached && Date.now() - cached.ts < ttlMs) return false;
         return true;
       });
 
-      const skipped = accounts.length - toRefresh.length;
-      if (skipped > 0) {
-        console.log(`[autoSwitch] refreshAll: ${toRefresh.length} 个待刷新, ${skipped} 个跳过`);
+      const skippedTtl = accounts.length - toRefresh.length - skippedExhausted - accounts.filter(a => a.disabled).length;
+      if (toRefresh.length === 0) {
+        console.log(`[autoSwitch] refreshAll: 无需刷新（全部命中 TTL/skipUntil/disabled）`);
+      } else {
+        console.log(`[autoSwitch] refreshAll: ${toRefresh.length} 个待刷新, ${skippedTtl} 个 TTL 跳过, ${skippedExhausted} 个耗尽跳过`);
       }
 
       // 并行批量刷新
       let consecutiveFailBatches = 0;
-      for (let i = 0; i < toRefresh.length; i += AutoSwitcher.BATCH_SIZE) {
-        const batch = toRefresh.slice(i, i + AutoSwitcher.BATCH_SIZE);
-        await Promise.all(batch.map(acct => this._refreshOne(acct, true)));
+      for (let i = 0; i < toRefresh.length; i += batchSize) {
+        const batch = toRefresh.slice(i, i + batchSize);
+        await Promise.all(batch.map(acct => this._refreshOne(acct, true, diskEntries.get(acct.email) || null, true)));
+
+        // 统计本批结果
+        for (const acct of batch) {
+          const e = this._cache.get(acct.email);
+          if (e?.snapshot) success++;
+          else if (e?.error) failed++;
+        }
 
         // 检查本批是否全部有 error（网络断了等）
         const batchHasErrors = batch.every(a => this._cache.get(a.email)?.error);
@@ -280,17 +324,18 @@ export class AutoSwitcher implements vscode.Disposable {
         }
 
         // 批次间延迟（有错误时额外等待）
-        if (i + AutoSwitcher.BATCH_SIZE < toRefresh.length) {
-          await sleep(AutoSwitcher.BATCH_DELAY + (batchHasErrors ? ERROR_BACKOFF_MS : 0));
+        if (i + batchSize < toRefresh.length) {
+          await sleep(batchDelayMs + (batchHasErrors ? ERROR_BACKOFF_MS : 0));
         }
       }
 
       // 全量刷新完成后检查自动切号
       console.log(`[autoSwitch][trigger] refreshAll 完成，触发 _checkAndSwitch (source=refreshAll, force=${force})`);
-      this._checkAndSwitch();
+      this._checkAndSwitch().catch(() => {});
     } finally {
       this._refreshing = false;
     }
+    return { total: success + failed + skippedExhausted, success, failed, skippedExhausted };
   }
 
   async refreshSingle(email: string, force = false): Promise<void> {
@@ -312,14 +357,14 @@ export class AutoSwitcher implements vscode.Disposable {
     if (s.enabled) {
       this._checkTimer = setInterval(() => {
         console.log(`[autoSwitch][trigger] 定时器触发 _checkAndSwitch (interval=${s.checkSec}s)`);
-        this._checkAndSwitch();
+        this._checkAndSwitch().catch(() => {});
       }, s.checkSec * 1000);
     }
   }
 
   // ── 内部：单账号刷新 ──
 
-  private async _refreshOne(acct: StoredAccount, force = false): Promise<void> {
+  private async _refreshOne(acct: StoredAccount, force = false, knownDiskEntry?: UsageCacheEntry | null, bulk = false): Promise<void> {
     // 进程内并发去重：同账号正在刷新则直接返回
     if (this._inflight.has(acct.email)) {
       console.log(`[autoSwitch] _refreshOne skip (inflight): ${acct.email}`);
@@ -329,7 +374,7 @@ export class AutoSwitcher implements vscode.Disposable {
 
     // 跨窗口去重：先看磁盘，其他窗口可能刚刷过更新数据
     const memEntry = this._cache.get(acct.email);
-    const diskEntry = diskCache.readEntry(acct.email);
+    const diskEntry = knownDiskEntry === undefined ? diskCache.readEntry(acct.email) : knownDiskEntry;
     const newer = diskCache.pickNewer(memEntry, diskEntry);
     if (newer && newer !== memEntry) {
       this._cache.set(acct.email, newer);
@@ -344,7 +389,13 @@ export class AutoSwitcher implements vscode.Disposable {
 
     this._inflight.add(acct.email);
     try {
-      const { snapshot, error } = await fetchUsage(acct);
+      const previousSnapshot = newer?.snapshot || memEntry?.snapshot || null;
+      const periodAgeMs = previousSnapshot?.planEnd ? Date.now() - (newer?.ts || memEntry?.ts || 0) : Infinity;
+      const periodRefreshMs = Math.max(0, Number(this.settings.periodRefreshHours ?? DEFAULTS.periodRefreshHours)) * 60 * 60_000;
+      const { snapshot, error } = await fetchUsage(acct, {
+        previousSnapshot,
+        fetchPeriod: !bulk || periodAgeMs > periodRefreshMs,
+      });
       const entry: UsageCacheEntry = { snapshot, error, ts: Date.now() };
 
       // 智能跳过：额度耗尽时设置 skipUntil 为重置时间
@@ -557,6 +608,8 @@ export class AutoSwitcher implements vscode.Disposable {
         this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
         this._lastSwitchedFrom = curEmail;
         this._lastSwitchedAt = Date.now();
+        clearHealthResult(verified.email);
+        this._tracker.recordDiagnostic({ ts: Date.now(), email: verified.email, source: 'health', level: 'ok', reason: '自动切号成功，测活已清除' });
         console.log(`[autoSwitch][trigger] ✓ 切号成功: ${curEmail} → ${verified.email}, cooldown=${s.cooldownSec}s`);
         // 记录切号统计
         this._tracker.recordSwitch(verified.email);
@@ -638,6 +691,8 @@ export class AutoSwitcher implements vscode.Disposable {
       const ok = await injectSession(this._ctx, acct, { silent: true });
       if (!ok) return null;
 
+      clearHealthResult(cand.email);
+      this._tracker.recordDiagnostic({ ts: Date.now(), email: cand.email, source: 'health', level: 'ok', reason: '强制切号成功，测活已清除' });
       // 更新状态
       this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
       this._lastSwitchedFrom = curEmail;
@@ -661,6 +716,10 @@ export class AutoSwitcher implements vscode.Disposable {
       const targetDetail = candSnap ? `日${Math.round(candSnap.dailyRemainingPercent)}%周${Math.round(candSnap.weeklyRemainingPercent)}%` : '?';
       const log = `[${ts()}][signal:${reason}] ${curEmail}(${curDetail}) → ${cand.email}(${targetDetail})`;
       this._onSwitchEvent?.(log, `${reason} → ${cand.email}`, '');
+      // 注意：forceSwitch 路径下不调用 _onAutoSwitchDone
+      // 原因：handlePoolSignal 已经通过 respond 触发反向 enqueueCommand 写 pool-result，
+      //       如果这里再调用 _onAutoSwitchDone，会产生重复 pool-result（两条 ts 不同），
+      //       windsurf-better.js 的 checkForPoolResult 会重复处理 → 两次"切号成功"提示 + 两次 retry
 
       // 后台异步刷新新旧账号配额（不阻塞返回）
       this._refreshAndPush(curEmail, cand.email).catch(() => {});
@@ -691,11 +750,11 @@ export class AutoSwitcher implements vscode.Disposable {
     let poolEmails: Set<string> | null = null; // null = 不限制
     if (s.poolScope === 'tag' && s.poolTags && s.poolTags.length > 0) {
       const tagSet = new Set(s.poolTags);
-      poolEmails = new Set(allAccounts.filter(a => a.tag && tagSet.has(a.tag)).map(a => a.email));
+      poolEmails = new Set(allAccounts.filter(a => (a.tags || (a.tag ? [a.tag] : [])).some(t => tagSet.has(t))).map(a => a.email));
     } else if (s.poolScope === 'instance') {
       const instTag = getCurrentInstanceTag();
       if (instTag) {
-        poolEmails = new Set(allAccounts.filter(a => a.tag === instTag).map(a => a.email));
+        poolEmails = new Set(allAccounts.filter(a => (a.tags || (a.tag ? [a.tag] : [])).includes(instTag)).map(a => a.email));
       }
     }
 

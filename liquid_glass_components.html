@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Liquid Glass - 组件库与全状态预览</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #f5f6f8;
+            --bg-card: #ffffff;
+            --bg-fill: #eef0f3;
+            
+            --accent-blue: #2b66ff;
+            --accent-black: #1a1a1a;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-purple: #8b5cf6;
+            
+            --text-primary: #1a1a20;
+            --text-secondary: #5c6370;
+            --text-muted: #8c95a5;
+            --text-inverse: #ffffff;
+
+            --border: rgba(0, 0, 0, 0.04);
+            --border-strong: rgba(0, 0, 0, 0.08);
+
+            --shadow-sm:
+                0 1px 2px rgba(0, 0, 0, 0.03),
+                inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            
+            --shadow-card:
+                0 2px 8px rgba(0, 0, 0, 0.02),
+                0 10px 30px rgba(0, 0, 0, 0.03);
+
+            --shadow-modal:
+                0 10px 40px rgba(0, 0, 0, 0.08),
+                0 2px 10px rgba(0, 0, 0, 0.04),
+                inset 0 1px 0 rgba(255, 255, 255, 1);
+
+            --radius-pill: 100px;
+            --radius-lg: 16px;
+            --radius-md: 10px;
+        }
+
+        [data-theme="dark"] {
+            --bg-primary: #0b0d11;
+            --bg-card: #151922;
+            --bg-fill: #202632;
+            
+            --text-primary: #f5f6f8;
+            --text-secondary: #a0aec0;
+            --text-muted: #64748b;
+            --text-inverse: #0b0d11;
+
+            --border: rgba(255, 255, 255, 0.04);
+            --border-strong: rgba(255, 255, 255, 0.08);
+
+            --shadow-sm:
+                0 1px 2px rgba(0, 0, 0, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            
+            --shadow-card:
+                0 4px 12px rgba(0, 0, 0, 0.3),
+                0 1px 3px rgba(0, 0, 0, 0.2);
+
+            --shadow-modal:
+                0 20px 40px rgba(0, 0, 0, 0.5),
+                0 4px 12px rgba(0, 0, 0, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Manrope', 'Noto Sans SC', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 40px 20px;
+            letter-spacing: -0.01em;
+            transition: all 0.3s;
+        }
+
+        .gallery-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 30px;
+        }
+
+        .section-title {
+            grid-column: 1 / -1;
+            font-size: 14px;
+            font-weight: 800;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-top: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Card Base */
+        .component-card {
+            background-color: var(--bg-card);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow-card);
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* 按钮与表单元素 */
+        .pill-btn {
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            padding: 8px 16px;
+            border-radius: var(--radius-pill);
+            box-shadow: var(--shadow-sm);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .pill-btn:hover { border-color: var(--border-strong); color: var(--text-primary); }
+        .pill-btn.primary { background: var(--accent-blue); color: #fff; border-color: var(--accent-blue); }
+        .pill-btn.danger { background: rgba(239, 68, 68, 0.1); color: var(--accent-red); border-color: transparent; box-shadow: none; }
+        
+        .input-text {
+            width: 100%;
+            background: var(--bg-fill);
+            border: 1px solid transparent;
+            padding: 10px 14px;
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-size: 13px;
+            outline: none;
+            transition: all 0.2s;
+        }
+        .input-text:focus {
+            background: var(--bg-card);
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(43, 102, 255, 0.1);
+        }
+
+        /* 1. 弹窗模式 (Modal) */
+        .modal-overlay {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: var(--radius-lg);
+            padding: 30px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        [data-theme="dark"] .modal-overlay { background: rgba(0, 0, 0, 0.5); }
+        
+        .modal-window {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-modal);
+            width: 100%;
+            overflow: hidden;
+        }
+        .modal-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 700;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        .modal-footer {
+            padding: 15px 20px;
+            background: var(--bg-fill);
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        /* 2. 空状态 (Empty State) */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        .empty-icon {
+            width: 64px; height: 64px;
+            border-radius: 50%;
+            background: var(--bg-fill);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 24px;
+            margin-bottom: 15px;
+            color: var(--text-muted);
+        }
+        .empty-title { font-weight: 700; font-size: 15px; margin-bottom: 8px; }
+        .empty-desc { font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; }
+
+        /* 3. 批量操作栏 (Batch Actions) */
+        .batch-bar {
+            background: var(--accent-black);
+            color: #ffffff;
+            padding: 12px 20px;
+            border-radius: var(--radius-pill);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        }
+        [data-theme="dark"] .batch-bar { background: var(--bg-fill); border: 1px solid var(--border-strong); }
+        .batch-count { font-weight: 700; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 12px; font-size: 12px; margin-right: 10px; }
+        
+        /* 4. 进度与警告 (Alerts & Progress) */
+        .alert-box {
+            padding: 12px 16px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            border: 1px solid transparent;
+        }
+        .alert-box.info { background: rgba(43, 102, 255, 0.08); border-color: rgba(43, 102, 255, 0.15); color: var(--accent-blue); }
+        .alert-box.warning { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.15); color: #d97706; }
+        
+        .progress-track {
+            height: 6px;
+            background: var(--bg-fill);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: var(--accent-blue);
+            border-radius: 10px;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            transition: width 0.3s;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="gallery-container">
+        
+        <div class="section-title">
+            <span>Liquid Glass 组件库 / UI Kit</span>
+            <button class="pill-btn" id="themeBtn" style="padding: 4px 10px;">🌙 切换主题</button>
+        </div>
+
+        <!-- 1. 添加账号（对话框） -->
+        <div class="component-card modal-overlay" style="grid-column: span 1;">
+            <div class="modal-window">
+                <div class="modal-header">
+                    添加新账号 / 实例
+                    <span style="color: var(--text-muted); cursor: pointer;">✕</span>
+                </div>
+                <div class="modal-body">
+                    <div>
+                        <div style="font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--text-secondary);">邮箱账号</div>
+                        <input type="text" class="input-text" placeholder="输入账号邮箱 (支持批量)">
+                    </div>
+                    <div>
+                        <div style="font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--text-secondary);">Cookie / Token</div>
+                        <input type="text" class="input-text" placeholder="粘贴 Token 凭证">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="pill-btn">取消</button>
+                    <button class="pill-btn primary">确认添加</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. 空状态 (Empty State) -->
+        <div class="component-card">
+            <div class="empty-state">
+                <div class="empty-icon">📭</div>
+                <div class="empty-title">当前还没有任何账号</div>
+                <div class="empty-desc">您可以点击下方按钮添加账号，或者从 Cockpit 快速导入现有的实例数据。</div>
+                <div style="display: flex; gap: 10px;">
+                    <button class="pill-btn primary">＋ 手动添加</button>
+                    <button class="pill-btn">⚡ 导入数据</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 批量操作栏 & Alert -->
+        <div class="component-card" style="display: flex; flex-direction: column; gap: 20px; justify-content: center;">
+            
+            <div class="batch-bar">
+                <div style="display: flex; align-items: center; font-size: 13px;">
+                    <span class="batch-count">已选 4 项</span>
+                    批量实例操作
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="pill-btn" style="background: rgba(255,255,255,0.1); border:none; color: white;">启动</button>
+                    <button class="pill-btn" style="background: rgba(239, 68, 68, 0.2); border:none; color: #ff8f8f;">删除</button>
+                </div>
+            </div>
+
+            <div class="alert-box info">
+                <div style="font-size: 16px;">💡</div>
+                <div>
+                    <div style="font-weight: 700; margin-bottom: 4px;">守护模式已开启</div>
+                    <div style="font-size: 12px; opacity: 0.8;">系统将在后台自动监控配额，当配额耗尽时会自动切换至下一个满额账号。</div>
+                </div>
+            </div>
+
+            <div class="alert-box warning">
+                <div style="font-size: 16px;">⚠️</div>
+                <div style="width: 100%;">
+                    <div style="font-weight: 700; margin-bottom: 4px;">正在执行批量恢复</div>
+                    <div style="font-size: 12px; opacity: 0.8;">进度：8/12 个实例处理完成</div>
+                    <div class="progress-track">
+                        <div class="progress-fill" style="width: 66%;"></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- 4. 规则引擎详情 (Rule Engine) -->
+        <div class="component-card">
+            <div style="font-weight: 700; font-size: 14px; margin-bottom: 15px; border-bottom: 1px solid var(--border); padding-bottom: 10px;">错误恢复规则详情</div>
+            
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="padding: 12px; background: var(--bg-fill); border-radius: var(--radius-md);">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                        <span style="font-weight: 600; font-size: 13px;">规则 01：网络超时重试</span>
+                        <span class="pill-btn" style="padding: 2px 8px; font-size: 10px; background: var(--bg-card);">编辑</span>
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace;">
+                        If Error == 'ERR_TIMEOUT'<br>Then Retry(3)
+                    </div>
+                </div>
+
+                <div style="padding: 12px; background: var(--bg-fill); border-radius: var(--radius-md);">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                        <span style="font-weight: 600; font-size: 13px;">规则 02：配额耗尽切号</span>
+                        <span class="pill-btn danger" style="padding: 2px 8px; font-size: 10px;">停用</span>
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace;">
+                        If Quota < 5%<br>Then SwitchInstance('NEXT_AVAILABLE')
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const themeBtn = document.getElementById('themeBtn');
+        const currentTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', currentTheme);
+
+        themeBtn.addEventListener('click', () => {
+            let theme = document.documentElement.getAttribute('data-theme');
+            let newTheme = theme === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+        });
+    </script>
+</body>
+</html>

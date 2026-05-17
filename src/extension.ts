@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { SidebarProvider } from './sidebarProvider';
-import { applyPatch, applyI18nOnly } from './sessionInjector';
+import { applyPatch, applyI18nOnly, getLastInjectFailure } from './sessionInjector';
 import * as accountStore from './accountStore';
-import { readBindMark, getCurrentUserDataDir, getCurrentInstanceName, migrateAllInstancesToAuto } from './instanceManager';
+import { readBindMark, getCurrentUserDataDir, getCurrentInstanceName, getCurrentInstanceId, migrateAllInstancesToAuto } from './instanceManager';
 import { AutoSwitcher } from './autoSwitcher';
 import { initDiskCache } from './usageDiskCache';
 import { StatusBarManager } from './statusBar';
@@ -19,7 +19,10 @@ import { isWindows, isMac, isWritable } from './utils';
 import { beginElevatedBatch, flushElevatedBatch, cancelElevatedBatch, ElevationError } from './elevatedFs';
 import { UsageTracker } from './usageTracker';
 import { openLogPanel } from './logPanelProvider';
+import { openHealthCheckPanel } from './healthCheckPanel';
+import { setExtensionPath } from './cascadeProbe';
 import { warmupSoundPlayer } from './soundPlayer';
+import { reloadWindsurfAcpConnections, scheduleAcpAgentRepair, scheduleAcpConnectionRecovery } from './acpRecovery';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
@@ -27,10 +30,17 @@ let statusBar: StatusBarManager;
 let usageTracker: UsageTracker;
 
 export function activate(context: vscode.ExtensionContext) {
+  setExtensionPath(context.extensionPath);
+  scheduleAcpAgentRepair('extension-activate', 10_000);
+  scheduleAcpConnectionRecovery('extension-activate', 12_000);
+
   // v6.0.3 一次性迁移：将所有实例统一改为智能选号（旧策略余额追踪不准）
   try { migrateAllInstancesToAuto(); } catch (e) { console.warn('[migrate] 失败:', e); }
 
-  // 多实例：检测绑定标记并自动切号
+  // 多实例：检测绑定标记并自动切号（后台异步，不阻塞启动）
+  // 注意：不能 await — autoSwitchByBindMark 内部的 injectSession 在 silent 模式下
+  // 会等待 PATCHED_CMD 最多 30s，会阻塞所有命令注册和 UI 显示。
+  // AutoSwitcher._switching 互斥能避免与定时器切号冲突。
   autoSwitchByBindMark(context);
 
   // 批量模式：将启动阶段所有安装目录写操作合并，需要提权时仅弹一次 UAC
@@ -60,7 +70,7 @@ export function activate(context: vscode.ExtensionContext) {
   statusBar.update();
 
   // 跨窗口账号锁：初始化并锁定当前账号
-  initAccountLock(`pid-${process.pid}`, getCurrentInstanceName());
+  initAccountLock(getCurrentInstanceId(), getCurrentInstanceName());
   const curEmail = context.globalState.get<string>('lastEmail');
   if (curEmail) acquireLock(curEmail);
   startHeartbeat();
@@ -75,6 +85,8 @@ export function activate(context: vscode.ExtensionContext) {
   sidebarProvider = new SidebarProvider(context.extensionUri, context, autoSwitcher, usageTracker);
   // 侧栏手动切号成功后立即更新状态栏
   sidebarProvider.onManualSwitch = () => statusBar?.update();
+  // 注册到 subscriptions，让 VSCode 在卸载时自动调用 dispose 清理 OutputChannel 和监听器
+  context.subscriptions.push(sidebarProvider);
 
   // 注册侧栏视图
   const sidebarView = vscode.window.registerWebviewViewProvider(
@@ -105,9 +117,31 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(openLogFileCmd);
 
   const openLogPanelCmd = vscode.commands.registerCommand('windsurfPool.openLogPanel', (tab?: string) => {
+    // 确保 bridge info 已广播，否则 syncLogs 命令无法送达 windsurf-better.js
+    try { sidebarProvider?.refreshBridgeInfo?.(); } catch {}
     openLogPanel(context, usageTracker, context.extensionUri, tab, autoSwitcher);
   });
   context.subscriptions.push(openLogPanelCmd);
+
+  const openHealthCheckCmd = vscode.commands.registerCommand('windsurfPool.openHealthCheck', () => {
+    openHealthCheckPanel(context, context.extensionUri, usageTracker);
+  });
+  context.subscriptions.push(openHealthCheckCmd);
+
+  const recoverCascadeInputCmd = vscode.commands.registerCommand('windsurfPool.recoverCascadeInput', async () => {
+    const ok = await reloadWindsurfAcpConnections('manual-command');
+    if (ok) {
+      vscode.window.showInformationMessage('已刷新 Cascade 连接');
+    } else {
+      vscode.window.showWarningMessage('刷新 Cascade 连接失败，请查看 Windsurf 日志');
+    }
+  });
+  context.subscriptions.push(recoverCascadeInputCmd);
+
+  const refreshSidebarCmd = vscode.commands.registerCommand('windsurfPool.refreshSidebar', () => {
+    sidebarProvider.refresh();
+  });
+  context.subscriptions.push(refreshSidebarCmd);
 
   const addAccountCmd = vscode.commands.registerCommand('windsurfPool.addAccount', () => {
     vscode.commands.executeCommand('workbench.view.extension.windsurfPool');
@@ -143,7 +177,8 @@ export function activate(context: vscode.ExtensionContext) {
           sidebarProvider.refresh();
           statusBar?.update();
         } else {
-          vscode.window.showErrorMessage('切换失败');
+          const failure = getLastInjectFailure(email);
+          vscode.window.showErrorMessage('切换失败：' + (failure?.reason || '未知原因'));
         }
       }
     }
@@ -171,6 +206,9 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('已切换至 ' + nextAccount.email);
       sidebarProvider.refresh();
       statusBar?.update();
+    } else {
+      const failure = getLastInjectFailure(nextAccount.email);
+      vscode.window.showErrorMessage('切换失败：' + (failure?.reason || '未知原因'));
     }
   });
   context.subscriptions.push(switchNextCmd);
@@ -554,9 +592,12 @@ function autoFixChecksums(): void {
   }
 }
 
-export function deactivate() {
+export async function deactivate(): Promise<void> {
   try { stopHeartbeat(); } catch {}
   try { releaseLock(); } catch {}
   try { stopBridgeServer(); } catch {}
   try { const { shutdownSoundPlayer } = require('./soundPlayer'); shutdownSoundPlayer(); } catch {}
+  // 显式等待 usageTracker 写盘完成（VS Code 不会等 context.subscriptions 的 dispose Promise，
+  // 必须在 deactivate 里 await，VS Code 才会等扩展卸载完成）
+  try { await usageTracker?.dispose(); } catch {}
 }

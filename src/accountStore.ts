@@ -25,7 +25,7 @@ function readAccountsFromFile(forceFresh = false): StoredAccount[] {
   try {
     const raw = fs.readFileSync(p, 'utf8');
     const arr = JSON.parse(raw);
-    _accountsCache = Array.isArray(arr) ? arr.filter(isValidAccount) : [];
+    _accountsCache = Array.isArray(arr) ? arr.filter(isValidAccount).map(normalizeAccountTags) : [];
     _accountsCacheTs = now;
     return _accountsCache;
   } catch {
@@ -48,10 +48,15 @@ function saveAccountsToFile(accounts: StoredAccount[]): void {
 }
 
 // ─── 写入队列（串行化 read-modify-write，避免并发丢数据） ────
+// 关键设计：前一次失败不应阻塞后续任务（_writeQueue 必须始终 resolve）。
+// 调用方的 result/error 通过返回的 Promise 单独透传，不污染队列。
 let _writeQueue: Promise<void> = Promise.resolve();
 function enqueueWrite<T>(task: () => Promise<T>): Promise<T> {
-  const next = _writeQueue.then(task, task);
-  _writeQueue = next.then(() => undefined, () => undefined);
+  // 任务在队列就绪后执行（无论前一个成功或失败都执行）
+  const ready = _writeQueue.then(() => {}, () => {});
+  const next = ready.then(task);
+  // 队列只跟踪"已完成"状态，吞掉错误避免阻塞下一个任务
+  _writeQueue = next.then(() => {}, () => {});
   return next;
 }
 
@@ -108,6 +113,22 @@ function isValidAccount(account: any): account is StoredAccount {
     typeof account.apiKey === 'string' &&
     typeof account.apiServerUrl === 'string'
   );
+}
+
+/**
+ * 归一化：将旧 tag 字段迁移到 tags 数组，保持双字段同步
+ */
+function normalizeAccountTags(a: StoredAccount): StoredAccount {
+  if (!a.tags && a.tag) {
+    a.tags = [a.tag];
+  }
+  if (a.tags && a.tags.length > 0) {
+    a.tag = a.tags[0];
+  } else if (!a.tag) {
+    delete (a as any).tags;
+    delete (a as any).tag;
+  }
+  return a;
 }
 
 /**
@@ -199,15 +220,24 @@ export async function batchRemove(context: vscode.ExtensionContext, emails: stri
 }
 
 /**
- * 更新账号标签
+ * 更新账号标签（单标签，向后兼容）
  */
 export async function updateTag(context: vscode.ExtensionContext, email: string, tag: string): Promise<void> {
+  const tags = tag ? [tag] : [];
+  return updateTags(context, email, tags);
+}
+
+/**
+ * 更新账号标签（多标签）
+ */
+export async function updateTags(context: vscode.ExtensionContext, email: string, tags: string[]): Promise<void> {
   return enqueueWrite(async () => {
     invalidateAccountsCache();
     const accounts = await readAccounts(context);
     const acct = accounts.find(a => a.email === email);
     if (acct) {
-      acct.tag = tag || undefined;
+      acct.tags = tags.length > 0 ? tags : undefined;
+      acct.tag = tags[0] || undefined;
       await saveAccounts(context, accounts);
     }
   });
@@ -254,9 +284,17 @@ export async function batchSetDisabled(context: vscode.ExtensionContext, emails:
 }
 
 /**
- * 批量更新标签
+ * 批量更新标签（单标签，向后兼容）
  */
 export async function batchUpdateTag(context: vscode.ExtensionContext, emails: string[], tag: string): Promise<number> {
+  const tags = tag ? [tag] : [];
+  return batchUpdateTags(context, emails, tags);
+}
+
+/**
+ * 批量更新标签（多标签）
+ */
+export async function batchUpdateTags(context: vscode.ExtensionContext, emails: string[], tags: string[]): Promise<number> {
   return enqueueWrite(async () => {
     invalidateAccountsCache();
     const accounts = await readAccounts(context);
@@ -264,7 +302,8 @@ export async function batchUpdateTag(context: vscode.ExtensionContext, emails: s
     const emailSet = new Set(emails);
     for (const acct of accounts) {
       if (emailSet.has(acct.email)) {
-        acct.tag = tag || undefined;
+        acct.tags = tags.length > 0 ? tags : undefined;
+        acct.tag = tags[0] || undefined;
         count++;
       }
     }

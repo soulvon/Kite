@@ -14,6 +14,15 @@ function execPowerShellEncoded(script: string, timeoutMs: number): void {
 let _psProc: cp.ChildProcess | null = null;
 let _psReady = false;
 let _psIdleTimer: ReturnType<typeof setTimeout> | null = null;
+// 跟踪所有声音相关 setTimeout，扩展卸载时一并取消
+const _pendingPlayTimers = new Set<ReturnType<typeof setTimeout>>();
+function scheduleSound(fn: () => void, ms: number): void {
+  const t = setTimeout(() => {
+    _pendingPlayTimers.delete(t);
+    try { fn(); } catch { /* ignore */ }
+  }, ms);
+  _pendingPlayTimers.add(t);
+}
 
 function getPersistentPS(): cp.ChildProcess | null {
   if (_psProc && !_psProc.killed && _psProc.stdin?.writable) {
@@ -56,13 +65,15 @@ function sendPSCommand(cmd: string): boolean {
 }
 
 export function warmupSoundPlayer(): void {
-  if (process.platform === 'win32') {
-    getPersistentPS();
-  }
+  // 不在启动时预创建 PowerShell 进程，避免触发安全软件拦截。
+  // PowerShell 会在首次播放声音时按需创建（getPersistentPS 惰性初始化）。
 }
 
 export function shutdownSoundPlayer(): void {
   if (_psIdleTimer) { clearTimeout(_psIdleTimer); _psIdleTimer = null; }
+  // 清理所有挂起的声音 setTimeout，避免扩展卸载后还播放
+  for (const t of _pendingPlayTimers) { try { clearTimeout(t); } catch { /* ignore */ } }
+  _pendingPlayTimers.clear();
   killPersistentPS();
 }
 
@@ -124,7 +135,7 @@ function playSystemSoundsByName(name: SystemSoundName, repeat: number, intervalM
   // 第一次立即触发，后续用 Node 调度 — PS 主线程零阻塞
   fire();
   for (let r = 1; r < repeat; r++) {
-    setTimeout(fire, r * intervalMs);
+    scheduleSound(fire, r * intervalMs);
   }
 }
 
@@ -144,7 +155,7 @@ export function playAudioFile(filePath: string, repeat: number): void {
       };
       fire();
       for (let r = 1; r < repeat; r++) {
-        setTimeout(fire, r * 800);
+        scheduleSound(fire, r * 800);
       }
     } else {
       const cmds: string[] = [
@@ -161,11 +172,11 @@ export function playAudioFile(filePath: string, repeat: number): void {
     }
   } else if (process.platform === 'darwin') {
     for (let r = 0; r < repeat; r++) {
-      setTimeout(() => cp.exec(`afplay "${filePath}"`, { timeout: 10000 }, () => {}), r * 3000);
+      scheduleSound(() => cp.exec(`afplay "${filePath}"`, { timeout: 10000 }, () => {}), r * 3000);
     }
   } else {
     for (let r = 0; r < repeat; r++) {
-      setTimeout(() => cp.exec(`paplay "${filePath}" 2>/dev/null || aplay "${filePath}" 2>/dev/null`, { timeout: 10000 }, () => {}), r * 3000);
+      scheduleSound(() => cp.exec(`paplay "${filePath}" 2>/dev/null || aplay "${filePath}" 2>/dev/null`, { timeout: 10000 }, () => {}), r * 3000);
     }
   }
 }
@@ -216,7 +227,7 @@ export function playSystemSound(tone: string, repeat: number, customTone?: strin
     }
   } else {
     for (let r = 0; r < repeat; r++) {
-      setTimeout(() => process.stdout.write('\x07'), r * 800);
+      scheduleSound(() => process.stdout.write('\x07'), r * 800);
     }
   }
 }

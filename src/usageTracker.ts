@@ -28,6 +28,19 @@ export interface QuotaHistoryEntry {
   resetAt: number;     // earlier reset unix timestamp
 }
 
+export type DiagnosticEventSource = 'switch' | 'health';
+export type DiagnosticEventLevel = 'ok' | 'warn' | 'error';
+
+export interface DiagnosticEvent {
+  ts: number;
+  email: string;
+  source: DiagnosticEventSource;
+  level: DiagnosticEventLevel;
+  reason: string;
+  model?: string;
+  status?: number;
+}
+
 export interface PoolStats {
   totalSwitches: number;
   totalPoolSignals: number;
@@ -39,7 +52,9 @@ export interface PoolStats {
 
 const STORAGE_KEY = 'usageTracker.stats';
 const HISTORY_KEY = 'usageTracker.quotaHistory';
+const DIAGNOSTIC_KEY = 'usageTracker.diagnosticHistory';
 const MAX_HISTORY = 500;
+const MAX_DIAGNOSTIC_HISTORY = 1000;
 
 export class UsageTracker {
   private _ctx: vscode.ExtensionContext;
@@ -51,12 +66,16 @@ export class UsageTracker {
   private _historyDirty = false;
   private _historySaveTimer: NodeJS.Timeout | null = null;
   private _historyListeners = new Set<() => void>();
+  private _diagnosticHistory: DiagnosticEvent[] = [];
+  private _diagnosticDirty = false;
+  private _diagnosticSaveTimer: NodeJS.Timeout | null = null;
 
   constructor(ctx: vscode.ExtensionContext) {
     this._ctx = ctx;
     this._stats = this._load();
     this._maybeResetDaily();
     this._quotaHistory = this._ctx.globalState.get<QuotaHistoryEntry[]>(HISTORY_KEY, []);
+    this._diagnosticHistory = this._ctx.globalState.get<DiagnosticEvent[]>(DIAGNOSTIC_KEY, []);
     // 初始化 _lastQuotaMap（从历史末尾恢复每个账号的最后已知配额）
     for (let i = this._quotaHistory.length - 1; i >= 0; i--) {
       const e = this._quotaHistory[i];
@@ -116,6 +135,8 @@ export class UsageTracker {
       this._stats.totalRefreshes = 0;
       this._stats.accounts = {};
       this._stats.lastResetDate = today;
+      // 同步清空快照映射，避免跨日 dDelta 基于昨天数据计算出错误的"重置"标记
+      this._lastQuotaMap.clear();
       this._debounceSave();
     }
   }
@@ -247,6 +268,56 @@ export class UsageTracker {
     return Array.from(set);
   }
 
+  // ── 账号诊断历史 ──
+
+  recordDiagnostic(event: DiagnosticEvent): void {
+    if (!event.email) return;
+    this._diagnosticHistory.push({
+      ts: event.ts || Date.now(),
+      email: event.email,
+      source: event.source,
+      level: event.level,
+      reason: event.reason || '无详情',
+      model: event.model,
+      status: event.status,
+    });
+    if (this._diagnosticHistory.length > MAX_DIAGNOSTIC_HISTORY) {
+      this._diagnosticHistory.splice(0, this._diagnosticHistory.length - MAX_DIAGNOSTIC_HISTORY);
+    }
+    this._debounceDiagnosticSave();
+    for (const cb of this._historyListeners) { try { cb(); } catch {} }
+  }
+
+  getDiagnosticHistory(email?: string, limit = 300): DiagnosticEvent[] {
+    let result = this._diagnosticHistory;
+    if (email) {
+      result = result.filter(e => e.email === email);
+    }
+    return result.slice(-limit);
+  }
+
+  getLatestDiagnosticsByAccount(): Record<string, { health?: DiagnosticEvent; switch?: DiagnosticEvent }> {
+    const latest: Record<string, { health?: DiagnosticEvent; switch?: DiagnosticEvent }> = {};
+    for (const e of this._diagnosticHistory) {
+      const bucket = latest[e.email] || (latest[e.email] = {});
+      if (e.source === 'health') bucket.health = e;
+      if (e.source === 'switch') bucket.switch = e;
+    }
+    return latest;
+  }
+
+  private _debounceDiagnosticSave(): void {
+    this._diagnosticDirty = true;
+    if (this._diagnosticSaveTimer) return;
+    this._diagnosticSaveTimer = setTimeout(() => {
+      this._diagnosticSaveTimer = null;
+      if (this._diagnosticDirty) {
+        this._diagnosticDirty = false;
+        this._ctx.globalState.update(DIAGNOSTIC_KEY, this._diagnosticHistory);
+      }
+    }, 3000);
+  }
+
   private _debounceHistorySave(): void {
     this._historyDirty = true;
     if (this._historySaveTimer) return;
@@ -273,15 +344,36 @@ export class UsageTracker {
     return this._stats.accounts[email];
   }
 
-  dispose(): void {
+  // 记录正在进行的最后一次 flush，dispose 可能被调多次（subscriptions + deactivate），
+  // 保留 promise 让所有调用方都能等到真正落盘完成
+  private _disposePromise: Promise<void> | null = null;
+
+  dispose(): Promise<void> {
+    if (this._disposePromise) return this._disposePromise;
     if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
-    if (this._dirty) {
-      this._ctx.globalState.update(STORAGE_KEY, this._stats);
-    }
     if (this._historySaveTimer) { clearTimeout(this._historySaveTimer); this._historySaveTimer = null; }
-    if (this._historyDirty) {
-      this._ctx.globalState.update(HISTORY_KEY, this._quotaHistory);
+    if (this._diagnosticSaveTimer) { clearTimeout(this._diagnosticSaveTimer); this._diagnosticSaveTimer = null; }
+    const tasks: Thenable<void>[] = [];
+    if (this._dirty) {
+      this._dirty = false;
+      tasks.push(this._ctx.globalState.update(STORAGE_KEY, this._stats));
     }
+    if (this._historyDirty) {
+      this._historyDirty = false;
+      tasks.push(this._ctx.globalState.update(HISTORY_KEY, this._quotaHistory));
+    }
+    if (this._diagnosticDirty) {
+      this._diagnosticDirty = false;
+      tasks.push(this._ctx.globalState.update(DIAGNOSTIC_KEY, this._diagnosticHistory));
+    }
+    if (tasks.length === 0) {
+      this._disposePromise = Promise.resolve();
+    } else {
+      this._disposePromise = Promise.all(tasks)
+        .then(() => undefined)
+        .catch(err => { console.warn('[usageTracker] dispose flush error:', err); });
+    }
+    return this._disposePromise;
   }
 }
 

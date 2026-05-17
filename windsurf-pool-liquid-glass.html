@@ -1,0 +1,2713 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Windsurf 号池管理 · Liquid Glass</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   LIQUID GLASS · Design Tokens
+   ============================================================ */
+:root {
+  /* Surfaces */
+  --bg-primary: #F1F1F4;
+  --bg-secondary: #E6E6EC;
+  --bg-tertiary: #DCDCE4;
+  --card-bg: #FAFAFC;
+  --glass-bg: rgba(250, 250, 252, 0.65);
+  --glass-bg-strong: rgba(255, 255, 255, 0.85);
+  --inner-bg: rgba(255, 255, 255, 0.5);
+
+  /* Ink */
+  --text-primary: #0A0A0F;
+  --text-secondary: #4A4A55;
+  --text-muted: #8A8A97;
+  --text-faint: #B4B4BE;
+
+  /* Border */
+  --border-subtle: rgba(10, 10, 15, 0.06);
+  --border-strong: rgba(10, 10, 15, 0.12);
+  --border-vivid: rgba(10, 10, 15, 0.2);
+
+  /* Accent */
+  --accent: #2563EB;
+  --accent-hover: #1D4ED8;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+  --accent-glow: rgba(37, 99, 235, 0.25);
+  --secondary: #06B6D4;
+  --secondary-soft: rgba(6, 182, 212, 0.1);
+
+  /* Semantic */
+  --success: #059669;
+  --success-soft: rgba(5, 150, 105, 0.1);
+  --warning: #D97706;
+  --warning-soft: rgba(217, 119, 6, 0.1);
+  --danger: #DC2626;
+  --danger-soft: rgba(220, 38, 38, 0.1);
+  --info: #0284C7;
+  --info-soft: rgba(2, 132, 199, 0.1);
+
+  /* Radius */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-pill: 100px;
+
+  /* Shadows · neumorphic + glass */
+  --shadow-sm: 0 1px 2px rgba(10, 10, 15, 0.04), 0 1px 1px rgba(10, 10, 15, 0.02);
+  --shadow-md: 0 4px 12px rgba(10, 10, 15, 0.06), 0 1px 3px rgba(10, 10, 15, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --shadow-lg: 0 12px 32px rgba(10, 10, 15, 0.08), 0 4px 12px rgba(10, 10, 15, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --shadow-xl: 0 24px 56px rgba(10, 10, 15, 0.12), 0 8px 24px rgba(10, 10, 15, 0.06), inset 0 1px 0 rgba(255, 255, 255, 1);
+  --shadow-glow: 0 0 0 4px var(--accent-glow), 0 8px 24px rgba(37, 99, 235, 0.2);
+  --shadow-inset: inset 0 2px 6px rgba(10, 10, 15, 0.05), inset 0 -1px 0 rgba(255, 255, 255, 0.7);
+
+  /* Motion */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --t-fast: 150ms;
+  --t-mid: 280ms;
+  --t-slow: 480ms;
+
+  /* Font */
+  --font-body: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #08080B;
+  --bg-secondary: #0E0E12;
+  --bg-tertiary: #16161D;
+  --card-bg: #16161D;
+  --glass-bg: rgba(22, 22, 29, 0.65);
+  --glass-bg-strong: rgba(28, 28, 36, 0.85);
+  --inner-bg: rgba(255, 255, 255, 0.03);
+
+  --text-primary: #F5F5F8;
+  --text-secondary: #B4B4BE;
+  --text-muted: #6E6E7A;
+  --text-faint: #3F3F4A;
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-vivid: rgba(255, 255, 255, 0.2);
+
+  --accent: #60A5FA;
+  --accent-hover: #93C5FD;
+  --accent-soft: rgba(96, 165, 250, 0.15);
+  --accent-glow: rgba(96, 165, 250, 0.3);
+  --secondary: #22D3EE;
+  --secondary-soft: rgba(34, 211, 238, 0.15);
+
+  --success: #34D399;
+  --success-soft: rgba(52, 211, 153, 0.15);
+  --warning: #FBBF24;
+  --warning-soft: rgba(251, 191, 36, 0.15);
+  --danger: #F87171;
+  --danger-soft: rgba(248, 113, 113, 0.15);
+  --info: #38BDF8;
+  --info-soft: rgba(56, 189, 248, 0.15);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-xl: 0 24px 56px rgba(0, 0, 0, 0.6), 0 8px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --shadow-inset: inset 0 2px 6px rgba(0, 0, 0, 0.3), inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background var(--t-mid) var(--ease), color var(--t-mid) var(--ease);
+  overflow-x: hidden;
+}
+
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(circle at 15% 15%, rgba(37, 99, 235, 0.08), transparent 50%),
+    radial-gradient(circle at 85% 80%, rgba(6, 182, 212, 0.06), transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(139, 92, 246, 0.04), transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity var(--t-mid) var(--ease);
+}
+[data-theme="dark"] body::before { opacity: 0.5; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--r-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--border-vivid); background-clip: content-box; }
+
+/* ============================================================
+   Layout
+   ============================================================ */
+.app {
+  position: relative;
+  z-index: 1;
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 40px 32px 80px;
+}
+
+/* ============================================================
+   Page Header
+   ============================================================ */
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 56px;
+  flex-wrap: wrap;
+}
+.page-header-text { flex: 1; min-width: 320px; }
+.eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 6px 12px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-pill);
+  margin-bottom: 18px;
+}
+.eyebrow .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
+  animation: pulse 2.4s var(--ease) infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.85); }
+}
+.page-title {
+  font-family: var(--font-serif);
+  font-size: 56px;
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+  font-weight: 400;
+  color: var(--text-primary);
+  margin-bottom: 14px;
+}
+.page-title em {
+  font-style: italic;
+  background: linear-gradient(135deg, var(--accent), var(--secondary));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  padding-right: 6px;
+}
+.page-subtitle {
+  font-size: 16px;
+  color: var(--text-secondary);
+  max-width: 580px;
+  line-height: 1.55;
+}
+.header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 500;
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  transition: all var(--t-fast) var(--ease);
+}
+.badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.7; }
+.badge.success { color: var(--success); background: var(--success-soft); border-color: transparent; }
+.badge.accent { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+.badge.info { color: var(--info); background: var(--info-soft); border-color: transparent; }
+.badge.warning { color: var(--warning); background: var(--warning-soft); border-color: transparent; }
+.badge.muted { color: var(--text-muted); }
+.badge.version {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--glass-bg-strong);
+}
+
+.theme-toggle {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 18px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-pill);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: all var(--t-fast) var(--ease);
+}
+.theme-toggle:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.theme-toggle:active { transform: translateY(0); }
+.theme-toggle svg { width: 16px; height: 16px; }
+.theme-toggle .sun { display: none; }
+[data-theme="dark"] .theme-toggle .sun { display: block; }
+[data-theme="dark"] .theme-toggle .moon { display: none; }
+
+/* ============================================================
+   Section
+   ============================================================ */
+.section { margin-bottom: 56px; }
+.section-header {
+  display: flex; align-items: baseline; gap: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.section-number {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+.section-title {
+  font-family: var(--font-serif);
+  font-size: 32px;
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+}
+.section-title em { font-style: italic; color: var(--accent); }
+.section-sub {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.grid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+}
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+.grid.three { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+
+/* ============================================================
+   Glass Card · Panel
+   ============================================================ */
+.panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  position: relative;
+  opacity: 0;
+  animation: fadeInUp 0.7s var(--ease) forwards;
+  transition: transform var(--t-mid) var(--ease), box-shadow var(--t-mid) var(--ease);
+}
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.6), transparent 40%, transparent 60%, rgba(255,255,255,0.2));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.6;
+}
+[data-theme="dark"] .panel::before {
+  background: linear-gradient(135deg, rgba(255,255,255,0.1), transparent 40%, transparent 60%, rgba(255,255,255,0.03));
+}
+.panel:hover { box-shadow: var(--shadow-xl); }
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.panel:nth-child(1) { animation-delay: 0.05s; }
+.panel:nth-child(2) { animation-delay: 0.12s; }
+.panel:nth-child(3) { animation-delay: 0.19s; }
+.panel:nth-child(4) { animation-delay: 0.26s; }
+.panel:nth-child(5) { animation-delay: 0.33s; }
+
+.panel-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+}
+.panel-icon {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, var(--accent-soft), var(--secondary-soft));
+  color: var(--accent);
+  font-size: 16px;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-sm);
+}
+.panel-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.panel-title small {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  letter-spacing: 0;
+  margin-top: 2px;
+}
+.panel-actions {
+  margin-left: auto;
+  display: flex; gap: 8px; align-items: center;
+}
+.chev {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted);
+  transition: transform var(--t-mid) var(--ease);
+}
+.panel.collapsed .chev { transform: rotate(-90deg); }
+.panel-body {
+  padding: 20px 22px 22px;
+  display: flex; flex-direction: column; gap: 18px;
+  transition: max-height var(--t-slow) var(--ease), opacity var(--t-mid) var(--ease), padding var(--t-mid) var(--ease);
+  overflow: hidden;
+  max-height: 4000px;
+}
+.panel.collapsed .panel-body {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+}
+
+/* ============================================================
+   Form Elements
+   ============================================================ */
+.field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.muted-text {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+.hint {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--inner-bg);
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-subtle);
+}
+.hint .ico { color: var(--accent); flex-shrink: 0; margin-top: 1px; }
+
+.input, .select {
+  font-family: var(--font-body);
+  font-size: 13px;
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  color: var(--text-primary);
+  transition: all var(--t-fast) var(--ease);
+  outline: none;
+}
+.input:focus, .select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.btn {
+  font-family: var(--font-body);
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--glass-bg-strong);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap;
+}
+.btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+.btn:active { transform: translateY(0); box-shadow: var(--shadow-sm); }
+.btn.primary {
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255,255,255,0.25);
+}
+.btn.primary:hover {
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,0.3), 0 0 0 4px var(--accent-glow);
+}
+.btn.ghost { background: transparent; box-shadow: none; }
+.btn.ghost:hover { background: var(--inner-bg); }
+.btn.danger { color: var(--danger); border-color: var(--danger-soft); background: var(--danger-soft); }
+.btn.success { color: var(--success); border-color: var(--success-soft); background: var(--success-soft); }
+.btn.sm { padding: 6px 10px; font-size: 12px; }
+.btn.icon { padding: 8px; }
+
+/* Toggle */
+.toggle-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  transition: all var(--t-fast) var(--ease);
+}
+.toggle-row:hover { border-color: var(--border-strong); }
+.toggle-row .label { flex: 1; }
+.toggle-row .label .name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.toggle-row .label .desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+.switch {
+  position: relative;
+  width: 38px; height: 22px;
+  background: var(--bg-tertiary);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--t-fast) var(--ease);
+  box-shadow: var(--shadow-inset);
+}
+.switch::before {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.18), 0 0 0 0.5px rgba(0,0,0,0.06);
+  transition: transform var(--t-fast) var(--ease);
+}
+.switch.on {
+  background: linear-gradient(180deg, var(--accent), var(--accent-hover));
+  box-shadow: var(--shadow-inset), 0 0 0 3px var(--accent-glow);
+}
+.switch.on::before { transform: translateX(16px); }
+
+/* Segment control */
+.segment {
+  display: inline-flex;
+  padding: 4px;
+  background: var(--bg-secondary);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border-subtle);
+  position: relative;
+  box-shadow: var(--shadow-inset);
+}
+.segment-btn {
+  font-family: var(--font-body);
+  position: relative;
+  z-index: 1;
+  padding: 6px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--r-pill);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease);
+}
+.segment-btn.active {
+  color: var(--text-primary);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Chips */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 11px;
+  border-radius: var(--r-pill);
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+  user-select: none;
+}
+.chip:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.chip.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+.chip .count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* Status mini-grid */
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+.status-cell {
+  padding: 12px;
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.status-cell .k {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  letter-spacing: 0.04em;
+}
+.status-cell .v {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.status-cell .v.success { color: var(--success); }
+.status-cell .v.warning { color: var(--warning); }
+
+/* Strategy radios */
+.strategy-list { display: flex; flex-direction: column; gap: 10px; }
+.strategy {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px;
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+}
+.strategy:hover { border-color: var(--border-strong); }
+.strategy.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), inset 0 1px 0 rgba(255,255,255,0.3);
+}
+.strategy .radio {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  position: relative;
+  flex-shrink: 0;
+  transition: all var(--t-fast) var(--ease);
+}
+.strategy.selected .radio {
+  border-color: var(--accent);
+}
+.strategy.selected .radio::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.strategy .text { flex: 1; }
+.strategy .text .name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.strategy .text .desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+/* Bubble Preview */
+.bubble-preview {
+  background: linear-gradient(135deg, rgba(255,255,255,0.5), rgba(255,255,255,0.2));
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  padding: 16px;
+  display: flex; gap: 10px;
+  flex-wrap: wrap;
+}
+[data-theme="dark"] .bubble-preview {
+  background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+}
+.bubble {
+  font-size: 12px;
+  padding: 8px 14px;
+  border-radius: var(--r-pill);
+  background: var(--card-bg);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+}
+.bubble:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: var(--accent); color: var(--accent); }
+.bubble.square { border-radius: var(--r-sm); }
+.bubble.glass {
+  background: rgba(255,255,255,0.5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+[data-theme="dark"] .bubble.glass { background: rgba(255,255,255,0.06); }
+
+/* Log viewer */
+.log-viewer {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.7;
+  max-height: 160px;
+  overflow-y: auto;
+  box-shadow: var(--shadow-inset);
+}
+[data-theme="dark"] .log-viewer { background: #050507; }
+.log-line { display: flex; gap: 8px; }
+.log-line .time { color: var(--text-muted); }
+.log-line .tag { font-weight: 600; }
+.log-line .tag.ok { color: var(--success); }
+.log-line .tag.info { color: var(--info); }
+.log-line .tag.warn { color: var(--warning); }
+.log-line .tag.err { color: var(--danger); }
+.log-line .msg { color: var(--text-secondary); flex: 1; }
+
+/* Param grid */
+.param-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+.param-cell {
+  padding: 14px;
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  display: flex; flex-direction: column; gap: 8px;
+  transition: all var(--t-fast) var(--ease);
+}
+.param-cell:hover { border-color: var(--border-strong); }
+.param-cell .label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+.param-cell .value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+.param-cell .value small {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: 2px;
+}
+.param-cell .sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Progress bar */
+.progress {
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  box-shadow: var(--shadow-inset);
+}
+.progress .bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--secondary));
+  border-radius: var(--r-pill);
+  position: relative;
+  transition: width var(--t-slow) var(--ease);
+}
+.progress .bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+  animation: shimmer 2s linear infinite;
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.progress.warn .bar { background: linear-gradient(90deg, var(--warning), #FCD34D); }
+.progress.danger .bar { background: linear-gradient(90deg, var(--danger), #FCA5A5); }
+
+/* Stat row */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.stat-card {
+  padding: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+}
+.stat-card .label {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.stat-card .num {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+}
+.stat-card .num small { font-size: 12px; color: var(--text-muted); font-weight: 400; }
+.stat-card .meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex; justify-content: space-between;
+  margin-top: 6px;
+}
+
+/* Instance grid */
+.instance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.instance-card {
+  padding: 16px;
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  display: flex; flex-direction: column; gap: 10px;
+  position: relative;
+  transition: all var(--t-fast) var(--ease);
+}
+.instance-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: var(--border-strong); }
+.instance-card.current {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.instance-card .top {
+  display: flex; align-items: center; gap: 8px;
+}
+.instance-card .name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.instance-card .pill {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.instance-card .pill.run { background: var(--success-soft); color: var(--success); }
+.instance-card .pill.stop { background: var(--text-faint); color: var(--text-secondary); opacity: 0.7; }
+.instance-card .pill.cur { background: var(--accent); color: #fff; }
+.instance-card .info {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.instance-card .info div { display: flex; justify-content: space-between; }
+.instance-card .actions {
+  display: flex; gap: 6px;
+  margin-top: 4px;
+}
+
+/* Account card */
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+.account-card {
+  padding: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  display: flex; flex-direction: column; gap: 12px;
+  position: relative;
+  transition: all var(--t-fast) var(--ease);
+  overflow: hidden;
+}
+.account-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--secondary));
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.account-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); border-color: var(--border-strong); }
+.account-card:hover::before { opacity: 1; }
+.account-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow-md); }
+.account-card.active::before { opacity: 1; }
+.account-card.locked { opacity: 0.7; }
+.account-card.disabled { opacity: 0.5; }
+.account-card .avatar-row {
+  display: flex; align-items: center; gap: 10px;
+}
+.account-card .avatar {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--secondary));
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-sm);
+}
+.account-card .avatar.t1 { background: linear-gradient(135deg, #8B5CF6, #EC4899); }
+.account-card .avatar.t2 { background: linear-gradient(135deg, #F59E0B, #EF4444); }
+.account-card .avatar.t3 { background: linear-gradient(135deg, #6B7280, #9CA3AF); }
+.account-card .name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.account-card .email { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+.account-card .plan {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  margin-left: auto;
+  letter-spacing: 0.06em;
+}
+.account-card .plan.pro { background: linear-gradient(135deg, var(--accent), var(--secondary)); color: #fff; }
+.account-card .plan.team { background: linear-gradient(135deg, #8B5CF6, #EC4899); color: #fff; }
+.account-card .plan.free { background: var(--bg-tertiary); color: var(--text-secondary); }
+.account-card .usage {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.account-card .usage .head {
+  display: flex; justify-content: space-between; align-items: center;
+}
+.account-card .usage .head .l { font-size: 11px; color: var(--text-muted); }
+.account-card .usage .head .v { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.account-card .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.account-card .tags .t {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+.account-card .foot {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+.account-card .lock-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-weight: 600;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.account-card .check {
+  position: absolute;
+  top: 12px; right: 12px;
+  width: 18px; height: 18px;
+  border-radius: 4px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--card-bg);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+  opacity: 0;
+}
+.account-card:hover .check { opacity: 1; }
+.account-card .check.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  flex-wrap: wrap;
+}
+.search-input {
+  flex: 1;
+  min-width: 180px;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  padding: 6px 12px;
+}
+.search-input input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+}
+.search-input svg { color: var(--text-muted); }
+
+/* Tabs */
+.tabs {
+  display: flex; gap: 4px;
+  background: var(--bg-secondary);
+  border-radius: var(--r-pill);
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-inset);
+}
+.tab {
+  font-family: var(--font-body);
+  flex: 1;
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+}
+.tab.active {
+  background: var(--card-bg);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Engine box */
+.engine-box {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--inner-bg);
+}
+.engine-head {
+  padding: 12px 14px;
+  display: flex; align-items: center; gap: 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.engine-box.collapsed .engine-head { border-bottom-color: transparent; }
+.engine-head .lhead { flex: 1; }
+.engine-head .lhead .t { font-size: 13px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
+.engine-head .lhead .d { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.engine-head .chev { transition: transform var(--t-mid) var(--ease); }
+.engine-box.collapsed .engine-head .chev { transform: rotate(-90deg); }
+.engine-body {
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  transition: all var(--t-mid) var(--ease);
+  max-height: 800px;
+  overflow: hidden;
+}
+.engine-box.collapsed .engine-body { max-height: 0; padding: 0 14px; opacity: 0; }
+.rule-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  transition: all var(--t-fast) var(--ease);
+  opacity: 0;
+  animation: stripIn 0.5s var(--ease) forwards;
+}
+.rule-row:nth-child(1) { animation-delay: 0.05s; }
+.rule-row:nth-child(2) { animation-delay: 0.1s; }
+.rule-row:nth-child(3) { animation-delay: 0.15s; }
+.rule-row:nth-child(4) { animation-delay: 0.2s; }
+@keyframes stripIn {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.rule-row:hover { border-color: var(--border-strong); transform: translateX(2px); }
+.rule-row .num {
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.rule-row .text { flex: 1; min-width: 0; }
+.rule-row .text .name { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.rule-row .text .pat { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-row .meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+
+/* Toast */
+.toast {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  color: var(--text-primary);
+  opacity: 0;
+  animation: toastIn 0.5s var(--ease) forwards;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.toast .ico {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+.toast.success .ico { background: var(--success-soft); color: var(--success); }
+.toast.warn .ico { background: var(--warning-soft); color: var(--warning); }
+.toast.info .ico { background: var(--info-soft); color: var(--info); }
+.toast.err .ico { background: var(--danger-soft); color: var(--danger); }
+.toast .body { flex: 1; }
+.toast .body .t { font-weight: 600; }
+.toast .body .d { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+
+/* Dialog */
+.dialog {
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+}
+.dialog-header {
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex; align-items: center; gap: 10px;
+}
+.dialog-title {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.dialog-body { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; }
+.dialog-foot {
+  padding: 14px 22px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex; justify-content: flex-end; gap: 8px;
+  background: var(--inner-bg);
+}
+.dialog-close {
+  margin-left: auto;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+  background: var(--inner-bg);
+}
+.dialog-close:hover { color: var(--danger); background: var(--danger-soft); }
+
+/* Filter dropdown */
+.filter-dropdown {
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-xl);
+  padding: 16px;
+  min-width: 280px;
+}
+.filter-section { margin-bottom: 16px; }
+.filter-section:last-child { margin-bottom: 0; }
+.filter-section .head {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* Pagination */
+.pagination {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 12px 0;
+}
+.page {
+  min-width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-md);
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+}
+.page:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.page.active {
+  background: linear-gradient(180deg, var(--accent), var(--accent-hover));
+  color: #fff; border-color: transparent;
+  box-shadow: var(--shadow-sm);
+}
+.page.disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* External banner */
+.external-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, var(--info-soft), var(--accent-soft));
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--r-md);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.external-banner .ico {
+  width: 28px; height: 28px;
+  border-radius: var(--r-sm);
+  background: var(--card-bg);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.external-banner .text { flex: 1; }
+.external-banner .text strong { color: var(--text-primary); font-weight: 600; }
+
+/* Selector grid */
+.selector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 6px;
+}
+.selector {
+  padding: 8px;
+  background: var(--inner-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+  color: var(--text-secondary);
+}
+.selector:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.selector.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.selector .emo { font-size: 14px; display: block; margin-bottom: 2px; }
+
+/* Batch bar */
+.batch-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, var(--accent-soft), var(--secondary-soft));
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+}
+.batch-bar .count {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.batch-bar .label { font-size: 12px; color: var(--text-secondary); }
+.batch-bar .acts { margin-left: auto; display: flex; gap: 6px; }
+
+/* Instruction queue */
+.queue-list { display: flex; flex-direction: column; gap: 8px; }
+.queue-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  transition: all var(--t-fast) var(--ease);
+}
+.queue-item:hover { border-color: var(--border-strong); }
+.queue-item.current {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.queue-item .num {
+  font-family: var(--font-mono);
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--inner-bg);
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.queue-item.current .num { background: var(--accent); color: #fff; }
+.queue-item .text { flex: 1; font-size: 12px; color: var(--text-primary); }
+.queue-item .status {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+}
+.queue-item .status.done { background: var(--success-soft); color: var(--success); }
+.queue-item .status.run { background: var(--accent-soft); color: var(--accent); }
+.queue-item .status.wait { background: var(--bg-tertiary); color: var(--text-muted); }
+
+/* Sort toolbar */
+.sort-bar {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+.sort-bar .l { font-weight: 500; }
+.sort-opt {
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  background: transparent;
+  border: 1px solid transparent;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all var(--t-fast) var(--ease);
+}
+.sort-opt:hover { background: var(--inner-bg); }
+.sort-opt.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Responsive */
+@media (max-width: 760px) {
+  .app { padding: 24px 16px 48px; }
+  .page-title { font-size: 36px; }
+  .section-title { font-size: 24px; }
+}
+
+/* Footer */
+.page-foot {
+  margin-top: 64px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-subtle);
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+.page-foot em {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============================================================
+       Page Header
+       ============================================================ -->
+  <header class="page-header">
+    <div class="page-header-text">
+      <div class="eyebrow"><span class="dot"></span>Windsurf Pool · v6.8.4 · Liquid Glass Edition</div>
+      <h1 class="page-title">Windsurf <em>号池管理</em><br/>Liquid Glass</h1>
+      <p class="page-subtitle">一个为 Cascade 量身定制的玻璃质感控制台 —— 增强注入、自动切号、长任务守护、多账号编排，皆汇于一处。</p>
+      <div class="header-meta" style="margin-top:18px">
+        <span class="badge version">v6.8.4</span>
+        <span class="badge success"><span class="dot"></span>增强已注入</span>
+        <span class="badge accent"><span class="dot"></span>自动切号 ON</span>
+        <span class="badge info"><span class="dot"></span>自动继续 ON</span>
+        <span class="badge muted"><span class="dot"></span>Bridge 已连接 · :47291</span>
+      </div>
+    </div>
+    <button class="theme-toggle" onclick="toggleTheme()">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+      <span id="theme-label">深色模式</span>
+    </button>
+  </header>
+
+  <!-- ============================================================
+       Section 1 · 核心功能
+       ============================================================ -->
+  <section class="section">
+    <div class="section-header">
+      <span class="section-number">SECTION · 01</span>
+      <h2 class="section-title"><em>核心</em>功能面板</h2>
+      <span class="section-sub">注入 · 切号 · 续写 · 守护</span>
+    </div>
+
+    <div class="grid">
+
+      <!-- Panel: Windsurf 增强 -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">✨</div>
+          <div>
+            <div class="panel-title">Windsurf 增强<small>注入脚本 · 智能建议 · 无感切号</small></div>
+          </div>
+          <div class="panel-actions">
+            <span class="badge success" onclick="event.stopPropagation()"><span class="dot"></span>正常</span>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="status-grid">
+            <div class="status-cell"><div class="k">增强脚本</div><div class="v success">已注入</div></div>
+            <div class="status-cell"><div class="k">智能建议规则</div><div class="v">128</div></div>
+            <div class="status-cell"><div class="k">无感切号</div><div class="v success">就绪</div></div>
+            <div class="status-cell"><div class="k">Bridge 端口</div><div class="v">47291</div></div>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>重新注入</button>
+            <button class="btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>修改提示词</button>
+            <button class="btn ghost">恢复原始</button>
+          </div>
+
+          <div>
+            <span class="field-label">回复建议提示</span>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div class="toggle-row">
+                <div class="label">
+                  <div class="name">启用智能建议</div>
+                  <div class="desc">在 Cascade 回复时显示推荐操作气泡</div>
+                </div>
+                <div class="switch on" onclick="toggleSwitch(this)"></div>
+              </div>
+              <div class="toggle-row">
+                <div class="label">
+                  <div class="name">自动定位首条</div>
+                  <div class="desc">滚动至当前 turn 顶部</div>
+                </div>
+                <div class="switch on" onclick="toggleSwitch(this)"></div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <span class="field-label">气泡主题</span>
+            <div class="selector-grid">
+              <div class="selector active"><span class="emo">🌫️</span>玻璃</div>
+              <div class="selector"><span class="emo">⚪</span>简洁</div>
+              <div class="selector"><span class="emo">🌑</span>极夜</div>
+              <div class="selector"><span class="emo">🔵</span>蓝调</div>
+            </div>
+          </div>
+
+          <div>
+            <span class="field-label">气泡形状</span>
+            <div class="selector-grid">
+              <div class="selector active">圆角</div>
+              <div class="selector">胶囊</div>
+              <div class="selector">直角</div>
+              <div class="selector">凹槽</div>
+            </div>
+          </div>
+
+          <div>
+            <span class="field-label">气泡预览</span>
+            <div class="bubble-preview">
+              <span class="bubble glass">继续</span>
+              <span class="bubble glass">重新生成</span>
+              <span class="bubble glass">请补全测试</span>
+              <span class="bubble glass">解释这段代码</span>
+              <span class="bubble glass">提交并推送</span>
+            </div>
+          </div>
+
+          <div class="toggle-row">
+            <div class="label">
+              <div class="name">界面汉化</div>
+              <div class="desc">将 Cascade 与 Windsurf 内置文本翻译为简体中文</div>
+            </div>
+            <div class="switch on" onclick="toggleSwitch(this)"></div>
+          </div>
+
+          <div>
+            <span class="field-label">完成提醒</span>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div class="toggle-row">
+                <div class="label">
+                  <div class="name">任务完成时触发</div>
+                  <div class="desc">检测到 Cascade 输出收束后播放铃声</div>
+                </div>
+                <div class="switch on" onclick="toggleSwitch(this)"></div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div>
+                  <span class="muted-text">铃声</span>
+                  <select class="select" style="margin-top:6px">
+                    <option>水滴 (默认)</option>
+                    <option>风铃</option>
+                    <option>钢琴</option>
+                    <option>自定义...</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="muted-text">音量</span>
+                  <input type="range" min="0" max="100" value="65" class="input" style="padding:8px 0;margin-top:6px" />
+                </div>
+              </div>
+              <div class="hint">
+                <span class="ico">ⓘ</span>
+                <div>支持上传自定义 mp3 / wav，最长 30 秒；铃声将存入本地缓存。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: 自动切号 -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">🔄</div>
+          <div>
+            <div class="panel-title">自动切号<small>额度感知 · 智能评分 · 冷却隔离</small></div>
+          </div>
+          <div class="panel-actions">
+            <span class="badge accent" onclick="event.stopPropagation()"><span class="dot"></span>运行中</span>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="param-grid">
+            <div class="param-cell">
+              <span class="label">切换阈值</span>
+              <span class="value">5<small>%</small></span>
+              <span class="sub">剩余额度</span>
+            </div>
+            <div class="param-cell">
+              <span class="label">检查间隔</span>
+              <span class="value">30<small>s</small></span>
+              <span class="sub">守护轮询</span>
+            </div>
+            <div class="param-cell">
+              <span class="label">冷却时长</span>
+              <span class="value">15<small>min</small></span>
+              <span class="sub">切出后冷却</span>
+            </div>
+            <div class="param-cell">
+              <span class="label">评分模型</span>
+              <span class="value" style="font-size:14px">v3</span>
+              <span class="sub">加权打分</span>
+            </div>
+          </div>
+
+          <div>
+            <span class="field-label">作用范围</span>
+            <div class="chips">
+              <span class="chip active" onclick="toggleChip(this)">全部账号 <span class="count">42</span></span>
+              <span class="chip" onclick="toggleChip(this)">PRO <span class="count">18</span></span>
+              <span class="chip" onclick="toggleChip(this)">TEAM <span class="count">6</span></span>
+              <span class="chip" onclick="toggleChip(this)">已标记 <span class="count">12</span></span>
+            </div>
+            <div class="hint" style="margin-top:10px">
+              <span class="ico">ⓘ</span>
+              <div>仅在所选范围内挑选下一个账号。被锁定或冷却中的账号会被自动跳过。</div>
+            </div>
+          </div>
+
+          <div>
+            <span class="field-label">切换策略</span>
+            <div class="strategy-list">
+              <div class="strategy selected" onclick="selectStrategy(this)">
+                <div class="radio"></div>
+                <div class="text">
+                  <div class="name">满额度优先</div>
+                  <div class="desc">优先选择剩余额度最高的账号，适合长期密集使用</div>
+                </div>
+              </div>
+              <div class="strategy" onclick="selectStrategy(this)">
+                <div class="radio"></div>
+                <div class="text">
+                  <div class="name">最低非零优先</div>
+                  <div class="desc">优先消耗低额度账号，最大化整体利用率</div>
+                </div>
+              </div>
+              <div class="strategy" onclick="selectStrategy(this)">
+                <div class="radio"></div>
+                <div class="text">
+                  <div class="name">随机均衡</div>
+                  <div class="desc">在合格池内随机抽取，避免单账号过热</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="param-grid">
+            <div class="param-cell">
+              <span class="label">最低分</span>
+              <span class="value">60</span>
+            </div>
+            <div class="param-cell">
+              <span class="label">额度权重</span>
+              <span class="value">0.6</span>
+            </div>
+            <div class="param-cell">
+              <span class="label">新鲜度</span>
+              <span class="value">0.3</span>
+            </div>
+            <div class="param-cell">
+              <span class="label">惩罚</span>
+              <span class="value">0.1</span>
+            </div>
+          </div>
+
+          <div>
+            <span class="field-label">实时日志</span>
+            <div class="log-viewer">
+              <div class="log-line"><span class="time">14:23:08</span><span class="tag info">[CHECK]</span><span class="msg">扫描 42 个候选 · 36 个达标</span></div>
+              <div class="log-line"><span class="time">14:23:09</span><span class="tag ok">[PICK]</span><span class="msg">candidate=acct_91 (PRO · 87 分)</span></div>
+              <div class="log-line"><span class="time">14:23:10</span><span class="tag info">[SWAP]</span><span class="msg">由 acct_77 → acct_91, 注入会话</span></div>
+              <div class="log-line"><span class="time">14:23:11</span><span class="tag ok">[OK]</span><span class="msg">已切换 · 用时 1240ms</span></div>
+              <div class="log-line"><span class="time">14:25:42</span><span class="tag warn">[COOLDOWN]</span><span class="msg">acct_77 进入冷却 15:00</span></div>
+              <div class="log-line"><span class="time">14:28:11</span><span class="tag info">[CHECK]</span><span class="msg">额度仍充足 · 跳过</span></div>
+              <div class="log-line"><span class="time">14:30:55</span><span class="tag err">[SKIP]</span><span class="msg">acct_03 被锁定,自动排除</span></div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn primary">立即切换</button>
+            <button class="btn">导出日志</button>
+            <button class="btn ghost">重置统计</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: 自动继续 -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">▶</div>
+          <div>
+            <div class="panel-title">自动继续<small>守护模式 / 长任务编排</small></div>
+          </div>
+          <div class="panel-actions">
+            <span class="badge info" onclick="event.stopPropagation()"><span class="dot"></span>守护中</span>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="segment" style="align-self:flex-start" id="continue-seg">
+            <button class="segment-btn active" onclick="switchSegment(event, 'guardian')">守护模式</button>
+            <button class="segment-btn" onclick="switchSegment(event, 'long-task')">长任务</button>
+          </div>
+
+          <!-- Guardian -->
+          <div id="seg-guardian" style="display:flex;flex-direction:column;gap:10px">
+            <div class="toggle-row">
+              <div class="label">
+                <div class="name">自动续写</div>
+                <div class="desc">检测到 "Continue" 类提示自动点击</div>
+              </div>
+              <div class="switch on" onclick="toggleSwitch(this)"></div>
+            </div>
+            <div class="toggle-row">
+              <div class="label">
+                <div class="name">自动重试</div>
+                <div class="desc">遇到瞬时错误后立即重试 (最多 3 次)</div>
+              </div>
+              <div class="switch on" onclick="toggleSwitch(this)"></div>
+            </div>
+            <div class="toggle-row">
+              <div class="label">
+                <div class="name">突破限制</div>
+                <div class="desc">检测到额度限制提示自动触发切号</div>
+              </div>
+              <div class="switch on" onclick="toggleSwitch(this)"></div>
+            </div>
+            <div class="toggle-row">
+              <div class="label">
+                <div class="name">清除干扰</div>
+                <div class="desc">自动关闭弹窗、新手引导等元素</div>
+              </div>
+              <div class="switch" onclick="toggleSwitch(this)"></div>
+            </div>
+            <div class="toggle-row">
+              <div class="label">
+                <div class="name">自动批准权限</div>
+                <div class="desc">命令 / 文件读写权限提示自动放行</div>
+              </div>
+              <div class="switch on" onclick="toggleSwitch(this)"></div>
+            </div>
+          </div>
+
+          <!-- Long Task -->
+          <div id="seg-long-task" style="display:none;flex-direction:column;gap:12px">
+            <div class="status-grid">
+              <div class="status-cell"><div class="k">当前进度</div><div class="v">3 / 7</div></div>
+              <div class="status-cell"><div class="k">剩余预估</div><div class="v">~ 14 min</div></div>
+              <div class="status-cell"><div class="k">已注入</div><div class="v success">12 step</div></div>
+              <div class="status-cell"><div class="k">运行账号</div><div class="v">acct_91</div></div>
+            </div>
+
+            <div>
+              <span class="field-label">指令队列</span>
+              <div class="queue-list">
+                <div class="queue-item">
+                  <span class="num">1</span>
+                  <span class="text">读取项目结构并生成索引</span>
+                  <span class="status done">完成</span>
+                </div>
+                <div class="queue-item">
+                  <span class="num">2</span>
+                  <span class="text">为 src/services 编写单元测试</span>
+                  <span class="status done">完成</span>
+                </div>
+                <div class="queue-item current">
+                  <span class="num">3</span>
+                  <span class="text">补充 README 与 API 文档</span>
+                  <span class="status run">进行中</span>
+                </div>
+                <div class="queue-item">
+                  <span class="num">4</span>
+                  <span class="text">运行 lint 并自动修复</span>
+                  <span class="status wait">等待</span>
+                </div>
+                <div class="queue-item">
+                  <span class="num">5</span>
+                  <span class="text">提交并推送至 origin/master</span>
+                  <span class="status wait">等待</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:8px">
+              <button class="btn primary">▶ 启动队列</button>
+              <button class="btn">⏸ 暂停</button>
+              <button class="btn ghost">编辑指令</button>
+              <button class="btn danger ghost" style="margin-left:auto">清空</button>
+            </div>
+          </div>
+
+          <div class="engine-box" id="engine-box">
+            <div class="engine-head" onclick="toggleEngine(this)">
+              <div class="lhead">
+                <div class="t">🛠️ Error Recovery Engine <span class="badge accent">v2</span></div>
+                <div class="d">匹配错误模式并自动执行恢复策略</div>
+              </div>
+              <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+            </div>
+            <div class="engine-body">
+              <div class="rule-row">
+                <span class="num">01</span>
+                <div class="text">
+                  <div class="name">Rate Limit · 切号恢复</div>
+                  <div class="pat">/(rate limit|too many request|quota exceeded)/i</div>
+                </div>
+                <span class="meta">→ switchAccount()</span>
+              </div>
+              <div class="rule-row">
+                <span class="num">02</span>
+                <div class="text">
+                  <div class="name">Stream Cutoff · 自动续写</div>
+                  <div class="pat">/(connection reset|stream ended unexpectedly)/i</div>
+                </div>
+                <span class="meta">→ continue()</span>
+              </div>
+              <div class="rule-row">
+                <span class="num">03</span>
+                <div class="text">
+                  <div class="name">Tool Error · 重试退避</div>
+                  <div class="pat">/(tool returned error|ETIMEDOUT|ECONNRESET)/i</div>
+                </div>
+                <span class="meta">→ retry(×3, 2s)</span>
+              </div>
+              <div class="rule-row">
+                <span class="num">04</span>
+                <div class="text">
+                  <div class="name">Login Expired · 重新登录</div>
+                  <div class="pat">/(unauthenticated|session expired|please sign in)/i</div>
+                </div>
+                <span class="meta">→ refreshToken()</span>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:6px">
+                <button class="btn sm primary">+ 新规则</button>
+                <button class="btn sm">导入</button>
+                <button class="btn sm ghost">查看详情 →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================================================
+       Section 2 · 账号与实例
+       ============================================================ -->
+  <section class="section">
+    <div class="section-header">
+      <span class="section-number">SECTION · 02</span>
+      <h2 class="section-title"><em>账号</em>与实例</h2>
+      <span class="section-sub">多实例分身 · 池化账号</span>
+    </div>
+
+    <div class="grid two">
+
+      <!-- Panel: 多实例分身 -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">🪟</div>
+          <div>
+            <div class="panel-title">多实例分身<small>同时运行多个隔离的 Windsurf 窗口</small></div>
+          </div>
+          <div class="panel-actions">
+            <span class="badge info" onclick="event.stopPropagation()">2 运行 / 4 实例</span>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="instance-grid">
+            <div class="instance-card current">
+              <div class="top">
+                <span class="name">主窗口</span>
+                <span class="pill cur">当前</span>
+              </div>
+              <div class="info">
+                <div><span>账号</span><span>acct_91</span></div>
+                <div><span>PID</span><span>14238</span></div>
+                <div><span>启动</span><span>09:12</span></div>
+              </div>
+              <div class="actions">
+                <button class="btn sm ghost">聚焦</button>
+                <button class="btn sm">编辑</button>
+              </div>
+            </div>
+
+            <div class="instance-card">
+              <div class="top">
+                <span class="name">工作号</span>
+                <span class="pill run">运行</span>
+              </div>
+              <div class="info">
+                <div><span>账号</span><span>acct_77</span></div>
+                <div><span>PID</span><span>9981</span></div>
+                <div><span>启动</span><span>10:48</span></div>
+              </div>
+              <div class="actions">
+                <button class="btn sm primary">切换</button>
+                <button class="btn sm">编辑</button>
+                <button class="btn sm danger ghost">停止</button>
+              </div>
+            </div>
+
+            <div class="instance-card">
+              <div class="top">
+                <span class="name">测试号</span>
+                <span class="pill stop">停止</span>
+              </div>
+              <div class="info">
+                <div><span>账号</span><span>acct_12</span></div>
+                <div><span>PID</span><span style="opacity:0.5">—</span></div>
+                <div><span>最后</span><span>昨天</span></div>
+              </div>
+              <div class="actions">
+                <button class="btn sm primary">▶ 启动</button>
+                <button class="btn sm">编辑</button>
+              </div>
+            </div>
+
+            <div class="instance-card">
+              <div class="top">
+                <span class="name">备份号</span>
+                <span class="pill stop">停止</span>
+              </div>
+              <div class="info">
+                <div><span>账号</span><span>acct_45</span></div>
+                <div><span>PID</span><span style="opacity:0.5">—</span></div>
+                <div><span>最后</span><span>3 天前</span></div>
+              </div>
+              <div class="actions">
+                <button class="btn sm primary">▶ 启动</button>
+                <button class="btn sm">编辑</button>
+                <button class="btn sm danger ghost">删除</button>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn primary">+ 新建实例</button>
+            <button class="btn">同步配置</button>
+            <button class="btn ghost">查看日志</button>
+          </div>
+          <div class="hint">
+            <span class="ico">ⓘ</span>
+            <div>实例之间使用独立的 user-data 与 token 缓存，互不影响。当前共 <strong style="color:var(--text-primary)">2</strong> 个进程运行,占用 1.2GB 内存。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: 我的账号 -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">👥</div>
+          <div>
+            <div class="panel-title">我的账号<small>42 个账号 · 36 可用 · 4 冷却 · 2 已禁</small></div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn sm primary" onclick="event.stopPropagation()">+ 添加账号</button>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="stat-row">
+            <div class="stat-card">
+              <div class="label">本日消耗</div>
+              <div class="num">1,284<small> / 5,000 prompts</small></div>
+              <div class="progress"><div class="bar" style="width:26%"></div></div>
+              <div class="meta"><span>26% 使用</span><span>↑ 12% vs 昨日</span></div>
+            </div>
+            <div class="stat-card">
+              <div class="label">本周消耗</div>
+              <div class="num">8,917<small> / 35,000</small></div>
+              <div class="progress warn"><div class="bar" style="width:68%"></div></div>
+              <div class="meta"><span>68% 使用</span><span>剩 11,083</span></div>
+            </div>
+          </div>
+
+          <div class="status-grid">
+            <div class="status-cell"><div class="k">PRO</div><div class="v">18</div></div>
+            <div class="status-cell"><div class="k">TEAM</div><div class="v">6</div></div>
+            <div class="status-cell"><div class="k">FREE</div><div class="v">18</div></div>
+            <div class="status-cell"><div class="k">冷却中</div><div class="v warning">4</div></div>
+          </div>
+
+          <div class="external-banner">
+            <div class="ico">↗</div>
+            <div class="text"><strong>检测到外部账号源</strong> · 已连接 Codeium 同步, <strong>3</strong> 个新账号待导入。</div>
+            <button class="btn sm primary">导入</button>
+          </div>
+
+          <div class="toolbar">
+            <div class="search-input">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input placeholder="搜索账号、邮箱、标签..." />
+            </div>
+            <button class="btn sm">筛选</button>
+            <button class="btn sm">导出</button>
+          </div>
+
+          <div class="chips">
+            <span class="chip active" onclick="toggleChip(this)">全部</span>
+            <span class="chip" onclick="toggleChip(this)">⭐ 收藏</span>
+            <span class="chip" onclick="toggleChip(this)">主力</span>
+            <span class="chip" onclick="toggleChip(this)">备用</span>
+            <span class="chip" onclick="toggleChip(this)">已登录</span>
+            <span class="chip" onclick="toggleChip(this)">异常</span>
+          </div>
+
+          <div class="sort-bar">
+            <span class="l">排序:</span>
+            <button class="sort-opt active">剩余额度 ↓</button>
+            <button class="sort-opt">最近使用</button>
+            <button class="sort-opt">添加时间</button>
+            <button class="sort-opt">名称 A-Z</button>
+          </div>
+
+          <div class="account-grid">
+            <div class="account-card active">
+              <span class="check on">✓</span>
+              <div class="avatar-row">
+                <div class="avatar">A</div>
+                <div>
+                  <div class="name">Alpha 主力 #91</div>
+                  <div class="email">alpha.91@inbox.lv</div>
+                </div>
+                <span class="plan pro">PRO</span>
+              </div>
+              <div class="usage">
+                <div class="head"><span class="l">剩余额度</span><span class="v">487 / 500</span></div>
+                <div class="progress"><div class="bar" style="width:97%"></div></div>
+              </div>
+              <div class="tags">
+                <span class="t">⭐ 主力</span>
+                <span class="t">EU</span>
+                <span class="t">verified</span>
+              </div>
+              <div class="foot">
+                <span>2 min 前活跃</span>
+                <span style="color:var(--success);font-weight:600">● 在线</span>
+              </div>
+            </div>
+
+            <div class="account-card">
+              <span class="check">✓</span>
+              <div class="avatar-row">
+                <div class="avatar t1">T</div>
+                <div>
+                  <div class="name">Team Workspace</div>
+                  <div class="email">team@studio.dev</div>
+                </div>
+                <span class="plan team">TEAM</span>
+              </div>
+              <div class="usage">
+                <div class="head"><span class="l">剩余额度</span><span class="v">2,148 / 2,500</span></div>
+                <div class="progress"><div class="bar" style="width:86%"></div></div>
+              </div>
+              <div class="tags">
+                <span class="t">📌 组队</span>
+                <span class="t">shared</span>
+              </div>
+              <div class="foot">
+                <span>15 min 前</span>
+                <span style="color:var(--success);font-weight:600">● 可用</span>
+              </div>
+            </div>
+
+            <div class="account-card locked">
+              <span class="check">✓</span>
+              <div class="avatar-row">
+                <div class="avatar t2">F</div>
+                <div>
+                  <div class="name">Free Trial #14</div>
+                  <div class="email">free14@temp.io</div>
+                </div>
+                <span class="plan free">FREE</span>
+              </div>
+              <div class="usage">
+                <div class="head"><span class="l">剩余额度</span><span class="v">0 / 25</span></div>
+                <div class="progress danger"><div class="bar" style="width:100%"></div></div>
+              </div>
+              <div class="tags">
+                <span class="t">test</span>
+                <span class="lock-badge">🔒 锁定 12:43</span>
+              </div>
+              <div class="foot">
+                <span>已耗尽</span>
+                <span style="color:var(--warning);font-weight:600">● 冷却</span>
+              </div>
+            </div>
+
+            <div class="account-card disabled">
+              <span class="check">✓</span>
+              <div class="avatar-row">
+                <div class="avatar t3">D</div>
+                <div>
+                  <div class="name">Disabled #07</div>
+                  <div class="email">old.07@archived</div>
+                </div>
+                <span class="plan free">DISABLED</span>
+              </div>
+              <div class="usage">
+                <div class="head"><span class="l">剩余额度</span><span class="v">—</span></div>
+                <div class="progress"><div class="bar" style="width:0%"></div></div>
+              </div>
+              <div class="tags">
+                <span class="t">archive</span>
+              </div>
+              <div class="foot">
+                <span>3 周前</span>
+                <span style="color:var(--text-muted)">● 已禁用</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="pagination">
+            <button class="page disabled">‹</button>
+            <button class="page active">1</button>
+            <button class="page">2</button>
+            <button class="page">3</button>
+            <button class="page">4</button>
+            <button class="page">…</button>
+            <button class="page">11</button>
+            <button class="page">›</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================================================
+       Section 3 · 对话框与辅助
+       ============================================================ -->
+  <section class="section">
+    <div class="section-header">
+      <span class="section-number">SECTION · 03</span>
+      <h2 class="section-title"><em>对话框</em>与辅助控件</h2>
+      <span class="section-sub">Dialogs · Toast · Filters · Batch</span>
+    </div>
+
+    <div class="grid two">
+
+      <!-- Dialog: 添加账号 -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">＋</div>
+          <div>
+            <div class="panel-title">添加账号<small>批量导入 / 单个登录 / 已登录</small></div>
+          </div>
+          <div class="panel-actions">
+            <span class="badge muted">Dialog</span>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="dialog" style="margin:-2px">
+            <div class="dialog-header">
+              <span class="panel-icon" style="width:30px;height:30px;font-size:14px">＋</span>
+              <span class="dialog-title">添加账号</span>
+              <span class="dialog-close">×</span>
+            </div>
+            <div class="dialog-body">
+              <div class="tabs" id="account-tabs">
+                <button class="tab active" onclick="switchTab(event, 'tab-bulk')">批量导入</button>
+                <button class="tab" onclick="switchTab(event, 'tab-single')">单个登录</button>
+                <button class="tab" onclick="switchTab(event, 'tab-existing')">已登录账户</button>
+              </div>
+
+              <div id="tab-bulk" style="display:flex;flex-direction:column;gap:12px">
+                <div>
+                  <span class="field-label">粘贴账号列表</span>
+                  <textarea class="input" rows="5" style="font-family:var(--font-mono);font-size:11px;resize:vertical" placeholder="支持以下格式,每行一条:&#10;email@example.com password&#10;email@example.com password token&#10;email@example.com::password::token"></textarea>
+                </div>
+                <div class="hint">
+                  <span class="ico">⚡</span>
+                  <div>智能识别 <strong style="color:var(--text-primary)">email/password/token</strong> 三段格式,自动去重并校验。支持 1000+ 条。</div>
+                </div>
+                <div>
+                  <span class="field-label">默认标签</span>
+                  <div class="chips">
+                    <span class="chip active" onclick="toggleChip(this)">imported</span>
+                    <span class="chip active" onclick="toggleChip(this)">2026-05</span>
+                    <span class="chip" onclick="toggleChip(this)">PRO</span>
+                    <span class="chip" onclick="toggleChip(this)">+ 添加</span>
+                  </div>
+                </div>
+              </div>
+              <div id="tab-single" style="display:none;flex-direction:column;gap:10px">
+                <div>
+                  <span class="field-label">Email</span>
+                  <input class="input" placeholder="alpha@example.com" />
+                </div>
+                <div>
+                  <span class="field-label">Password</span>
+                  <input class="input" type="password" placeholder="••••••••" />
+                </div>
+                <div>
+                  <span class="field-label">Token <span style="color:var(--text-muted);text-transform:none;letter-spacing:0">(可选)</span></span>
+                  <input class="input" style="font-family:var(--font-mono);font-size:11px" placeholder="ws_token_xxxxxxxxxxxx" />
+                </div>
+              </div>
+              <div id="tab-existing" style="display:none">
+                <div class="hint">
+                  <span class="ico">ⓘ</span>
+                  <div>检测到当前浏览器已登录 <strong style="color:var(--text-primary)">3</strong> 个 Windsurf 账号,可一键导入。</div>
+                </div>
+              </div>
+            </div>
+            <div class="dialog-foot">
+              <button class="btn ghost">取消</button>
+              <button class="btn primary">导入 (42 条)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: 批量进度 + Toast -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">📊</div>
+          <div>
+            <div class="panel-title">批量进度<small>导入 / 验证 · 实时进度与通知</small></div>
+          </div>
+          <div class="panel-actions">
+            <span class="badge accent"><span class="dot"></span>进行中</span>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+              <span style="font-size:13px;font-weight:600">导入账号</span>
+              <span class="muted-text" style="font-family:var(--font-mono);color:var(--text-primary)">28 / 42</span>
+            </div>
+            <div class="progress"><div class="bar" style="width:66%"></div></div>
+            <div class="muted-text" style="margin-top:6px">66% · 已成功 26 · 失败 2 · 跳过 0 · 预计剩 ~ 14s</div>
+          </div>
+
+          <div class="status-grid">
+            <div class="status-cell"><div class="k">已处理</div><div class="v">28</div></div>
+            <div class="status-cell"><div class="k">成功</div><div class="v success">26</div></div>
+            <div class="status-cell"><div class="k">失败</div><div class="v warning">2</div></div>
+            <div class="status-cell"><div class="k">速率</div><div class="v">1.8 / s</div></div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div class="toast success">
+              <div class="ico">✓</div>
+              <div class="body">
+                <div class="t">acct_alpha_91 导入成功</div>
+                <div class="d">PRO · 487 / 500 额度 · 已加入号池</div>
+              </div>
+            </div>
+            <div class="toast info">
+              <div class="ico">↻</div>
+              <div class="body">
+                <div class="t">acct_77 正在验证</div>
+                <div class="d">检查 token 有效性...</div>
+              </div>
+            </div>
+            <div class="toast warn">
+              <div class="ico">!</div>
+              <div class="body">
+                <div class="t">acct_temp_14 密码错误</div>
+                <div class="d">第 14 行 · 已自动跳过, 可手动重试</div>
+              </div>
+            </div>
+            <div class="toast err">
+              <div class="ico">✕</div>
+              <div class="body">
+                <div class="t">acct_05 已被 Codeium 封禁</div>
+                <div class="d">不会进入号池,已标记为 disabled</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px">
+            <button class="btn">⏸ 暂停</button>
+            <button class="btn danger ghost">取消</button>
+            <button class="btn ghost" style="margin-left:auto">查看完整报告 →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: 错误恢复规则详情 -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">⚙</div>
+          <div>
+            <div class="panel-title">错误恢复规则详情<small>规则编辑器 · 测试与配置</small></div>
+          </div>
+          <div class="panel-actions">
+            <span class="badge muted">4 规则</span>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div class="rule-row">
+              <span class="num">01</span>
+              <div class="text">
+                <div class="name">Rate Limit Recovery</div>
+                <div class="pat">^(.*)(rate.?limit|429|too many).*$</div>
+              </div>
+              <div class="switch on" onclick="toggleSwitch(this)" style="margin-right:6px"></div>
+              <span class="meta">→ swap</span>
+            </div>
+            <div class="rule-row">
+              <span class="num">02</span>
+              <div class="text">
+                <div class="name">Stream Cutoff</div>
+                <div class="pat">/(connection reset|stream ended)/i</div>
+              </div>
+              <div class="switch on" onclick="toggleSwitch(this)" style="margin-right:6px"></div>
+              <span class="meta">→ continue</span>
+            </div>
+            <div class="rule-row">
+              <span class="num">03</span>
+              <div class="text">
+                <div class="name">Tool Timeout</div>
+                <div class="pat">/(ETIMEDOUT|tool.*timeout|deadline)/i</div>
+              </div>
+              <div class="switch on" onclick="toggleSwitch(this)" style="margin-right:6px"></div>
+              <span class="meta">→ retry ×3</span>
+            </div>
+            <div class="rule-row">
+              <span class="num">04</span>
+              <div class="text">
+                <div class="name">Session Expired</div>
+                <div class="pat">/(unauthenticated|sign.?in.required)/i</div>
+              </div>
+              <div class="switch" onclick="toggleSwitch(this)" style="margin-right:6px"></div>
+              <span class="meta">→ refresh</span>
+            </div>
+          </div>
+
+          <div>
+            <span class="field-label">配置选项</span>
+            <div class="param-grid">
+              <div class="param-cell">
+                <span class="label">最大重试</span>
+                <span class="value">3</span>
+              </div>
+              <div class="param-cell">
+                <span class="label">退避基数</span>
+                <span class="value">2<small>s</small></span>
+              </div>
+              <div class="param-cell">
+                <span class="label">最长等待</span>
+                <span class="value">60<small>s</small></span>
+              </div>
+              <div class="param-cell">
+                <span class="label">触发统计</span>
+                <span class="value">87</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div class="toggle-row">
+              <div class="label">
+                <div class="name">命中后高亮日志</div>
+                <div class="desc">匹配到规则时在日志面板高亮</div>
+              </div>
+              <div class="switch on" onclick="toggleSwitch(this)"></div>
+            </div>
+            <div class="toggle-row">
+              <div class="label">
+                <div class="name">规则命中通知</div>
+                <div class="desc">触发恢复时弹出系统通知</div>
+              </div>
+              <div class="switch" onclick="toggleSwitch(this)"></div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px">
+            <button class="btn primary">+ 新建规则</button>
+            <button class="btn">测试匹配</button>
+            <button class="btn ghost">导出</button>
+            <button class="btn ghost">导入</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: 通用弹窗 -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">💬</div>
+          <div>
+            <div class="panel-title">通用弹窗<small>Confirm · Edit · Tag editor</small></div>
+          </div>
+          <div class="panel-actions">
+            <span class="badge muted">Dialog 系列</span>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <!-- Confirm -->
+          <div class="dialog">
+            <div class="dialog-header">
+              <span class="panel-icon" style="width:30px;height:30px;font-size:14px;background:var(--danger-soft);color:var(--danger)">!</span>
+              <span class="dialog-title">确认删除账号?</span>
+              <span class="dialog-close">×</span>
+            </div>
+            <div class="dialog-body">
+              <p style="font-size:13px;color:var(--text-secondary)">该操作将永久删除 <strong style="color:var(--text-primary);font-family:var(--font-mono)">acct_old_07</strong> 及其所有关联日志,且 <strong style="color:var(--danger)">不可恢复</strong>。</p>
+              <div class="hint">
+                <span class="ico">ⓘ</span>
+                <div>如只想暂时停用,可改为 <em>禁用</em> 状态。</div>
+              </div>
+            </div>
+            <div class="dialog-foot">
+              <button class="btn ghost">取消</button>
+              <button class="btn">改为禁用</button>
+              <button class="btn danger">永久删除</button>
+            </div>
+          </div>
+
+          <!-- Edit instance -->
+          <div class="dialog">
+            <div class="dialog-header">
+              <span class="panel-icon" style="width:30px;height:30px;font-size:14px">✎</span>
+              <span class="dialog-title">编辑实例 · 工作号</span>
+              <span class="dialog-close">×</span>
+            </div>
+            <div class="dialog-body">
+              <div>
+                <span class="field-label">实例名称</span>
+                <input class="input" value="工作号" />
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div>
+                  <span class="field-label">绑定账号</span>
+                  <select class="select"><option>acct_77 (PRO)</option><option>acct_91 (PRO)</option></select>
+                </div>
+                <div>
+                  <span class="field-label">User Data 目录</span>
+                  <input class="input" style="font-family:var(--font-mono);font-size:11px" value="./.profiles/worker" />
+                </div>
+              </div>
+              <div class="toggle-row">
+                <div class="label">
+                  <div class="name">开机自启</div>
+                  <div class="desc">系统启动时自动开启该实例</div>
+                </div>
+                <div class="switch on" onclick="toggleSwitch(this)"></div>
+              </div>
+            </div>
+            <div class="dialog-foot">
+              <button class="btn ghost">取消</button>
+              <button class="btn primary">保存</button>
+            </div>
+          </div>
+
+          <!-- Tag editor -->
+          <div class="dialog">
+            <div class="dialog-header">
+              <span class="panel-icon" style="width:30px;height:30px;font-size:14px">🏷</span>
+              <span class="dialog-title">编辑标签</span>
+              <span class="dialog-close">×</span>
+            </div>
+            <div class="dialog-body">
+              <div>
+                <span class="field-label">当前标签</span>
+                <div class="chips">
+                  <span class="chip active" onclick="toggleChip(this)">⭐ 主力 ×</span>
+                  <span class="chip active" onclick="toggleChip(this)">EU ×</span>
+                  <span class="chip active" onclick="toggleChip(this)">verified ×</span>
+                </div>
+              </div>
+              <div>
+                <span class="field-label">建议</span>
+                <div class="chips">
+                  <span class="chip" onclick="toggleChip(this)">+ PRO</span>
+                  <span class="chip" onclick="toggleChip(this)">+ 长期</span>
+                  <span class="chip" onclick="toggleChip(this)">+ 高优先</span>
+                  <span class="chip" onclick="toggleChip(this)">+ 测试</span>
+                </div>
+              </div>
+              <div>
+                <span class="field-label">新建标签</span>
+                <div style="display:flex;gap:8px">
+                  <input class="input" placeholder="输入新标签..." style="flex:1" />
+                  <button class="btn primary">添加</button>
+                </div>
+              </div>
+            </div>
+            <div class="dialog-foot">
+              <button class="btn ghost">取消</button>
+              <button class="btn primary">应用到 1 个账号</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: 筛选下拉 -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">⏷</div>
+          <div>
+            <div class="panel-title">筛选下拉面板<small>Plan · Tag · Status</small></div>
+          </div>
+          <div class="panel-actions">
+            <span class="badge muted">3 筛选项</span>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="filter-dropdown">
+            <div class="filter-section">
+              <div class="head">套餐 (Plan)</div>
+              <div class="chips">
+                <span class="chip active" onclick="toggleChip(this)">PRO <span class="count">18</span></span>
+                <span class="chip active" onclick="toggleChip(this)">TEAM <span class="count">6</span></span>
+                <span class="chip" onclick="toggleChip(this)">FREE <span class="count">18</span></span>
+              </div>
+            </div>
+            <div class="filter-section">
+              <div class="head">标签 (Tag)</div>
+              <div class="chips">
+                <span class="chip active" onclick="toggleChip(this)">⭐ 主力</span>
+                <span class="chip" onclick="toggleChip(this)">备用</span>
+                <span class="chip" onclick="toggleChip(this)">EU</span>
+                <span class="chip" onclick="toggleChip(this)">US</span>
+                <span class="chip" onclick="toggleChip(this)">test</span>
+                <span class="chip" onclick="toggleChip(this)">archive</span>
+              </div>
+            </div>
+            <div class="filter-section">
+              <div class="head">状态 (Status)</div>
+              <div class="chips">
+                <span class="chip active" onclick="toggleChip(this)">● 可用 <span class="count">36</span></span>
+                <span class="chip" onclick="toggleChip(this)">● 冷却 <span class="count">4</span></span>
+                <span class="chip" onclick="toggleChip(this)">● 禁用 <span class="count">2</span></span>
+                <span class="chip" onclick="toggleChip(this)">● 异常 <span class="count">0</span></span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:space-between;padding-top:8px;border-top:1px solid var(--border-subtle)">
+              <button class="btn sm ghost">重置</button>
+              <button class="btn sm primary">应用筛选 (24)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: 批量操作栏 -->
+      <div class="panel">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-icon">☑</div>
+          <div>
+            <div class="panel-title">批量操作栏<small>Bulk action bar</small></div>
+          </div>
+          <div class="panel-actions">
+            <span class="badge accent">12 已选</span>
+            <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="batch-bar">
+            <span class="check on" style="position:static;opacity:1">✓</span>
+            <span class="count">12</span>
+            <span class="label">个账号已选 · 共 42 个</span>
+            <div class="acts">
+              <button class="btn sm">全选页内</button>
+              <button class="btn sm ghost">全选所有 42</button>
+              <button class="btn sm ghost">取消</button>
+            </div>
+          </div>
+
+          <div class="batch-bar" style="background:linear-gradient(135deg,var(--success-soft),var(--info-soft));border-color:var(--success)">
+            <span class="count" style="color:var(--success)">36</span>
+            <span class="label">个可用账号已选</span>
+            <div class="acts">
+              <button class="btn sm primary">▶ 批量验证</button>
+              <button class="btn sm">导出 CSV</button>
+              <button class="btn sm">添加标签</button>
+              <button class="btn sm">移除标签</button>
+              <button class="btn sm danger">禁用</button>
+              <button class="btn sm danger ghost">删除</button>
+            </div>
+          </div>
+
+          <div class="hint">
+            <span class="ico">ⓘ</span>
+            <div>批量操作会一次性提交至队列,可在 <strong style="color:var(--text-primary)">批量进度</strong> 面板查看实时状态;失败的条目可一键重试。</div>
+          </div>
+
+          <div class="param-grid">
+            <div class="param-cell">
+              <span class="label">已选</span>
+              <span class="value">12</span>
+            </div>
+            <div class="param-cell">
+              <span class="label">总额度</span>
+              <span class="value">8,420</span>
+            </div>
+            <div class="param-cell">
+              <span class="label">PRO 数</span>
+              <span class="value">9</span>
+            </div>
+            <div class="param-cell">
+              <span class="label">异常</span>
+              <span class="value" style="color:var(--warning)">0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <footer class="page-foot">
+    <em>Liquid Glass · Windsurf Pool Manager</em><br/>
+    designed with care · light & dark · v6.8.4 · 2026
+  </footer>
+</div>
+
+<script>
+/* ============================================================
+   Theme
+   ============================================================ */
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  html.dataset.theme = next;
+  document.getElementById('theme-label').textContent = next === 'dark' ? '浅色模式' : '深色模式';
+}
+
+/* ============================================================
+   Panel collapse
+   ============================================================ */
+function togglePanel(headerEl) {
+  const panel = headerEl.closest('.panel');
+  panel.classList.toggle('collapsed');
+}
+
+/* ============================================================
+   Toggle switch
+   ============================================================ */
+function toggleSwitch(el) {
+  el.classList.toggle('on');
+}
+
+/* ============================================================
+   Chip toggle
+   ============================================================ */
+function toggleChip(el) {
+  el.classList.toggle('active');
+}
+
+/* ============================================================
+   Strategy radio
+   ============================================================ */
+function selectStrategy(el) {
+  const siblings = el.parentElement.querySelectorAll('.strategy');
+  siblings.forEach(s => s.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+/* ============================================================
+   Engine box
+   ============================================================ */
+function toggleEngine(head) {
+  head.closest('.engine-box').classList.toggle('collapsed');
+}
+
+/* ============================================================
+   Segment control (auto-continue: guardian / long-task)
+   ============================================================ */
+function switchSegment(ev, mode) {
+  const seg = ev.target.closest('.segment');
+  seg.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+  ev.target.classList.add('active');
+  const guardian = document.getElementById('seg-guardian');
+  const longTask = document.getElementById('seg-long-task');
+  if (mode === 'guardian') {
+    guardian.style.display = 'flex';
+    longTask.style.display = 'none';
+  } else {
+    guardian.style.display = 'none';
+    longTask.style.display = 'flex';
+  }
+}
+
+/* ============================================================
+   Tab switching (add account dialog)
+   ============================================================ */
+function switchTab(ev, targetId) {
+  const tabsBar = ev.target.closest('.tabs');
+  tabsBar.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  ev.target.classList.add('active');
+  // hide siblings of the dialog body
+  const body = tabsBar.parentElement;
+  body.querySelectorAll('[id^="tab-"]').forEach(p => p.style.display = 'none');
+  const target = document.getElementById(targetId);
+  if (target) target.style.display = target.id === 'tab-bulk' || target.id === 'tab-single' ? 'flex' : 'block';
+}
+
+/* ============================================================
+   Account card check toggle on click
+   ============================================================ */
+document.querySelectorAll('.account-card .check').forEach(c => {
+  c.addEventListener('click', (e) => {
+    e.stopPropagation();
+    c.classList.toggle('on');
+    c.textContent = c.classList.contains('on') ? '✓' : '';
+    c.closest('.account-card').classList.toggle('active', c.classList.contains('on'));
+  });
+});
+
+/* ============================================================
+   Dialog close just hides demo
+   ============================================================ */
+document.querySelectorAll('.dialog-close').forEach(x => {
+  x.addEventListener('click', (e) => {
+    e.stopPropagation();
+    x.closest('.dialog').style.opacity = '0.4';
+    setTimeout(() => x.closest('.dialog').style.opacity = '1', 600);
+  });
+});
+
+/* ============================================================
+   Page entry: stagger panels not handled by CSS pseudo
+   ============================================================ */
+document.querySelectorAll('.section').forEach((sec, secIdx) => {
+  sec.querySelectorAll('.panel').forEach((p, i) => {
+    p.style.animationDelay = `${0.05 + i * 0.08 + secIdx * 0.05}s`;
+  });
+});
+</script>
+</body>
+</html>

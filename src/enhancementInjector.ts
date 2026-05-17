@@ -154,14 +154,15 @@ function getScriptContent(): string | null {
  * 都要手动递增 VERSION，遗漏过多次 → 用户装新 vsix 后旧 windsurf-better.js
  * 仍嵌在 workbench.html，新代码完全没生效。
  *
- * 现改为：以脚本内容的 SHA1 前 10 位作为版本标识。
+ * 现改为：以脚本内容的 SHA256 前 12 位作为版本标识。
  * 内容变了 hash 必然变 → 自动触发重注入，无需人为维护版本号。
  * 拼上文件中的 VERSION 字符串便于人眼阅读 marker。
  */
 function getPatchVersion(): string {
   const content = getScriptContent();
   if (!content) return '0.0.0';
-  const hash = crypto.createHash('sha1').update(content).digest('hex').slice(0, 10);
+  // 用 SHA256 + 12 位 hex（48 bit）替代 SHA1 + 10 位（40 bit），SHA1 已退役
+  const hash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 12);
   const m = content.match(/const VERSION = '([\d.]+)'/);
   const ver = m ? m[1] : '0.0.0';
   return `${ver}-${hash}`;

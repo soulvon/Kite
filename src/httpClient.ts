@@ -63,6 +63,79 @@ function postOnce(url: string, body: any, headers: Record<string, string> = {}):
   });
 }
 
+/**
+ * 探测性 POST：发送请求后只等第一个数据块或 HTTP 状态，立即销毁连接。
+ * 适用于 streaming RPC 端点（如 GetChatMessage），不消耗完整响应。
+ * timeoutMs 默认 20s
+ */
+export function postProbe(url: string, body: any, headers: Record<string, string> = {}, timeoutMs = 20000, signal?: AbortSignal): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const data = JSON.stringify(body);
+    let resolved = false;
+    const done = (status: number, bodyStr: string) => {
+      if (resolved) return;
+      resolved = true;
+      try { req.destroy(); } catch {}
+      resolve({ status, body: bodyStr });
+    };
+
+    // 提前检查 abort
+    if (signal?.aborted) { resolve({ status: 0, body: 'aborted' }); return; }
+
+    const options: https.RequestOptions = {
+      hostname: urlObj.hostname,
+      port: urlObj.port || 443,
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      agent: directAgent,
+      timeout: timeoutMs,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+        ...headers
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      const status = res.statusCode || 0;
+      // 非 200 直接返回（401/403/429 等）
+      if (status !== 200) {
+        let buf = '';
+        res.on('data', (chunk) => { buf += chunk; if (buf.length > 1000) done(status, buf); });
+        res.on('end', () => done(status, buf));
+        return;
+      }
+      // 200：收集前 2000 字节数据作为证明
+      let buf = '';
+      res.on('data', (chunk) => {
+        buf += chunk;
+        if (buf.length >= 500) done(status, buf.slice(0, 2000));
+      });
+      res.on('end', () => done(status, buf));
+    });
+
+    // abort 监听：立即销毁连接
+    if (signal) {
+      const onAbort = () => { done(0, 'aborted'); };
+      signal.addEventListener('abort', onAbort, { once: true });
+      // 清理
+      const origDone = done;
+      // req 完成后移除监听
+      req.on('close', () => signal.removeEventListener('abort', onAbort));
+    }
+
+    req.on('timeout', () => {
+      done(0, 'timeout');
+    });
+    req.on('error', (err) => {
+      if (!resolved) { resolved = true; reject(err); }
+    });
+    req.write(data);
+    req.end();
+  });
+}
+
 export async function post(url: string, body: any, headers: Record<string, string> = {}): Promise<{ status: number; body: string }> {
   let lastErr: any;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {

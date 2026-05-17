@@ -5,7 +5,7 @@ import { WebviewMessage, BackendMessage } from './types';
 import * as accountStore from './accountStore';
 import { login, loginByAuth1Token } from './loginService';
 import { fetchUsage } from './usageService';
-import { injectSession } from './sessionInjector';
+import { getLastInjectFailure, injectSession } from './sessionInjector';
 import * as instanceManager from './instanceManager';
 import { AutoSwitcher } from './autoSwitcher';
 import { getSignalBridgeScript, getBridgeRelayScript, handlePoolSignal, PoolSignal } from './signalBridge';
@@ -14,8 +14,14 @@ import { readEnhSettings, writeEnhSettings, mergeEnhSettings } from './enhSettin
 import { enqueueCommand, onBridgeResult, getBridgeInfo } from './bridgeServer';
 import { hasBubbleRules } from './rulesInjector';
 import { playSystemSound } from './soundPlayer';
-import { getOtherLockedEmails, getOtherLockedEmailsMap } from './accountLock';
+import { getOtherLockedEmails, getOtherLockedEmailsMap, acquireLock, releaseLock } from './accountLock';
 import { UsageTracker } from './usageTracker';
+import { getHealthCheckCache, testSingleAccount, setTagColors, clearHealthResult, resetMachineId } from './healthCheckPanel';
+import { getContextMonitorSnapshot } from './contextMonitor';
+import { testModelAccess, ProbeModelInfo, setCascadeProbeEnabled } from './usageService';
+import { stopIsolatedCascadeProbeLs } from './cascadeProbe';
+import { scheduleAcpConnectionRecovery } from './acpRecovery';
+import { loginByWindsurfOAuth } from './windsurfOAuthService';
 
 /**
  * 侧栏 Webview 提供器
@@ -26,10 +32,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _output = vscode.window.createOutputChannel('Windsurf 号池');
   onManualSwitch?: () => void;
   private _startTs = Date.now();
+  private _healthCheckAbort?: AbortController;
   private _logFilePath: string;
   private _autoSwitcher: AutoSwitcher;
   private _usageTracker: UsageTracker;
   private _lastSoundTs = 0; // 防重：上次播放时间戳
+  private _lastUsagePercent = new Map<string, number>(); // 上次额度快照，用于检测额度减少
 
   constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext, autoSwitcher: AutoSwitcher, usageTracker: UsageTracker) {
     this._usageTracker = usageTracker;
@@ -53,6 +61,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // 绑定后端自动切号引擎
     this._autoSwitcher = autoSwitcher;
     this._autoSwitcher.onUsageUpdate = (email, snapshot, error) => {
+      // 检测额度减少 → 正在正常消耗 → 清除测活异常
+      if (snapshot && typeof snapshot.dailyRemainingPercent === 'number') {
+        const cur = snapshot.dailyRemainingPercent;
+        const prev = this._lastUsagePercent.get(email);
+        const hc = getHealthCheckCache().get(email);
+        if (hc && !hc.ok) {
+          if (prev !== undefined && cur < prev) {
+            clearHealthResult(email);
+            this._recordDiagnostic(email, 'health', true, '额度消耗中，已清除异常');
+            this.postMessage({ type: 'testModelResult', email, ok: true, reason: '额度消耗中，已清除异常', ts: Date.now() } as any);
+            this.log(`[usageWatch] ✓ ${email} 额度 ${prev}% → ${cur}%，清除测活异常`);
+          }
+        }
+        this._lastUsagePercent.set(email, cur);
+      }
       this.postMessage({ type: 'usage', email, snapshot, error } as any);
       this._pushUsageStats();
     };
@@ -72,6 +95,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // 配额变动时实时推送历史
     this._usageTracker.onHistoryUpdate = () => {
       this._pushQuotaHistory();
+      this._pushDiagnosticSync();
     };
     // 定时器自动切号成功后 → 通知 bridge（windsurf-better.js 显示通知 + 重试消息）
     this._autoSwitcher.onAutoSwitchDone = (newEmail, reason) => {
@@ -116,6 +140,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this.postMessage({ type: 'ltStateUpdate', state: 'running', count: result.count, action: '✅ 发送"' + (result.text || '') + '"' } as any);
           return;
         }
+        if (result?.action === 'ac-stats') {
+          this.postMessage({ type: 'acStatsUpdate', stats: result.stats } as any);
+          return;
+        }
+        // 恢复/诊断日志同步：windsurf-better.js 主动推送或响应 syncLogs 命令
+        // 无论统计面板是否打开都存入 globalState，面板打开时直接读取
+        if (result?.action === 'syncLogs' && result?.payload) {
+          if (Array.isArray(result.payload.recoveryLogs)) {
+            this._context.globalState.update('recoveryLogs', result.payload.recoveryLogs);
+          }
+          if (Array.isArray(result.payload.diagnoseLogs)) {
+            this._context.globalState.update('diagnoseLogs', result.payload.diagnoseLogs);
+          }
+          return;
+        }
         this.log(`[bridge ←] action=${result?.action} id=${result?.id} status=${result?.status}`);
         this.postMessage({ type: 'enhCommandResult', result } as any);
       } catch (err) {
@@ -123,6 +162,40 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     });
     this._disposables.push({ dispose: unsubscribeBridge });
+
+    // 定时 contextMonitor 检查：当前账号有活跃 session 有 token → 清除限速状态
+    const contextCheckTimer = setInterval(() => this._checkContextForHealthClear(), 60_000);
+    this._disposables.push({ dispose: () => clearInterval(contextCheckTimer) });
+  }
+
+  private async _checkContextForHealthClear(): Promise<void> {
+    try {
+      const currentEmail = this._context.globalState.get<string>('lastEmail') || '';
+      if (!currentEmail) return;
+      const hcCache = getHealthCheckCache();
+      const hc = hcCache.get(currentEmail);
+      if (!hc || hc.ok || (hc as any).testing) return;
+
+      const snap = await getContextMonitorSnapshot();
+      if (!snap.ok || !snap.active) return;
+      // 检查活跃 session 是否有近期 token 产出（5 分钟内更新）
+      const updatedAt = Date.parse(snap.active.updatedAt || '');
+      if (!updatedAt || Date.now() - updatedAt > 5 * 60_000) return;
+      if ((snap.active.outputTokens || 0) <= 0) return;
+
+      // 有活跃 token 产出 → 账号正在正常使用，清除所有测活异常
+      hcCache.set(currentEmail, {
+        ...hc,
+        ok: true,
+        reason: 'Cascade 活跃使用中，已清除异常',
+        ts: Date.now(),
+      });
+      this._recordDiagnostic(currentEmail, 'health', true, 'Cascade 活跃使用中，已清除异常');
+      this.postMessage({ type: 'testModelResult', email: currentEmail, ok: true, reason: 'Cascade 活跃使用中，已清除异常', ts: Date.now() } as any);
+      this.log(`[contextMonitor] ${currentEmail} 有活跃 session（outputTokens=${snap.active.outputTokens}），清除测活异常`);
+    } catch (err) {
+      // ignore
+    }
   }
 
   private _recordSwitchLog(log: string, status: string, statusType: string = ''): void {
@@ -270,6 +343,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
       } catch (e) { reject(e); }
     });
+  }
+
+  private _diagnosticLevel(ok: boolean, reason?: string): 'ok' | 'warn' | 'error' {
+    if (ok) return 'ok';
+    return /全局限制|长期不可用|限流|限速|rate limit|message limit|消息.*上限|已达上限|用尽|cooldown|reset|暂不可用/i.test(reason || '') ? 'warn' : 'error';
+  }
+
+  private _recordDiagnostic(email: string, source: 'switch' | 'health', ok: boolean, reason?: string, model?: string, status?: number): void {
+    this._usageTracker.recordDiagnostic({
+      ts: Date.now(),
+      email,
+      source,
+      level: this._diagnosticLevel(ok, reason),
+      reason: ok ? (reason || (source === 'switch' ? '切换成功' : '测活正常')) : (reason || '未知原因'),
+      model,
+      status,
+    });
+  }
+
+  private _pushDiagnosticSync(): void {
+    this.postMessage({
+      type: 'diagnosticSync',
+      latest: this._usageTracker.getLatestDiagnosticsByAccount(),
+    } as any);
   }
 
   private _writeStateDbKey(key: string, value: string): Promise<void> {
@@ -515,6 +612,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _pushCachedUsage(): void {
     for (const [email, entry] of this._autoSwitcher.getAllCached()) {
       this.postMessage({ type: 'usage', email, snapshot: entry.snapshot, error: entry.error } as any);
+      // 初始化额度基线，避免重启后需要两个刷新周期才能检测额度减少
+      if (entry.snapshot && !this._lastUsagePercent.has(email)) {
+        this._lastUsagePercent.set(email, entry.snapshot.dailyRemainingPercent);
+      }
     }
   }
 
@@ -657,7 +758,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const doLogin = async () => {
           const result = await login(email, password, authMethod || 'auto');
           if (result.ok && result.value) {
-            if (tag) result.value.tag = tag;
+            if (tag) { result.value.tag = tag; result.value.tags = [tag]; }
             await accountStore.upsertAccount(this._context, result.value);
             if (batch) {
               this.postMessage({ type: 'batchResult', ok: true, email });
@@ -699,17 +800,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
 
         const prevEmail = this._context.globalState.get<string>('lastEmail') || '';
+        const isForce = !!message.force;
+        if (isForce) {
+          this.log(`[switch][trigger] 强制切号(跨窗口抢占): → ${email}`);
+        }
         const success = await injectSession(this._context, account);
         if (success) {
+          this.postMessage({ type: 'switchResult', email, ok: true } as any);
+          this._recordDiagnostic(email, 'switch', true, '切换成功');
+          clearHealthResult(email);
+          this._recordDiagnostic(email, 'health', true, '切换成功，测活已清除');
+          this.postMessage({ type: 'testModelResult', email, ok: true, reason: '切换成功，测活已清除', ts: Date.now() } as any);
           this._usageTracker.recordSwitch(email);
+          // 跨窗口锁：释放旧号，锁定新号（强制切号时会覆写其他实例的锁）
+          if (prevEmail) releaseLock(prevEmail);
+          acquireLock(email);
           await accountStore.setCurrentAccount(this._context, email);
-          const log = `[${this._tsFmt()}][manual] ${prevEmail} → ${email}`;
-          this._recordSwitchLog(log, `手动切号 → ${email}`);
+          const log = `[${this._tsFmt()}][manual${isForce ? '/force' : ''}] ${prevEmail} → ${email}`;
+          this._recordSwitchLog(log, `${isForce ? '强制' : '手动'}切号 → ${email}`);
           // 无感切号：成功不弹任何提示，UI 高亮自动转移即为反馈
           this.refresh();
           this.onManualSwitch?.();
         } else {
-          this.showAlert('切换失败', '切换失败：' + email, 'error');
+          const failure = getLastInjectFailure(email);
+          const reason = failure?.reason || '未知原因';
+          const title = failure?.kind === 'blocked' ? '账号暂不可用' : '切换失败';
+          this.postMessage({ type: 'switchResult', email, ok: false, reason, kind: failure?.kind || 'error', ts: Date.now() } as any);
+          this._recordDiagnostic(email, 'switch', false, reason);
+          if (failure?.kind !== 'blocked') {
+            this.showAlert(title, `${email}\n${reason}`, 'error');
+          }
         }
         break;
       }
@@ -736,9 +856,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
 
       case 'updateTag': {
-        const { email, tag } = message;
+        const { email } = message;
         if (!email) return;
-        await accountStore.updateTag(this._context, email, tag || '');
+        const tags = (message as any).tags;
+        if (Array.isArray(tags)) {
+          await accountStore.updateTags(this._context, email, tags);
+        } else {
+          await accountStore.updateTag(this._context, email, (message as any).tag || '');
+        }
         this.refresh(true);
         break;
       }
@@ -768,10 +893,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
 
       case 'batchTag': {
-        const { emails, tag } = message;
+        const { emails } = message;
         if (!emails || !emails.length) return;
-        await accountStore.batchUpdateTag(this._context, emails, tag || '');
+        const tags = (message as any).tags;
+        if (Array.isArray(tags)) {
+          await accountStore.batchUpdateTags(this._context, emails, tags);
+        } else {
+          await accountStore.batchUpdateTag(this._context, emails, (message as any).tag || '');
+        }
         this.refresh();
+        break;
+      }
+
+      case 'syncTagColors': {
+        const colors = (message as any).colors;
+        if (colors && typeof colors === 'object') {
+          setTagColors(colors);
+        }
+        break;
+      }
+
+      case 'clearHealthRateLimit': {
+        // webview 端基于配额或 contextMonitor 判定限速可清除，同步到扩展端 cache
+        // 避免下次扩展端推送时被覆盖回限速状态
+        const { email, reason } = message as any;
+        if (!email) break;
+        const hcCache = getHealthCheckCache();
+        const hc = hcCache.get(email);
+        if (hc && !hc.ok) {
+          hcCache.set(email, { ...hc, ok: true, reason: reason || '限速已自动解除', ts: Date.now() });
+        }
         break;
       }
 
@@ -792,7 +943,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
 
       case 'refreshAllUsage': {
-        this._autoSwitcher.refreshAll(true);
+        const force = (message as any).force !== false;
+        this._autoSwitcher.refreshAll(force).catch(err => this.log(`[refreshAllUsage] error: ${err}`));
         break;
       }
 
@@ -828,6 +980,55 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
 
+      case 'testModel': {
+        const { email, modelKey } = message as any;
+        if (!email) return;
+        this.postMessage({ type: 'testModelResult', email, ok: false, reason: '检测中...', testing: true } as any);
+        const result = await testSingleAccount(this._context, email, modelKey);
+        const cache = getHealthCheckCache().get(email);
+        this.postMessage({ type: 'testModelResult', email, ok: result.ok, reason: result.reason, ts: cache?.ts } as any);
+        this._recordDiagnostic(email, 'health', result.ok, result.reason, modelKey || 'Claude Sonnet 4.6', cache?.status);
+        break;
+      }
+
+      case 'testModelAll': {
+        const { modelKey: mKey, modelLabel: mLabel } = message as any;
+        const model: ProbeModelInfo | undefined = mKey ? { label: mLabel || mKey, uid: mKey } : undefined;
+        this._healthCheckAbort = new AbortController();
+        const hcSignal = this._healthCheckAbort.signal;
+        setCascadeProbeEnabled(true);
+        const accounts = await accountStore.readAccounts(this._context);
+        const targets = accounts.filter(a => !a.disabled);
+        for (const acc of targets) {
+          if (hcSignal.aborted) break;
+          this.postMessage({ type: 'testModelResult', email: acc.email, ok: false, reason: '检测中...', testing: true } as any);
+          try {
+            const result = await testModelAccess(acc, model, hcSignal);
+            if (hcSignal.aborted) break;
+            const hcCache = getHealthCheckCache();
+            hcCache.set(acc.email, { ok: result.ok, reason: result.reason, status: result.status, ts: Date.now() });
+            this.postMessage({ type: 'testModelResult', email: acc.email, ok: result.ok, reason: result.reason, ts: Date.now() } as any);
+            this._recordDiagnostic(acc.email, 'health', result.ok, result.reason, model?.label || model?.uid || 'Claude Sonnet 4.6', result.status);
+          } catch (err: any) {
+            if (hcSignal.aborted) break;
+            const reason = `异常: ${err?.message || err}`;
+            this.postMessage({ type: 'testModelResult', email: acc.email, ok: false, reason, ts: Date.now() } as any);
+            this._recordDiagnostic(acc.email, 'health', false, reason, model?.label || model?.uid || 'Claude Sonnet 4.6');
+          }
+        }
+        this._healthCheckAbort = undefined;
+        setCascadeProbeEnabled(false);
+        stopIsolatedCascadeProbeLs();
+        scheduleAcpConnectionRecovery('sidebar-health-check-done', 1500);
+        this.postMessage({ type: 'testModelAllDone' } as any);
+        break;
+      }
+
+      case 'stopHealthCheck': {
+        this._healthCheckAbort?.abort();
+        break;
+      }
+
       case 'savePoolTags': {
         const m = message as any;
         const tags: string[] = m.poolTags || [];
@@ -844,6 +1045,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           checkSec: m.checkSec,
           cooldownSec: m.cooldownSec,
           refreshMin: m.refreshMin,
+          refreshConcurrency: m.refreshConcurrency,
+          refreshBatchDelayMs: m.refreshBatchDelayMs,
+          periodRefreshHours: m.periodRefreshHours,
           scoreMode: m.scoreMode,
           switchStrategy: m.switchStrategy,
           minQuota: m.minQuota,
@@ -883,12 +1087,75 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (!token) return;
         const tokenResult = await loginByAuth1Token(token);
         if (tokenResult.ok && tokenResult.value) {
-          if (message.tag) tokenResult.value.tag = message.tag;
+          if (message.tag) { tokenResult.value.tag = message.tag; tokenResult.value.tags = [message.tag]; }
           await accountStore.upsertAccount(this._context, tokenResult.value);
           this.postMessage({ type: 'batchResult', ok: true, email: tokenResult.value.email });
           this.refresh();
         } else {
           this.postMessage({ type: 'batchResult', ok: false, email: token.substring(0, 20) + '...', error: tokenResult.error });
+        }
+        break;
+      }
+
+      case 'batchStoredAccountImport': {
+        const raw = (message as any).account || {};
+        const email = String(raw.email || '').trim();
+        const apiKey = String(raw.apiKey || '').trim();
+        const apiServerUrl = String(raw.apiServerUrl || '').trim() || 'https://server.self-serve.windsurf.com';
+        if (!email || !apiKey) {
+          this.postMessage({ type: 'batchResult', ok: false, email: email || '账号配置', error: '缺少 email 或 apiKey' });
+          return;
+        }
+        await accountStore.upsertAccount(this._context, {
+          email,
+          apiKey,
+          apiServerUrl,
+          name: raw.name,
+          tag: raw.tag,
+          tags: raw.tags || (raw.tag ? [raw.tag] : undefined),
+          disabled: raw.disabled === true ? true : undefined,
+        });
+        this.postMessage({ type: 'batchResult', ok: true, email });
+        this.refresh();
+        break;
+      }
+
+      case 'exportAccounts': {
+        const accounts = await accountStore.readAccounts(this._context);
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const payload = {
+          type: 'windsurf-pool-accounts',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          accounts,
+        };
+        const text = JSON.stringify(payload, null, 2);
+        try { await vscode.env.clipboard.writeText(text); } catch {}
+        const uri = await vscode.window.showSaveDialog({
+          defaultUri: vscode.Uri.file(path.join(process.env.USERPROFILE || '', 'Desktop', `windsurf-pool-accounts-${stamp}.json`)),
+          filters: { JSON: ['json'] },
+          saveLabel: '导出账号设置',
+        });
+        if (!uri) {
+          this.postMessage({ type: 'exportAccountsResult', ok: true, copied: true, saved: false, count: accounts.length, message: `已复制 ${accounts.length} 个账号到剪贴板` } as any);
+          break;
+        }
+        await fs.promises.writeFile(uri.fsPath, text, 'utf8');
+        this.postMessage({ type: 'exportAccountsResult', ok: true, copied: true, saved: true, count: accounts.length, path: uri.fsPath, message: `已导出 ${accounts.length} 个账号` } as any);
+        break;
+      }
+
+      case 'oauthLogin': {
+        this.postMessage({ type: 'oauthStatus', phase: 'opening', message: '正在打开 Windsurf OAuth 授权页…' } as any);
+        try {
+          const account = await loginByWindsurfOAuth();
+          const oauthTag = (message as any).tag;
+          if (oauthTag) { account.tag = oauthTag; account.tags = [oauthTag]; }
+          await accountStore.upsertAccount(this._context, account);
+          this.postMessage({ type: 'oauthStatus', ok: true, email: account.email, message: `OAuth 导入成功：${account.email}` } as any);
+          this.refresh();
+        } catch (err: any) {
+          this.postMessage({ type: 'oauthStatus', ok: false, message: err?.message || String(err) } as any);
         }
         break;
       }
@@ -925,6 +1192,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       case 'getEnhancementStatus': {
         this._pushEnhancementStatus();
+        break;
+      }
+
+      case 'resetMachineId': {
+        await resetMachineId();
         break;
       }
 
@@ -974,6 +1246,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const currentEmail = this._context.globalState.get<string>('lastEmail') || '';
           if (currentEmail) {
             const myInst = instances.find(i => i.current);
+            if (myInst && myInst.bindEmail === '__auto__' && !myInst.currentEmail) {
+              myInst.currentEmail = currentEmail;
+            }
             if (myInst && myInst.bindEmail !== currentEmail && myInst.bindEmail !== '__auto__') {
               myInst.bindEmail = currentEmail;
               instanceManager.syncCurrentInstanceEmail(currentEmail);
@@ -1168,18 +1443,41 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     let apiKey = '';
     let accountLabel = '';
     let detectedApiServerUrl = '';
+    let lastDiag: { patchRegistered: boolean; patchResult: string; authLabel: string; sessionResult: string } | undefined;
     for (let i = 0; i < 15; i++) {
       const result = await this.detectCurrentWindsurfAccount();
       apiKey = result.token;
       accountLabel = result.label;
       detectedApiServerUrl = result.apiServerUrl || '';
+      lastDiag = result.diag;
       if (apiKey) break;
       await new Promise(r => setTimeout(r, 1000));
     }
 
     if (!apiKey) {
-      this.showConfirm('提示', 'Windsurf 账户信息尚未加载完成，请稍后再试。', ['重试', '取消'], 'warn').then(action => {
+      // 输出详细诊断到 OutputChannel
+      const d = lastDiag!;
+      this.log(`[添加当前] 检测失败，诊断信息:`);
+      this.log(`  补丁命令已注册: ${d.patchRegistered}`);
+      this.log(`  补丁结果: ${d.patchResult}`);
+      this.log(`  Auth API: ${d.authLabel}`);
+      this.log(`  Session API: ${d.sessionResult}`);
+
+      // 生成用户可理解的具体原因
+      let reason: string;
+      if (!d.patchRegistered) {
+        reason = '补丁命令未注册 — 请先执行「应用补丁」并重启 Windsurf。';
+      } else if (d.patchResult.startsWith('error') || d.patchResult.startsWith('exception')) {
+        reason = `补丁命令执行出错: ${d.patchResult}\n请尝试重新「应用补丁」并重启。`;
+      } else if (d.patchResult === 'empty-response') {
+        reason = '补丁命令返回空 — 可能补丁版本不匹配，请重新「应用补丁」。';
+      } else {
+        reason = 'Windsurf 账户 Session 尚未就绪 — 请确认已登录 Windsurf 账号，稍后再试。';
+      }
+
+      this.showConfirm('检测失败', reason, ['重试', '查看日志', '取消'], 'warn').then(action => {
         if (action === '重试') { this.handleAddCurrent(); }
+        if (action === '查看日志') { this.showLog(); }
       });
       return;
     }
@@ -1241,23 +1539,35 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /**
    * 检测 Windsurf 当前登录的账户（优先补丁命令，回退 auth API）
    */
-  private async detectCurrentWindsurfAccount(): Promise<{ token: string; label: string; apiServerUrl?: string }> {
+  private async detectCurrentWindsurfAccount(): Promise<{
+    token: string; label: string; apiServerUrl?: string;
+    diag: { patchRegistered: boolean; patchResult: string; authLabel: string; sessionResult: string };
+  }> {
     let token = '';
     let label = '';
     let apiServerUrl = '';
+    const diag = { patchRegistered: false, patchResult: '', authLabel: '', sessionResult: '' };
 
     // 1. 补丁命令（最可靠，直接返回邮箱、apiKey 和 apiServerUrl）
     try {
       const cmds = await vscode.commands.getCommands(true);
       if (cmds.includes('windsurf.exportCurrentSessionWithShit')) {
+        diag.patchRegistered = true;
         const r: any = await vscode.commands.executeCommand('windsurf.exportCurrentSessionWithShit');
         if (r && !r.error) {
           if (r.apiKey) token = r.apiKey;
           if (r.email) label = r.email;
           if (r.apiServerUrl) apiServerUrl = r.apiServerUrl;
+          diag.patchResult = token ? 'ok' : `no-apiKey(email=${r.email || 'none'})`;
+        } else {
+          diag.patchResult = r?.error ? `error: ${r.error}` : 'empty-response';
         }
+      } else {
+        diag.patchResult = 'command-not-registered';
       }
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      diag.patchResult = `exception: ${e?.message || e}`;
+    }
 
     // 2. getAccounts（VS Code 1.85+，兜底拿 label）
     if (!label) {
@@ -1265,27 +1575,47 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const api = vscode.authentication as any;
         if (typeof api.getAccounts === 'function') {
           const accts = await api.getAccounts('windsurf_auth');
-          if (accts?.length) label = accts[0].label || accts[0].id || '';
+          if (accts?.length) {
+            label = accts[0].label || accts[0].id || '';
+            diag.authLabel = label || 'empty-label';
+          } else {
+            diag.authLabel = 'no-accounts';
+          }
+        } else {
+          diag.authLabel = 'api-unavailable';
         }
-      } catch { /* ignore */ }
+      } catch (e: any) {
+        diag.authLabel = `exception: ${e?.message || e}`;
+      }
+    } else {
+      diag.authLabel = 'skipped(from-patch)';
     }
 
     // 3. getSession 多 scope 尝试（兜底拿 token）
     if (!token) {
       const scopeSets: string[][] = [['login'], ['login', 'onboarding'], [], ['LOGIN']];
+      const failures: string[] = [];
       for (const scopes of scopeSets) {
         try {
           const s = await vscode.authentication.getSession('windsurf_auth', scopes, { createIfNone: false });
           if (s?.accessToken) {
             token = s.accessToken;
             if (!label) label = s.account.label || s.account.id || '';
+            diag.sessionResult = `ok(scope=${JSON.stringify(scopes)})`;
             break;
+          } else {
+            failures.push(`[${scopes.join(',')||'empty'}]:no-token`);
           }
-        } catch { /* ignore */ }
+        } catch (e: any) {
+          failures.push(`[${scopes.join(',')||'empty'}]:${e?.message || e}`);
+        }
       }
+      if (!token) diag.sessionResult = failures.join('; ') || 'all-scopes-failed';
+    } else {
+      diag.sessionResult = 'skipped(from-patch)';
     }
 
-    return { token, label, apiServerUrl };
+    return { token, label, apiServerUrl, diag };
   }
 
   /**
@@ -1364,6 +1694,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: 'instanceListResult', instances });
       } catch {}
     }
+
+    // 推送已有的测活缓存，让卡片 badge 在刷新后保持
+    const hcCache = getHealthCheckCache();
+    if (hcCache.size > 0) {
+      for (const [email, entry] of hcCache) {
+        this.postMessage({ type: 'testModelResult', email, ok: entry.ok, reason: entry.reason, ts: entry.ts } as any);
+      }
+    }
+    this._pushDiagnosticSync();
   }
 
   /**
@@ -1415,6 +1754,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <button class="v2-btn b-blue" id="enhanceReinjectBtn" title="重新注入增强脚本到 workbench.html">重新注入</button>
             <button class="v2-btn b-ghost" id="enhanceInjectRulesBtn" title="修改系统提示词（~/.windsurfrules）">修改提示词</button>
             <button class="v2-btn b-danger-outline" id="enhanceRestoreBtn" title="恢复原始 workbench.html">恢复原始</button>
+            <button class="v2-btn b-ghost" id="enhResetMachineIdBtn" title="重置 Windsurf 机器码（machineId / sqmId / devDeviceId），需完全关闭后重启" style="color:#f59e0b">重置机器码</button>
           </div>
 
           <div class="v2-divider"></div>
@@ -1540,10 +1880,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 </div>
                 <div class="v2-param-cell">
                   <span class="v2-param-label">全部账号</span>
-                  <div><input type="number" class="v2-param-val" id="enhRefreshAll" value="5" min="1" max="30"><span class="v2-param-unit">分钟</span></div>
+                  <div><input type="number" class="v2-param-val" id="enhRefreshAll" value="3" min="1" max="30"><span class="v2-param-unit">分钟</span></div>
                 </div>
               </div>
               <div class="v2-hint" style="margin-top:4px">当前账号：状态栏额度数字的刷新频率。全部账号：号池候选额度的刷新频率。</div>
+              <details class="as-adv-details" style="margin-top:8px">
+                <summary class="as-adv-summary">大号池刷新性能</summary>
+                <div class="as-adv-body">
+                  <div class="v2-param-grid cols-3">
+                    <div class="v2-param-cell">
+                      <span class="v2-param-label">刷新并发</span>
+                      <div><input type="number" class="v2-param-val" id="enhRefreshConcurrency" value="12" min="1" max="50"><span class="v2-param-unit">线程</span></div>
+                    </div>
+                    <div class="v2-param-cell">
+                      <span class="v2-param-label">批次间隔</span>
+                      <div><input type="number" class="v2-param-val" id="enhRefreshBatchDelay" value="250" min="0" max="10000"><span class="v2-param-unit">ms</span></div>
+                    </div>
+                    <div class="v2-param-cell">
+                      <span class="v2-param-label">会员补查</span>
+                      <div><input type="number" class="v2-param-val" id="enhPeriodRefreshHours" value="6" min="0" max="168"><span class="v2-param-unit">小时</span></div>
+                    </div>
+                  </div>
+                  <div class="v2-hint" style="margin-top:4px">300 个号建议：并发 12-20，间隔 200-500ms。会员补查设 0 表示每次都查期限，速度会明显变慢。</div>
+                </div>
+              </details>
             </div>
           </div>
 
@@ -1691,7 +2051,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
           <div style="margin-top:10px;padding:8px 10px;background:var(--vscode-textBlockQuote-background,rgba(127,127,127,.08));border-radius:6px;font-size:11px;color:var(--vscode-descriptionForeground,#888);display:flex;align-items:center;justify-content:space-between;gap:8px">
             <span>切号记录已移至统计面板</span>
-            <button class="as-open-panel-btn" onclick="vscode.postMessage({type:'openLogPanel',tab:'switch'})" style="padding:2px 10px;font-size:11px;border-radius:4px;border:1px solid rgba(255,255,255,0.12);background:transparent;color:inherit;cursor:pointer">查看日志 →</button>
+            <button class="as-open-panel-btn" onclick="vscode.postMessage({type:'openLogPanel',tab:'switch'})" style="padding:2px 10px;font-size:11px;border-radius:4px;border:1px solid var(--border-subtle);background:transparent;color:inherit;cursor:pointer">查看日志 →</button>
           </div>
 
         </div>
@@ -1725,6 +2085,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
           <!-- 开启状态 -->
           <div id="acOnContent" style="display:flex;flex-direction:column;gap:12px">
+            <!-- 本次会话统计 -->
+            <div class="ac-stats-bar" id="acStatsBar" style="display:none">
+              <div class="ac-stats-header">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="8" width="4" height="13" rx="1"/><rect x="17" y="4" width="4" height="17" rx="1"/></svg>
+                <span>本次统计</span>
+                <span class="ac-stats-total" id="acStatsTotal">0</span>
+              </div>
+              <div class="ac-stats-items" id="acStatsItems">
+                <span class="ac-stats-chip" data-key="continueBtn" title="自动点击「继续回复」按钮"><span class="ac-stats-dot c-emerald"></span>续写 <b id="acStatContinueBtn">0</b></span>
+                <span class="ac-stats-chip" data-key="sendMsg" title="发送 continue 消息"><span class="ac-stats-dot c-blue"></span>发送 <b id="acStatSendMsg">0</b></span>
+                <span class="ac-stats-chip" data-key="retry" title="自动重试"><span class="ac-stats-dot c-amber"></span>重试 <b id="acStatRetry">0</b></span>
+                <span class="ac-stats-chip" data-key="switchAcct" title="自动切换账号"><span class="ac-stats-dot c-red"></span>切号 <b id="acStatSwitchAcct">0</b></span>
+                <span class="ac-stats-chip" data-key="switchModel" title="自动切换模型"><span class="ac-stats-dot c-violet"></span>切模型 <b id="acStatSwitchModel">0</b></span>
+                <span class="ac-stats-chip" data-key="permission" title="自动批准权限请求"><span class="ac-stats-dot c-cyan"></span>权限 <b id="acStatPermission">0</b></span>
+                <span class="ac-stats-chip" data-key="dismiss" title="自动关闭干扰弹窗"><span class="ac-stats-dot c-gray"></span>清除 <b id="acStatDismiss">0</b></span>
+              </div>
+            </div>
             <!-- Segment Tab -->
             <div class="v2-segment">
               <input type="radio" name="acTab" id="acTabGuardian" value="guardian" checked>
@@ -2238,7 +2615,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
             <span>用量统计</span>
             <span class="usage-stats-date" id="usageStatsDate"></span>
-            <button class="as-open-panel-btn" title="打开统计面板（Ctrl+Shift+Q）" onclick="event.stopPropagation(); vscode.postMessage({type:'openLogPanel'})" style="margin-left:auto;display:inline-flex;align-items:center;gap:3px;padding:2px 8px;font-size:11px;border-radius:4px;border:1px solid rgba(255,255,255,0.12);background:transparent;color:var(--vscode-descriptionForeground);cursor:pointer">
+            <button class="as-open-panel-btn" title="打开统计面板（Ctrl+Shift+Q）" onclick="event.stopPropagation(); vscode.postMessage({type:'openLogPanel'})" style="margin-left:auto;display:inline-flex;align-items:center;gap:3px;padding:2px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border-subtle);background:transparent;color:var(--muted);cursor:pointer">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
               统计面板
             </button>
@@ -2275,6 +2652,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               </div>
             </div>
           </div>
+        </details>
+
+        <!-- 测活面板 -->
+        <details class="usage-stats-details health-panel-details" id="healthPanelDetails">
+          <summary class="usage-stats-summary health-panel-summary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            <span>测活面板</span>
+            <span class="health-check-bar-count" id="hcBarCount"></span>
+            <button class="as-open-panel-btn" id="hcBarOpenPanel" title="打开测活面板" onclick="event.stopPropagation(); vscode.postMessage({type:'runCommand', command:'windsurfPool.openHealthCheck'})" style="margin-left:auto;display:inline-flex;align-items:center;gap:3px;padding:2px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border-subtle);background:transparent;color:var(--muted);cursor:pointer">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              测活面板
+            </button>
+          </summary>
         </details>
       </div>
 
@@ -2314,6 +2704,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               <div class="filter-section-title">状态</div>
               <div class="filter-options" id="filterStatusList"></div>
             </div>
+            <div class="filter-section" id="filterHealthSection">
+              <div class="filter-section-title">测活</div>
+              <div class="filter-options" id="filterHealthList"></div>
+            </div>
             <div class="filter-actions">
               <button class="filter-clear-btn" id="filterClearBtn">清空筛选</button>
             </div>
@@ -2341,6 +2735,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
           </svg>
         </button>
+        <button class="toolbar-icon-btn" id="exportAccountsBtn" title="导出账号设置（换电脑用）">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
         <button class="toolbar-icon-btn" id="privacyModeBtn" title="隐私模式：隐藏邮箱">
           <svg class="privacy-eye" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>
@@ -2353,6 +2754,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <line x1="1" y1="1" x2="23" y2="23"/>
           </svg>
         </button>
+        <button class="quick-health-filter-btn" id="quickHealthOkBtn" title="只显示测活结果为可用的账号">可用</button>
         <div style="flex:1"></div>
         <select class="page-size-select" id="pageSizeSelect" title="每页显示">
           <option value="10">10/页</option>
@@ -2400,9 +2802,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       </div>
       <div class="modal-body">
         <div class="add-tabs">
+          <button class="add-tab" data-tab="oauth">OAuth 授权</button>
           <button class="add-tab active" data-tab="batch">批量导入</button>
           <button class="add-tab" data-tab="single">单个登录</button>
           <button class="add-tab" data-tab="current">已登录账户</button>
+        </div>
+
+        <!-- OAuth 授权 -->
+        <div id="oauthLoginArea" hidden>
+          <p class="footnote">打开 Windsurf 官方授权页，完成后自动保存到号池。</p>
+          <label>标签（可选）</label>
+          <input type="text" id="oauthTag" placeholder="如：OAuth、主力号">
+          <button class="primary" data-action="oauthLogin" style="margin-top:10px">开始 OAuth 授权</button>
+          <div id="oauthMsg" class="batch-msg" hidden></div>
         </div>
 
         <!-- 单个登录 -->
@@ -2558,20 +2970,27 @@ devin-session-token$eyJhbGciOiJIUzI1NiIs...</pre>
     </div>
   </div>
 
-  <!-- 标签编辑弹窗 -->
+  <!-- 标签编辑弹窗（多标签 picker） -->
   <div id="tagEditOverlay" class="modal-overlay" hidden>
-    <div class="modal-box" style="width:min(360px,90vw)">
+    <div class="modal-box" style="width:min(400px,90vw)">
       <div class="modal-header">
         <h3 id="tagEditTitle">编辑标签</h3>
         <button class="modal-close" id="tagEditClose" title="关闭">×</button>
       </div>
       <div class="modal-body">
-        <label>标签名称</label>
-        <input type="text" id="tagEditInput" placeholder="输入标签名称">
+        <div id="tagEditSelected" class="tag-edit-selected" style="display:flex;flex-wrap:wrap;gap:4px;min-height:28px;margin-bottom:8px;padding:4px 0"></div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="tagEditInput" placeholder="输入标签名称，回车添加" style="flex:1 1 auto;min-width:0;width:100%;box-sizing:border-box">
+          <button id="tagEditAddBtn" style="flex:0 0 auto;padding:5px 14px;font-size:12px;white-space:nowrap;border-radius:6px;border:1px solid var(--accent,#10b981);background:var(--accent,#10b981);color:#fff;cursor:pointer">添加</button>
+        </div>
         <div id="tagEditError" class="inst-error" hidden></div>
+        <div style="margin-top:8px">
+          <label style="font-size:11px;opacity:0.7">已有标签（点击添加/移除）</label>
+          <div id="tagEditExisting" class="tag-edit-existing" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;max-height:120px;overflow-y:auto"></div>
+        </div>
         <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
-          <button class="modal-cancel-btn" id="tagEditCancel">取消</button>
-          <button class="primary" id="tagEditSave">保存</button>
+          <button class="modal-cancel-btn" id="tagEditCancel" style="min-width:72px;padding:6px 20px">取消</button>
+          <button class="primary" id="tagEditSave" style="width:auto;min-width:72px;padding:6px 20px">保存</button>
         </div>
       </div>
     </div>
@@ -2589,6 +3008,8 @@ devin-session-token$eyJhbGciOiJIUzI1NiIs...</pre>
   }
 
   dispose(): void {
-    this._disposables.forEach(d => d.dispose());
+    this._disposables.forEach(d => { try { d.dispose(); } catch { /* ignore */ } });
+    this._disposables = [];
+    try { this._output.dispose(); } catch { /* ignore */ }
   }
 }

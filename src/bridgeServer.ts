@@ -17,6 +17,13 @@ import * as crypto from 'crypto';
  *   - 只绑定 127.0.0.1，外部不可访问
  *   - 每次启动随机 token，client 必须在 X-Bridge-Token header 提供
  *   - port 由 OS 分配（listen(0)），避免冲突
+ *   - CORS 限定为 VS Code 内置 origin（vscode-file / vscode-webview），
+ *     防止本机其他网页通过 fetch 探测端口尝试匹配 token
+ *
+ * 已知限制：
+ *   - GET /pending 一次性 splice 整个队列后 response，没有 ack 机制。
+ *     如果 client 收到 response 之前断开连接（极罕见），命令会丢失。
+ *     当前依靠每秒轮询 + 命令幂等性兜底，不需要重发机制。
  */
 
 export interface BridgeInfo {
@@ -49,10 +56,20 @@ export function startBridgeServer(): Promise<BridgeInfo> {
     // webview postMessage 广播到同进程的 workbench，不再靠 workbench.html 嵌入。
     token = crypto.randomBytes(16).toString('hex');
     server = http.createServer((req, res) => {
-      // CORS for vscode-file:// origin
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      // CORS：限定为 VS Code 内置 origin（vscode-file:// / vscode-webview://），
+      // 避免本机其他网页通过 fetch 探测匹配 token。
+      // 注意：fetch 默认带 Origin header；vscode-file:// 标准的 Origin 是 'vscode-file://vscode-app'
+      const origin = String(req.headers.origin || '');
+      const allowed = origin === '' || /^vscode-(file|webview):\/\//i.test(origin) || origin === 'null';
+      if (allowed) {
+        res.setHeader('Access-Control-Allow-Origin', origin || '*');
+      } else {
+        // 不放行：返回 403，避免恶意网页拿到响应
+        res.writeHead(403); res.end('forbidden origin'); return;
+      }
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Bridge-Token');
+      res.setHeader('Vary', 'Origin');
       // 24h preflight 缓存，避免每秒 GET /pending 都触发 OPTIONS
       res.setHeader('Access-Control-Max-Age', '86400');
       if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }

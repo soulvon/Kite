@@ -51,9 +51,22 @@ function readLockFile(): LockFile {
 function writeLockFile(data: LockFile): void {
   ensureDir(getPoolRoot());
   const p = getLockFilePath();
-  const tmp = p + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
-  fs.renameSync(tmp, p);
+  const tmp = p + '.tmp.' + process.pid + '.' + Date.now();
+  const json = JSON.stringify(data, null, 2);
+  try {
+    fs.writeFileSync(tmp, json, 'utf8');
+    try {
+      fs.renameSync(tmp, p);
+    } catch (renameErr) {
+      // Windows 下偶发 EPERM/EBUSY（文件被另一进程读取/锁定），回退到直接覆写
+      try { fs.writeFileSync(p, json, 'utf8'); } catch (writeErr) {
+        console.warn('[accountLock] writeLockFile fallback failed:', writeErr);
+      }
+      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    console.warn('[accountLock] writeLockFile error:', err);
+  }
 }
 
 // ─── 进程判活 ─────────────────────────────────────────────

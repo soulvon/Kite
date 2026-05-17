@@ -1,27 +1,34 @@
 /* eslint-disable */
 (function () {
   // @ts-ignore
-  const vscode = acquireVsCodeApi();
+  const vscode = window.vscode || acquireVsCodeApi();
 
   let allQuotaEntries = [];
   let allQuotaEmails = [];
   let allSwitchLogs = [];
   let allRecoveryLogs = [];
   let allDiagnoseLogs = [];
+  let allDiagnosticLogs = [];
   let allAccountOverview = [];
+  let contextMonitor = null;
   let allSummary = {};
   let currentEmail = '';
   let filterEmail = '';
   let timeRange = '24h';
   let recoveryFilter = '';
   let diagnoseFilter = '';
+  let diagnosticFilter = '';
   let quotaPage = 1;
+  let recoveryPage = 1;
+  let diagnosePage = 1;
+  let diagnosticPage = 1;
   const PAGE_SIZE = 30;
   let privacyMode = false;
   let refreshCooldown = 0;
 
   // ── 隐私模式 ──
   const privacyBtn = document.getElementById('lpPrivacy');
+  privacyBtn.querySelector('svg').style.opacity = '0.6'; // 初始同步
   privacyBtn.addEventListener('click', () => {
     privacyMode = !privacyMode;
     privacyBtn.classList.toggle('lp-btn-active', privacyMode);
@@ -31,6 +38,8 @@
     renderSwitch();
     renderRecovery();
     renderDiagnose();
+    renderDiagnostic();
+    renderContext();
     renderFooter();
     showToast(privacyMode ? '隐私模式已开启' : '隐私模式已关闭');
   });
@@ -70,6 +79,20 @@
 
   const initialTab = document.body.getAttribute('data-initial-tab') || 'quota';
   switchTab(initialTab);
+
+  // ── 图表 resize 自适应 ──
+  // 用 ResizeObserver 监听 chart 容器宽度变化，防抖后重绘
+  let resizeDebounce = null;
+  const chartWrap = document.querySelector('.lp-chart-wrap');
+  if (chartWrap && typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => {
+      if (resizeDebounce) clearTimeout(resizeDebounce);
+      resizeDebounce = setTimeout(() => {
+        // 只在配额 tab 显示时重绘，避免无效计算
+        if (activeTab === 'quota') renderQuota();
+      }, 120);
+    }).observe(chartWrap);
+  }
 
   // ── 刷新按钮（10s 冷却）──
   const refreshBtn = document.getElementById('lpRefresh');
@@ -120,8 +143,20 @@
   const btnCurrent = document.getElementById('lpBtnCurrent');
   const btnRecent = document.getElementById('lpBtnRecent');
   function setQuickFilter(val) {
+    // 若目标值在下拉中不存在，回落为「全部账号」并提示，避免 filterEmail 与 select 显示不一致
+    const exists = !!emailSel.querySelector('option[value="' + val + '"]');
+    if (val && !exists) {
+      filterEmail = '';
+      emailSel.value = '';
+      quotaPage = 1;
+      btnCurrent.classList.remove('lp-quick-btn-active');
+      btnRecent.classList.remove('lp-quick-btn-active');
+      renderQuota();
+      showToast(val === '_recent_' ? '暂无最近 7 天的配额变动' : '当前账号尚无配额变动记录');
+      return;
+    }
     filterEmail = val;
-    emailSel.value = emailSel.querySelector('option[value="' + val + '"]') ? val : '';
+    emailSel.value = val;
     quotaPage = 1;
     btnCurrent.classList.toggle('lp-quick-btn-active', val === currentEmail && !!currentEmail);
     btnRecent.classList.toggle('lp-quick-btn-active', val === '_recent_');
@@ -138,6 +173,7 @@
   const recFilter = document.getElementById('lpRecoveryFilter');
   if (recFilter) recFilter.addEventListener('change', () => {
     recoveryFilter = recFilter.value;
+    recoveryPage = 1;
     renderRecovery();
   });
 
@@ -145,7 +181,22 @@
   const diagFilter = document.getElementById('lpDiagnoseFilter');
   if (diagFilter) diagFilter.addEventListener('change', () => {
     diagnoseFilter = diagFilter.value;
+    diagnosePage = 1;
     renderDiagnose();
+  });
+
+  const diagnosticFilterEl = document.getElementById('lpDiagnosticFilter');
+  if (diagnosticFilterEl) diagnosticFilterEl.addEventListener('change', () => {
+    diagnosticFilter = diagnosticFilterEl.value;
+    diagnosticPage = 1;
+    renderDiagnostic();
+  });
+
+  const contextRefreshBtn = document.getElementById('lpContextRefresh');
+  if (contextRefreshBtn) contextRefreshBtn.addEventListener('click', () => {
+    contextRefreshBtn.setAttribute('disabled', '');
+    contextRefreshBtn.textContent = '刷新中…';
+    vscode.postMessage({ type: 'refreshContext' });
   });
 
   // ── 数据接收 ──
@@ -157,7 +208,9 @@
       allSwitchLogs = msg.switchLogs || [];
       allRecoveryLogs = msg.recoveryLogs || [];
       allDiagnoseLogs = msg.diagnoseLogs || [];
+      allDiagnosticLogs = msg.diagnosticLogs || [];
       allAccountOverview = msg.accountOverview || [];
+      contextMonitor = msg.contextMonitor || null;
       allSummary = msg.summary || {};
       currentEmail = msg.currentEmail || '';
 
@@ -183,9 +236,43 @@
       renderSwitch();
       renderRecovery();
       renderDiagnose();
+      renderDiagnostic();
+      renderContext();
       renderFooter();
     }
+    if (msg.type === 'contextData') {
+      contextMonitor = msg.contextMonitor || null;
+      const btn = document.getElementById('lpContextRefresh');
+      if (btn) { btn.removeAttribute('disabled'); btn.textContent = '刷新上下文'; }
+      renderContext();
+      showToast(contextMonitor && contextMonitor.ok ? '上下文已刷新' : '上下文刷新失败', 2500);
+    }
     if (msg.type === 'switchTab') switchTab(msg.tab);
+    if (msg.type === 'refreshDone') {
+      // 提前结束冷却（如果还在冷却中）
+      if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+      refreshCooldown = 0;
+      refreshBtn.classList.remove('lp-btn-cooling');
+      refreshBtn.removeAttribute('disabled');
+      refreshBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> 刷新';
+      // 显示结果 toast
+      if (msg.error) {
+        showToast('刷新失败：' + msg.error, 3000);
+      } else if (msg.result) {
+        const r = msg.result;
+        if (r.success === 0 && r.failed === 0 && r.skippedExhausted === 0) {
+          showToast('已是最新数据（TTL 内无需刷新）');
+        } else {
+          const parts = [];
+          if (r.success > 0) parts.push(r.success + ' 个已更新');
+          if (r.failed > 0) parts.push(r.failed + ' 个失败');
+          if (r.skippedExhausted > 0) parts.push(r.skippedExhausted + ' 个耗尽跳过');
+          showToast('刷新完成：' + parts.join('，'));
+        }
+      } else {
+        showToast('刷新完成');
+      }
+    }
   });
 
   // ── 工具函数 ──
@@ -195,14 +282,18 @@
   function pad2(n) { return String(n).padStart(2, '0'); }
   function fmtTime(ts) {
     const d = new Date(ts);
-    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    const now = new Date();
+    const yearPrefix = d.getFullYear() !== now.getFullYear() ? (d.getFullYear() + '/') : '';
+    return yearPrefix + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
   }
   function fmtCountdown(resetAt) {
     if (!resetAt) return '—';
     const ms = resetAt * 1000 - Date.now();
     if (ms <= 0) return '<span class="lp-c-green">已重置</span>';
-    const h = Math.floor(ms / 3600000);
+    const d = Math.floor(ms / 86400000);
+    const h = Math.floor((ms % 86400000) / 3600000);
     const m = Math.floor((ms % 3600000) / 60000);
+    if (d > 0) return d + '天' + h + 'h' + pad2(m) + 'm';
     return h + 'h' + pad2(m) + 'm';
   }
 
@@ -242,12 +333,17 @@
     renderQuotaTable(filtered);
   }
 
+  // 为多账号分线场景生成调色板
+  const MULTI_DAILY_COLORS = ['#5b9aff', '#3fb950', '#a371f7', '#e5a445', '#f778ba', '#79c0ff', '#56d364', '#d2a8ff'];
+  const MULTI_WEEKLY_COLORS = ['#ff9a5b', '#f0883e', '#f85149', '#bf8700', '#db61a2', '#ffa657', '#ff7b72', '#cc8533'];
+
   function renderQuotaChart(entries) {
     const svg = document.getElementById('lpChart');
     if (!svg) return;
     const rect = svg.parentElement.getBoundingClientRect();
     const W = Math.max(rect.width - 50, 200);  // 减去 y 轴宽度
     const H = 200;
+    const PAD = 4;
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
 
     // 获取主题色
@@ -255,81 +351,120 @@
     var gridColor = cs.getPropertyValue('--lp-chart-grid').trim() || 'rgba(128,128,128,0.1)';
     var dimColor = cs.getPropertyValue('--lp-fg-dim').trim() || '#888';
 
-    if (entries.length < 2) {
-      svg.innerHTML = '<text x="' + (W / 2) + '" y="' + (H / 2) + '" text-anchor="middle" fill="' + dimColor + '" font-size="13">数据不足</text>';
+    // 网格线生成器（复用）
+    function buildGrid() {
+      let g = '';
+      for (let pct = 0; pct <= 100; pct += 20) {
+        const y = PAD + (100 - pct) / 100 * (H - PAD * 2);
+        g += '<line x1="0" y1="' + y + '" x2="' + W + '" y2="' + y + '" stroke="' + gridColor + '" />';
+      }
+      // 警告/危险线
+      const y30 = PAD + 70 / 100 * (H - PAD * 2);
+      const y10 = PAD + 90 / 100 * (H - PAD * 2);
+      g += '<line x1="0" y1="' + y30 + '" x2="' + W + '" y2="' + y30 + '" stroke="rgba(255,200,50,0.2)" stroke-dasharray="4,3" />';
+      g += '<line x1="0" y1="' + y10 + '" x2="' + W + '" y2="' + y10 + '" stroke="rgba(255,80,80,0.2)" stroke-dasharray="4,3" />';
+      return g;
+    }
+
+    if (entries.length === 0) {
+      // 0 条：空提示 + 引导
+      const cx = W / 2, cy = H / 2;
+      const rangeHint = timeRange === 'all' ? '该账号暂无配额记录' : '此时间范围内无配额变动';
+      const actionHint = timeRange === 'all' ? '' : '切换至「24h」或「全部」查看更多';
+      svg.innerHTML = buildGrid()
+        + '<text x="' + cx + '" y="' + (cy - 8) + '" text-anchor="middle" fill="' + dimColor + '" font-size="13" font-weight="500">' + rangeHint + '</text>'
+        + (actionHint ? '<text x="' + cx + '" y="' + (cy + 14) + '" text-anchor="middle" fill="' + dimColor + '" font-size="11" opacity="0.7">' + actionHint + '</text>' : '');
       return;
     }
 
-    // 按小时聚合；若唯一小时数 < 2 则直接使用原始点（数据太少，聚合无意义）
-    var hourMap = {};
-    for (var i = 0; i < entries.length; i++) {
-      var e = entries[i];
-      var d = new Date(e.ts);
-      var hourKey = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours()).getTime();
-      if (!hourMap[hourKey]) {
-        hourMap[hourKey] = { daily: [], weekly: [] };
-      }
-      if (e.daily !== null) hourMap[hourKey].daily.push(e.daily);
-      if (e.weekly !== null) hourMap[hourKey].weekly.push(e.weekly);
+    if (entries.length === 1) {
+      // 1 条：画单点 + 引导
+      const e = entries[0];
+      const cx = W / 2;
+      const cyD = PAD + (100 - e.daily) / 100 * (H - PAD * 2);
+      const cyW = PAD + (100 - e.weekly) / 100 * (H - PAD * 2);
+      let parts = buildGrid()
+        + '<circle cx="' + cx + '" cy="' + cyD + '" r="5" fill="#5b9aff" stroke="rgba(91,154,255,0.3)" stroke-width="4" />'
+        + '<circle cx="' + cx + '" cy="' + cyW + '" r="5" fill="#ff9a5b" stroke="rgba(255,154,91,0.3)" stroke-width="4" />';
+      // 数值标签（错开方向避免重叠）
+      const labelDailyAbove = cyD < cyW;
+      parts += '<text x="' + cx + '" y="' + (labelDailyAbove ? cyD - 12 : cyD + 20) + '" text-anchor="middle" fill="#5b9aff" font-size="11" font-weight="600">日 ' + e.daily + '%</text>';
+      parts += '<text x="' + cx + '" y="' + (labelDailyAbove ? cyW + 20 : cyW - 12) + '" text-anchor="middle" fill="#ff9a5b" font-size="11" font-weight="600">周 ' + e.weekly + '%</text>';
+      parts += '<text x="' + cx + '" y="' + (H - 10) + '" text-anchor="middle" fill="' + dimColor + '" font-size="11" opacity="0.7">仅 1 条记录 · 趋势线需至少 2 个数据点</text>';
+      svg.innerHTML = parts;
+      return;
     }
-    var hours = Object.keys(hourMap).map(Number).sort(function(a, b) { return a - b; });
-    var aggregated = [];
-    if (hours.length < 2) {
-      // 数据不足以聚合，直接用原始点
-      aggregated = entries.map(function(e) { return { ts: e.ts, daily: e.daily, weekly: e.weekly }; });
+
+    // 按账号分组
+    const byEmail = {};
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (!byEmail[e.email]) byEmail[e.email] = [];
+      byEmail[e.email].push(e);
+    }
+    const emails = Object.keys(byEmail);
+
+    // 计算 x 坐标的时间范围（共享 timeline）
+    let minTs = Infinity, maxTs = -Infinity;
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].ts < minTs) minTs = entries[i].ts;
+      if (entries[i].ts > maxTs) maxTs = entries[i].ts;
+    }
+    const tsSpan = Math.max(maxTs - minTs, 1);
+    const tsToX = (ts) => PAD + (ts - minTs) / tsSpan * (W - PAD * 2);
+    const pctToY = (p) => PAD + (100 - p) / 100 * (H - PAD * 2);
+
+    // 单账号路径生成（检测重置事件断线）
+    // 配额"重置"特征：相邻两点中后者比前者大 +20pt 以上，视为重置，断开折线
+    function buildPath(arr, key) {
+      let path = '';
+      let started = false;
+      for (let i = 0; i < arr.length; i++) {
+        const p = arr[i];
+        const x = tsToX(p.ts);
+        const y = pctToY(p[key]);
+        if (i > 0 && p[key] - arr[i - 1][key] >= 20) {
+          // 重置：开始新段
+          started = false;
+        }
+        path += (started ? 'L ' : 'M ') + x + ',' + y + ' ';
+        started = true;
+      }
+      return path;
+    }
+
+    let body = buildGrid();
+
+    if (emails.length === 1) {
+      // 单账号：仍按小时聚合（更平滑），但检测重置事件
+      const arr = byEmail[emails[0]].slice().sort((a, b) => a.ts - b.ts);
+      const dailyPath = buildPath(arr, 'daily');
+      const weeklyPath = buildPath(arr, 'weekly');
+      body += '<path d="' + dailyPath + '" fill="none" stroke="#5b9aff" stroke-width="2" stroke-linejoin="round" />'
+            + '<path d="' + weeklyPath + '" fill="none" stroke="#ff9a5b" stroke-width="2" stroke-linejoin="round" />';
+      // 重置事件标记（小三角）
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i].daily - arr[i - 1].daily >= 20) {
+          const x = tsToX(arr[i].ts);
+          body += '<g transform="translate(' + x + ',' + (H - 4) + ')"><path d="M0,-6 L4,0 L-4,0 Z" fill="#3fb950" opacity="0.7"><title>配额重置（日 ' + arr[i - 1].daily + '% → ' + arr[i].daily + '%）</title></path></g>';
+        }
+      }
     } else {
-      for (var j = 0; j < hours.length; j++) {
-        var h = hours[j];
-        var dVals = hourMap[h].daily;
-        var wVals = hourMap[h].weekly;
-        var avgDaily = dVals.length ? Math.round(dVals.reduce(function(a, b) { return a + b; }, 0) / dVals.length) : null;
-        var avgWeekly = wVals.length ? Math.round(wVals.reduce(function(a, b) { return a + b; }, 0) / wVals.length) : null;
-        aggregated.push({ ts: h, daily: avgDaily, weekly: avgWeekly });
+      // 多账号：每账号 2 条（日/周）；不再聚合（聚合无意义）
+      // 顶部提示
+      body += '<text x="' + (W - 6) + '" y="14" text-anchor="end" fill="' + dimColor + '" font-size="10" opacity="0.8">' + emails.length + ' 个账号 · 每色为一组（实线日/虚线周）</text>';
+      for (let ei = 0; ei < emails.length; ei++) {
+        const arr = byEmail[emails[ei]].slice().sort((a, b) => a.ts - b.ts);
+        const dColor = MULTI_DAILY_COLORS[ei % MULTI_DAILY_COLORS.length];
+        const wColor = MULTI_WEEKLY_COLORS[ei % MULTI_WEEKLY_COLORS.length];
+        const dailyPath = buildPath(arr, 'daily');
+        const weeklyPath = buildPath(arr, 'weekly');
+        body += '<path d="' + dailyPath + '" fill="none" stroke="' + dColor + '" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"><title>' + emails[ei] + ' · 日</title></path>'
+              + '<path d="' + weeklyPath + '" fill="none" stroke="' + wColor + '" stroke-width="1.5" stroke-linejoin="round" stroke-dasharray="4,3" opacity="0.7"><title>' + emails[ei] + ' · 周</title></path>';
       }
     }
 
-    const n = aggregated.length;
-    const xStep = (W - 8) / Math.max(n - 1, 1);
-    const PAD = 4;
-
-    // 网格线
-    let grid = '';
-    for (let pct = 0; pct <= 100; pct += 20) {
-      const y = PAD + (100 - pct) / 100 * (H - PAD * 2);
-      grid += '<line x1="0" y1="' + y + '" x2="' + W + '" y2="' + y + '" stroke="' + gridColor + '" />';
-    }
-    // 警告/危险线
-    const y30 = PAD + 70 / 100 * (H - PAD * 2);
-    const y10 = PAD + 90 / 100 * (H - PAD * 2);
-    grid += '<line x1="0" y1="' + y30 + '" x2="' + W + '" y2="' + y30 + '" stroke="rgba(255,200,50,0.2)" stroke-dasharray="4,3" />';
-    grid += '<line x1="0" y1="' + y10 + '" x2="' + W + '" y2="' + y10 + '" stroke="rgba(255,80,80,0.2)" stroke-dasharray="4,3" />';
-
-    let dailyPts = '', weeklyPts = '';
-    let dailyArea = 'M ' + PAD + ',' + H + ' ';
-    let weeklyArea = 'M ' + PAD + ',' + H + ' ';
-
-    for (let i = 0; i < n; i++) {
-      const x = PAD + i * xStep;
-      const yD = aggregated[i].daily !== null ? PAD + (100 - aggregated[i].daily) / 100 * (H - PAD * 2) : null;
-      const yW = aggregated[i].weekly !== null ? PAD + (100 - aggregated[i].weekly) / 100 * (H - PAD * 2) : null;
-      if (yD !== null) {
-        dailyPts += x + ',' + yD + ' ';
-        dailyArea += 'L ' + x + ',' + yD + ' ';
-      }
-      if (yW !== null) {
-        weeklyPts += x + ',' + yW + ' ';
-        weeklyArea += 'L ' + x + ',' + yW + ' ';
-      }
-    }
-    const lastX = PAD + (n - 1) * xStep;
-    dailyArea += 'L ' + lastX + ',' + H + ' Z';
-    weeklyArea += 'L ' + lastX + ',' + H + ' Z';
-
-    svg.innerHTML = grid
-      + '<path d="' + dailyArea + '" fill="rgba(91,154,255,0.08)" />'
-      + '<path d="' + weeklyArea + '" fill="rgba(255,154,91,0.08)" />'
-      + '<polyline points="' + dailyPts + '" fill="none" stroke="#5b9aff" stroke-width="2" stroke-linejoin="round" />'
-      + '<polyline points="' + weeklyPts + '" fill="none" stroke="#ff9a5b" stroke-width="2" stroke-linejoin="round" />';
+    svg.innerHTML = body;
   }
 
   function renderQuotaTable(filtered) {
@@ -341,23 +476,37 @@
     const start = (quotaPage - 1) * PAGE_SIZE;
     const page = filtered.slice().reverse().slice(start, start + PAGE_SIZE);
 
+    // 计算每个账号在 filtered 里最早的一条 ts
+    // 这条记录的 dDelta/wDelta 是相对于窗口外的某条记录算出的「跨窗口 delta」，视觉应弱化
+    const firstTsByEmail = {};
+    for (let i = 0; i < filtered.length; i++) {
+      const f = filtered[i];
+      if (firstTsByEmail[f.email] === undefined || f.ts < firstTsByEmail[f.email]) {
+        firstTsByEmail[f.email] = f.ts;
+      }
+    }
+
     let html = '';
     for (const e of page) {
       const dCls = e.daily <= 10 ? ' lp-c-red' : e.daily <= 30 ? ' lp-c-yellow' : '';
       const wCls = e.weekly <= 10 ? ' lp-c-red' : e.weekly <= 30 ? ' lp-c-yellow' : '';
-      const ddCls = e.dDelta < 0 ? ' lp-c-red' : e.dDelta > 0 ? ' lp-c-green' : '';
-      const wdCls = e.wDelta < 0 ? ' lp-c-red' : e.wDelta > 0 ? ' lp-c-green' : '';
+      // 跨窗口 delta：该账号在当前过滤后的最早一条，且有 delta 值
+      const isCrossWindow = e.ts === firstTsByEmail[e.email] && (e.dDelta !== 0 || e.wDelta !== 0);
+      const crossTitle = isCrossWindow ? ' title="相对于时间范围外的上一次记录"' : '';
+      const ddCls = isCrossWindow ? ' lp-delta-dim' : (e.dDelta < 0 ? ' lp-c-red' : e.dDelta > 0 ? ' lp-c-green' : '');
+      const wdCls = isCrossWindow ? ' lp-delta-dim' : (e.wDelta < 0 ? ' lp-c-red' : e.wDelta > 0 ? ' lp-c-green' : '');
       const ddStr = e.dDelta === 0 ? '—' : (e.dDelta > 0 ? '+' : '') + e.dDelta;
       const wdStr = e.wDelta === 0 ? '—' : (e.wDelta > 0 ? '+' : '') + e.wDelta;
       const resetStr = e.resetAt > 0 ? fmtTime(e.resetAt * 1000) : '—';
+      const crossIcon = isCrossWindow ? '<span class="lp-delta-cross-icon" title="跨窗口对比">↗</span>' : '';
 
       html += '<tr>'
         + '<td>' + fmtTime(e.ts) + '</td>'
         + '<td class="lp-email-cell" title="' + esc(maskEmail(e.email)) + '">' + maskEmailShort(e.email) + '</td>'
         + '<td class="' + dCls + '"><div class="lp-pct-cell"><div class="lp-mini-bar"><div class="lp-mini-fill' + (e.daily <= 10 ? ' lp-fill-danger' : e.daily <= 30 ? ' lp-fill-warn' : ' lp-fill-ok') + '" style="width:' + Math.max(1, e.daily) + '%"></div></div>' + e.daily + '%</div></td>'
         + '<td class="' + wCls + '"><div class="lp-pct-cell"><div class="lp-mini-bar"><div class="lp-mini-fill' + (e.weekly <= 10 ? ' lp-fill-danger' : e.weekly <= 30 ? ' lp-fill-warn' : ' lp-fill-ok') + '" style="width:' + Math.max(1, e.weekly) + '%"></div></div>' + e.weekly + '%</div></td>'
-        + '<td class="' + ddCls + '">' + ddStr + '</td>'
-        + '<td class="' + wdCls + '">' + wdStr + '</td>'
+        + '<td class="' + ddCls + '"' + crossTitle + '>' + ddStr + crossIcon + '</td>'
+        + '<td class="' + wdCls + '"' + crossTitle + '>' + wdStr + '</td>'
         + '<td>' + resetStr + '</td>'
         + '<td>' + fmtCountdown(e.resetAt) + '</td>'
         + '</tr>';
@@ -509,6 +658,7 @@
       var a = allAccountOverview[i];
       if (a.disabled || a.error) {
         errorCount++;
+        continue; // 异常账号不参与均值统计
       } else if (a.daily !== null && a.daily <= 10) {
         exhaustedCount++;
       } else {
@@ -572,6 +722,28 @@
     userIntervention: '#ff9a5b', custom: '#888'
   };
 
+  /**
+   * 通用分页渲染：把页码 UI 渲染到 containerId
+   * @param {string} containerId 分页容器 id
+   * @param {number} curPage 当前页（1-based）
+   * @param {number} total 总条数
+   * @param {(p:number)=>void} onPage 翻页回调
+   */
+  function renderPagination(containerId, curPage, total, onPage) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (maxPage <= 1) {
+      el.innerHTML = total > 0 ? '<span class="lp-page-info">共 ' + total + ' 条</span>' : '';
+      return;
+    }
+    el.innerHTML = '<span class="lp-page-info">第 ' + curPage + ' / ' + maxPage + ' 页　共 ' + total + ' 条</span>'
+      + '<button class="lp-page-btn" data-act="prev" ' + (curPage <= 1 ? 'disabled' : '') + '>上一页</button>'
+      + '<button class="lp-page-btn" data-act="next" ' + (curPage >= maxPage ? 'disabled' : '') + '>下一页</button>';
+    el.querySelector('[data-act="prev"]')?.addEventListener('click', () => onPage(curPage - 1));
+    el.querySelector('[data-act="next"]')?.addEventListener('click', () => onPage(curPage + 1));
+  }
+
   function renderRecovery() {
     let logs = allRecoveryLogs.slice();
     if (recoveryFilter) logs = logs.filter(function(e) { return e.category === recoveryFilter; });
@@ -581,10 +753,16 @@
     if (!tbody) return;
     if (logs.length === 0) {
       tbody.innerHTML = '<tr><td colspan="5" class="lp-empty">暂无恢复记录<br><small style="color:var(--lp-fg-dim)">如已使用错误恢复功能，请先打开侧栏以同步数据</small></td></tr>';
+      renderPagination('lpRecoveryPagination', 1, 0, () => {});
       return;
     }
 
-    const rows = logs.slice().reverse().slice(0, 100);
+    const total = logs.length;
+    const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (recoveryPage > maxPage) recoveryPage = maxPage;
+    const start = (recoveryPage - 1) * PAGE_SIZE;
+    const rows = logs.slice().reverse().slice(start, start + PAGE_SIZE);
+
     let html = '';
     for (const e of rows) {
       const catLabel = CATEGORY_LABELS[e.category] || e.category || '?';
@@ -603,6 +781,10 @@
         + '</tr>';
     }
     tbody.innerHTML = html;
+    renderPagination('lpRecoveryPagination', recoveryPage, total, (p) => {
+      recoveryPage = p;
+      renderRecovery();
+    });
   }
 
   // ── 扫描诊断渲染 ──
@@ -632,10 +814,15 @@
     if (!tbody) return;
     if (logs.length === 0) {
       tbody.innerHTML = '<tr><td colspan="4" class="lp-empty">暂无扫描诊断记录</td></tr>';
+      renderPagination('lpDiagnosePagination', 1, 0, () => {});
       return;
     }
 
-    const rows = logs.slice().reverse().slice(0, 100);
+    const total = logs.length;
+    const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (diagnosePage > maxPage) diagnosePage = maxPage;
+    const start = (diagnosePage - 1) * PAGE_SIZE;
+    const rows = logs.slice().reverse().slice(start, start + PAGE_SIZE);
     let html = '';
     for (const e of rows) {
       const stage = e.stage || '?';
@@ -687,6 +874,152 @@
         + '</tr>';
     }
     tbody.innerHTML = html;
+    renderPagination('lpDiagnosePagination', diagnosePage, total, (p) => {
+      diagnosePage = p;
+      renderDiagnose();
+    });
+  }
+
+  const DIAGNOSTIC_SOURCE_LABELS = {
+    switch: '切号预检',
+    health: '测活'
+  };
+  const DIAGNOSTIC_LEVEL_LABELS = {
+    ok: '正常',
+    warn: '限速/暂不可用',
+    error: '无权/失败'
+  };
+  const DIAGNOSTIC_COLORS = {
+    ok: '#10b981',
+    warn: '#d29922',
+    error: '#ef4444'
+  };
+
+  function renderDiagnostic() {
+    let logs = allDiagnosticLogs.slice();
+    if (diagnosticFilter) logs = logs.filter(function(e) { return e.level === diagnosticFilter; });
+    setText('lpDiagnosticCount', logs.length + ' 条');
+
+    const tbody = document.getElementById('lpDiagnosticBody');
+    if (!tbody) return;
+    if (logs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="lp-empty">暂无账号诊断记录</td></tr>';
+      renderPagination('lpDiagnosticPagination', 1, 0, () => {});
+      return;
+    }
+
+    const total = logs.length;
+    const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (diagnosticPage > maxPage) diagnosticPage = maxPage;
+    const start = (diagnosticPage - 1) * PAGE_SIZE;
+    const rows = logs.slice().reverse().slice(start, start + PAGE_SIZE);
+    let html = '';
+    for (const e of rows) {
+      const level = e.level || 'error';
+      const color = DIAGNOSTIC_COLORS[level] || '#888';
+      const source = DIAGNOSTIC_SOURCE_LABELS[e.source] || e.source || '—';
+      const result = DIAGNOSTIC_LEVEL_LABELS[level] || level;
+      const reason = e.reason || '—';
+      const shortReason = reason.length > 110 ? reason.slice(0, 110) + '…' : reason;
+      html += '<tr>'
+        + '<td>' + (e.ts ? fmtTime(e.ts) : '—') + '</td>'
+        + '<td><span class="lp-cat-badge">' + esc(source) + '</span></td>'
+        + '<td title="' + esc(e.email || '') + '">' + esc(maskEmailShort(e.email || '')) + '</td>'
+        + '<td class="lp-c-dim">' + esc(e.model || '—') + '</td>'
+        + '<td><span class="lp-cat-badge" style="background:' + color + '22;color:' + color + ';border:1px solid ' + color + '44">' + esc(result) + '</span></td>'
+        + '<td class="lp-err-cell" title="' + esc(reason) + '">' + esc(shortReason) + (e.status ? '<span class="lp-c-dim"> · HTTP ' + e.status + '</span>' : '') + '</td>'
+        + '</tr>';
+    }
+    tbody.innerHTML = html;
+    renderPagination('lpDiagnosticPagination', diagnosticPage, total, (p) => {
+      diagnosticPage = p;
+      renderDiagnostic();
+    });
+  }
+
+  function fmtTok(n) {
+    const num = Number(n || 0);
+    if (!Number.isFinite(num) || num <= 0) return '0';
+    if (num >= 1000000) return (num / 1000000).toFixed(2).replace(/\.00$/, '') + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return String(Math.round(num));
+  }
+
+  function fmtMaybeTime(value) {
+    const ts = Date.parse(value || '');
+    return Number.isFinite(ts) ? fmtTime(ts) : '—';
+  }
+
+  function renderContext() {
+    const snap = contextMonitor || {};
+    const active = snap.active || null;
+    const sessions = Array.isArray(snap.sessions) ? snap.sessions : [];
+    const meta = document.getElementById('lpContextMeta');
+    if (meta) {
+      if (!snap.ok) {
+        meta.textContent = snap.error ? ('读取失败：' + snap.error) : '未读取到 Windsurf Language Server';
+      } else {
+        meta.textContent = 'LS 端口 ' + (snap.lsPort || '—') + ' · 更新于 ' + fmtMaybeTime(snap.updatedAt);
+      }
+    }
+
+    setText('lpCtxUsed', active ? (fmtTok(active.totalTokens) + ' / ' + fmtTok(active.contextLimit)) : '—');
+    setText('lpCtxPct', active ? (Math.round(active.contextPercent || 0) + '%') : '—');
+    setText('lpCtxInput', active ? fmtTok(active.inputTokens) : '—');
+    setText('lpCtxOutput', active ? fmtTok(active.outputTokens) : '—');
+    setText('lpCtxCache', active ? fmtTok(active.cachedTokens) : '—');
+    setText('lpCtxSteps', active ? String(active.stepCount || 0) : '—');
+    setText('lpContextCount', sessions.length ? (sessions.length + ' 个最近会话') : '');
+
+    const activeEl = document.getElementById('lpContextActive');
+    if (activeEl) {
+      if (!active) {
+        activeEl.innerHTML = '<div class="lp-empty">暂无可显示的上下文会话。点击“刷新上下文”会重新读取 Windsurf 本地会话，不会发送消息。</div>';
+      } else {
+        const pct = Math.max(0, Math.min(100, Number(active.contextPercent || 0)));
+        const fillClass = pct >= 85 ? 'lp-fill-danger' : (pct >= 65 ? 'lp-fill-warn' : 'lp-fill-ok');
+        const reply = active.latestReply || '暂无模型回复';
+        activeEl.innerHTML = ''
+          + '<div class="lp-context-card">'
+          + '<div class="lp-context-card-head">'
+          + '<div><div class="lp-session-title">' + esc(active.title || active.id || '当前会话') + '</div>'
+          + '<div class="lp-c-dim">' + esc(active.workspace || '—') + ' · ' + fmtMaybeTime(active.updatedAt) + '</div></div>'
+          + '<span class="lp-context-badge">' + esc(active.status || 'unknown') + '</span>'
+          + '</div>'
+          + '<div class="lp-context-bar"><span class="' + fillClass + '" style="width:' + pct + '%"></span></div>'
+          + '<div class="lp-context-grid">'
+          + '<span>模型 <b>' + esc(active.model || '—') + '</b></span>'
+          + '<span>上下文 <b>' + Math.round(pct) + '%</b></span>'
+          + '<span>输入 <b>' + fmtTok(active.inputTokens) + '</b></span>'
+          + '<span>输出 <b>' + fmtTok(active.outputTokens) + '</b></span>'
+          + '<span>缓存 <b>' + fmtTok(active.cachedTokens) + '</b></span>'
+          + '<span>Steps <b>' + String(active.stepCount || 0) + '</b></span>'
+          + '</div>'
+          + '<div class="lp-context-reply" title="' + esc(reply) + '">' + esc(reply) + '</div>'
+          + '</div>';
+      }
+    }
+
+    const tbody = document.getElementById('lpContextBody');
+    if (!tbody) return;
+    if (!sessions.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="lp-empty">暂无最近会话记录</td></tr>';
+      return;
+    }
+    tbody.innerHTML = sessions.map(function(s) {
+      const pct = Math.max(0, Math.min(100, Number(s.contextPercent || 0)));
+      const fillClass = pct >= 85 ? 'lp-fill-danger' : (pct >= 65 ? 'lp-fill-warn' : 'lp-fill-ok');
+      const reply = s.latestReply || s.error || '—';
+      const title = s.title || s.id || '未命名会话';
+      return '<tr>'
+        + '<td><div class="lp-session-title" title="' + esc(title) + '">' + esc(title) + '</div><div class="lp-c-dim">' + fmtMaybeTime(s.updatedAt) + '</div></td>'
+        + '<td><span class="lp-cat-badge">' + esc(s.status || '—') + '</span></td>'
+        + '<td class="lp-code-cell" title="' + esc(s.model || '') + '">' + esc(s.model || '—') + '</td>'
+        + '<td><div class="lp-pct-cell"><span>' + Math.round(pct) + '%</span><span class="lp-mini-bar"><span class="lp-mini-fill ' + fillClass + '" style="width:' + pct + '%"></span></span></div></td>'
+        + '<td>' + String(s.stepCount || 0) + '</td>'
+        + '<td class="lp-context-reply-cell" title="' + esc(reply) + '">' + esc(reply) + '</td>'
+        + '</tr>';
+    }).join('');
   }
 
   function setText(id, val) {
@@ -701,10 +1034,11 @@
     const qLen = allQuotaEntries.length;
     const sLen = allSwitchLogs.length;
     const rLen = allRecoveryLogs.length;
+    const dLen = allDiagnosticLogs.length;
     const aLen = allAccountOverview.length;
     const now = new Date();
     const ts = pad2(now.getHours()) + ':' + pad2(now.getMinutes()) + ':' + pad2(now.getSeconds());
-    el.textContent = '账号: ' + aLen + ' · 配额: ' + qLen + ' 条 · 切号: ' + sLen + ' 条 · 恢复: ' + rLen + ' 条 · 更新于 ' + ts + (currentEmail ? ' · 当前: ' + maskEmailShort(currentEmail) : '');
+    el.textContent = '账号: ' + aLen + ' · 配额: ' + qLen + ' 条 · 切号: ' + sLen + ' 条 · 恢复: ' + rLen + ' 条 · 诊断: ' + dLen + ' 条 · 更新于 ' + ts + (currentEmail ? ' · 当前: ' + maskEmailShort(currentEmail) : '');
   }
 
 })();

@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Windsurf 插件面板 - 极简科技拟物版</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        /* ==========================================================
+           Design Tokens (支持深浅色主题)
+           ========================================================== */
+        :root {
+            /* 浅色主题变量 */
+            --bg-primary: #f5f6f8;
+            --bg-card: #ffffff;
+            --bg-fill: #eef0f3;
+            --bg-fill-hover: #e4e7ec;
+            
+            --accent-blue: #2b66ff;
+            --accent-black: #1a1a1a;
+            --accent-green: #10b981;
+            --accent-purple: #9333ea;
+            
+            --text-primary: #1a1a20;
+            --text-secondary: #5c6370;
+            --text-muted: #8c95a5;
+            --text-inverse: #ffffff;
+
+            --border: rgba(0, 0, 0, 0.04);
+            --border-strong: rgba(0, 0, 0, 0.08);
+
+            --shadow-sm:
+                0 1px 2px rgba(0, 0, 0, 0.03),
+                inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            
+            --shadow-card:
+                0 2px 8px rgba(0, 0, 0, 0.02),
+                0 10px 30px rgba(0, 0, 0, 0.03);
+
+            --shadow-active-glow: 0 4px 12px rgba(43, 102, 255, 0.3);
+            
+            --radius-pill: 100px;
+            --radius-lg: 16px;
+            --radius-md: 10px;
+        }
+
+        /* 深色主题变量 */
+        [data-theme="dark"] {
+            --bg-primary: #0b0d11;
+            --bg-card: #151922;
+            --bg-fill: #202632;
+            --bg-fill-hover: #2a3242;
+            
+            --accent-blue: #3b82f6;
+            --accent-black: #f5f6f8;
+            --accent-green: #34d399;
+            --accent-purple: #a855f7;
+            
+            --text-primary: #f5f6f8;
+            --text-secondary: #a0aec0;
+            --text-muted: #64748b;
+            --text-inverse: #0b0d11;
+
+            --border: rgba(255, 255, 255, 0.03);
+            --border-strong: rgba(255, 255, 255, 0.08);
+
+            --shadow-sm:
+                0 1px 2px rgba(0, 0, 0, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            
+            --shadow-card:
+                0 4px 12px rgba(0, 0, 0, 0.3),
+                0 1px 3px rgba(0, 0, 0, 0.2);
+
+            --shadow-active-glow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s, box-shadow 0.3s;
+        }
+
+        body {
+            font-family: 'Manrope', 'Noto Sans SC', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            letter-spacing: -0.01em;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px; /* 插件面板通常比较窄，类似侧边栏 */
+            background-color: var(--bg-card);
+            border-radius: 24px;
+            padding: 25px;
+            box-shadow: var(--shadow-card);
+            border: 1px solid var(--border);
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h1 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .theme-toggle {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background-color: var(--bg-card);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: var(--text-secondary);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .theme-toggle:hover {
+            border-color: var(--border-strong);
+            color: var(--text-primary);
+        }
+
+        /* 拟物卡片块 */
+        .plugin-block {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.01);
+        }
+
+        .block-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            cursor: pointer;
+        }
+
+        .block-title {
+            font-size: 14px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-primary);
+        }
+
+        /* 统一的药丸胶囊按钮/标签 */
+        .pill {
+            border: 1px solid var(--border);
+            outline: none;
+            background-color: var(--bg-card);
+            padding: 5px 12px;
+            border-radius: var(--radius-pill);
+            box-shadow: var(--shadow-sm);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+        }
+
+        .pill:hover {
+            border-color: var(--border-strong);
+            color: var(--text-primary);
+        }
+
+        .pill.active-blue {
+            background-color: var(--accent-blue);
+            color: var(--text-inverse);
+            border-color: var(--accent-blue);
+            box-shadow: var(--shadow-active-glow);
+        }
+
+        .pill.tag-blue {
+            background-color: rgba(43, 102, 255, 0.08);
+            color: var(--accent-blue);
+            border-color: rgba(43, 102, 255, 0.15);
+            box-shadow: none;
+        }
+
+        .pill.tag-green {
+            background-color: rgba(16, 185, 129, 0.08);
+            color: var(--accent-green);
+            border-color: rgba(16, 185, 129, 0.15);
+            box-shadow: none;
+        }
+
+        /* Switch 开关 (拟物风格) */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+
+        .switch input { opacity: 0; width: 0; height: 0; }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--bg-fill);
+            transition: .3s;
+            border-radius: 24px;
+            border: 1px solid var(--border);
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px; width: 18px;
+            left: 2px; bottom: 2px;
+            background-color: #ffffff;
+            transition: .3s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        [data-theme="dark"] .slider:before {
+            background-color: #e4e7ec;
+        }
+
+        input:checked + .slider {
+            background-color: var(--accent-blue);
+            border-color: var(--accent-blue);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+
+        /* 表单元素 */
+        .search-input {
+            background-color: var(--bg-fill);
+            border: 1px solid transparent;
+            outline: none;
+            padding: 8px 12px;
+            border-radius: var(--radius-pill);
+            color: var(--text-primary);
+            font-size: 12px;
+            font-weight: 500;
+            width: 100%;
+            transition: all 0.2s ease;
+        }
+
+        .search-input:focus {
+            background-color: var(--bg-card);
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(43, 102, 255, 0.1);
+        }
+
+        /* 标签云区域 */
+        .tag-cloud {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        /* 子卡片 (账号板块) */
+        .sub-card-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .sub-card {
+            background-color: var(--bg-fill);
+            border-radius: var(--radius-md);
+            padding: 12px;
+            border: 1px solid transparent;
+        }
+
+        .sub-card-title {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .sub-card-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        /* 列表数据 */
+        .stats-list {
+            margin-top: 12px;
+        }
+
+        .stats-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .stats-item:last-child { border-bottom: none; }
+
+        .stats-label { color: var(--text-secondary); }
+        .stats-val { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- Header -->
+    <header>
+        <div>
+            <h1>Windsurf 号池管理</h1>
+            <span style="font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono';">v6.9.11</span>
+        </div>
+        <button class="theme-toggle" id="themeBtn" title="切换主题">🌙</button>
+    </header>
+
+    <!-- 1. Windsurf 增强 -->
+    <div class="plugin-block">
+        <div class="block-header">
+            <div class="block-title">⚡ Windsurf 增强</div>
+            <span class="pill tag-green">已启用</span>
+        </div>
+    </div>
+
+    <!-- 2. 自动切号 (核心面板) -->
+    <div class="plugin-block">
+        <div class="block-header">
+            <div class="block-title">🔄 自动切号</div>
+            <label class="switch">
+                <input type="checkbox" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+        
+        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">
+            额度低于 <input type="text" value="15" style="width: 30px; text-align: center; border: none; background: var(--bg-fill); border-radius: 4px; padding: 2px; font-family: 'JetBrains Mono';" class="mono-font"> % 时自动换号
+        </div>
+
+        <div style="margin-bottom: 10px;">
+            <select class="search-input" style="cursor: pointer;">
+                <option>按标签过滤</option>
+                <option>按分组过滤</option>
+            </select>
+        </div>
+
+        <!-- 常用快捷标签 -->
+        <div class="tag-cloud">
+            <span class="pill">5.13</span>
+            <span class="pill">QQ</span>
+            <span class="pill">三块五</span>
+            <span class="pill">最近</span>
+        </div>
+
+        <!-- 已选活跃标签 (带删除效果) -->
+        <div class="tag-cloud" style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border);">
+            <span class="pill tag-blue">5月9号 ✕</span>
+            <span class="pill tag-blue">必成功 ✕</span>
+            <span class="pill tag-blue">海绵 ✕</span>
+            <span class="pill tag-blue">第一批 ✕</span>
+        </div>
+    </div>
+
+    <!-- 3. 多实例分身 -->
+    <div class="plugin-block">
+        <div class="block-header">
+            <div class="block-title">🖥 多实例分身</div>
+            <div style="display: flex; gap: 6px;">
+                <span class="pill active-blue">Cockpit</span>
+                <span class="pill">＋</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. 我的账号 -->
+    <div class="plugin-block" style="margin-bottom: 0;">
+        <div class="block-header">
+            <div class="block-title">👤 我的账号</div>
+            <div style="display: flex; gap: 6px; align-items: center;">
+                <span style="font-size: 11px; background: var(--bg-fill); padding: 2px 6px; border-radius: 4px;" class="mono-font">121 个</span>
+                <span class="pill tag-green">添加账号</span>
+            </div>
+        </div>
+
+        <!-- 本日/本周数据卡片 -->
+        <div class="sub-card-grid">
+            <div class="sub-card">
+                <div class="sub-card-title">☀️ 本日消耗</div>
+                <div class="sub-card-value">1200 / 12100</div>
+            </div>
+            <div class="sub-card">
+                <div class="sub-card-title">📅 本周消耗</div>
+                <div class="sub-card-value">8400 / 84700</div>
+            </div>
+        </div>
+
+        <!-- 底部详细数据 -->
+        <div class="stats-list">
+            <div class="stats-item">
+                <span class="stats-label">活跃 / 禁用</span>
+                <span class="stats-val" style="color: var(--accent-green);">121 <span style="color: var(--text-muted);">/ 0</span></span>
+            </div>
+            <div class="stats-item">
+                <span class="stats-label">满额账号</span>
+                <span class="stats-val" style="color: var(--accent-blue);">98</span>
+            </div>
+            <div class="stats-item">
+                <span class="stats-label">低额账号</span>
+                <span class="stats-val" style="color: var(--warning);">23</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const themeBtn = document.getElementById('themeBtn');
+    
+    // 检测系统主题或读取缓存
+    const currentTheme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    themeBtn.textContent = currentTheme === 'dark' ? '☀️' : '🌙';
+
+    themeBtn.addEventListener('click', () => {
+        let theme = document.documentElement.getAttribute('data-theme');
+        let newTheme = theme === 'dark' ? 'light' : 'dark';
+        
+        document.documentElement.setAttribute('data-theme', newTheme);
+        localStorage.setItem('theme', newTheme);
+        themeBtn.textContent = newTheme === 'dark' ? '☀️' : '🌙';
+    });
+</script>
+
+</body>
+</html>

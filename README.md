@@ -6,7 +6,7 @@
 
 无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-6.7.12-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-6.9.14-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -130,6 +130,126 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
+
+### v7.2.36
+- **✨ 恢复 Banner 视觉重设计**：glassmorphism 毛玻璃背景、顶部渐变装饰条、图标容器、pill 倒计时徽章、渐变按钮带阴影、更粗的发光进度条、底部分隔线，整体更现代精致。
+- **✨ 恢复 Toast 通知重设计**：左侧彩色指示条（蓝/绿/琥珀）、图标背景容器、毛玻璃效果、scale 弹入动画。
+
+### v7.2.1
+- **🏷️ 多标签支持**：每个账号可添加多个标签，标签栏和筛选器全面适配多标签。
+- **🏷️ 标签显示数量**：标签栏每个标签 chip 显示该标签下的账号数（如"推荐(5)"），"全部"显示总数。
+- **🏷️ 未分类标签**：自动在标签栏末尾显示灰色"未分类"标签，筛选没有 tag 的账号。
+- **🏷️ 标签编辑弹窗改造**：从单文本输入改为多标签 picker（已选标签 chips + 输入框回车添加 + 已有标签点选 toggle）。
+- **🏷️ 卡片多标签展示**：账号卡片显示所有标签 chip，每个可独立点击筛选/右键编辑/双击改色，末尾有"+"快速编辑入口。
+
+### v6.9.14
+- **🔄 动态模型列表**：模型选择器不再硬编码，改为从 Windsurf 本地数据库（state.vscdb）动态读取，模型名称与 Windsurf 下拉完全一致，自动过滤变体（Low/Medium/High 等）。
+- **⏹️ 停止检测按钮**：侧栏和面板均支持中途停止。检测中按钮变为"停止"，点击立即中断当前 HTTP 连接和后续检测（通过 AbortSignal 传播到 TCP 层）。
+- **🐛 修复模型名称不匹配**：之前硬编码的模型名（如 "Claude 4.5 Sonnet"）与 Windsurf 实际显示名不一致，现已完全对齐。
+
+### v6.9.13
+- **🚀 真实模型探测**：测活现在支持发送真实聊天消息到指定模型，验证模型是否实际有响应。支持选择 12 种常用模型（SWE-1.6/Claude 4.5/GPT-5.2/Gemini 等），精确检测账号对特定模型的可用性。
+- **🎯 模型选择器**：测活面板新增模型下拉菜单，可选择“快速检测（不发消息）”或指定模型进行真实探测。快速模式不消耗配额，模型探测发送最小消息（"Reply with only OK"）确认可用性。
+- **⚡ 探测响应优化**：新增 `postProbe` 探测性 HTTP 请求，只读第一个数据块即确认模型可用，不等待完整响应，单账号探测耗时通常 < 5秒。
+
+### v6.9.12
+- **🩺 账号测活功能**：全新独立测活面板（`Ctrl+Shift+P` → 打开测活面板），支持一键批量检测所有账号活跃状态。检测结果实时推送，逐条显示正常/异常/限速状态、原因和耗时。
+- **🏷️ 卡片测活 Badge**：测活完成后，结果自动同步到侧栏账号卡片的标签行，以绿色（✓ 正常）、红色（✗ 异常）、橙色（⚠ 限速）Badge 直观标识，鼠标悬浮查看详情。
+- **⚡ 侧栏一键测活入口**：用量统计区域下方新增测活入口栏，可直接在侧栏触发批量测活或跳转到独立面板查看详细结果。
+
+### v6.9.11
+- **🗑️ 移除账号可用性探测功能**：该功能实际使用价值不大，已全部移除相关代码（UI 按钮、批量探测、报告面板、注入脚本逻辑）。
+
+### v6.9.10
+- **🔧 修复探测完成模态框不弹出**：`showProbeSummary` 改为直接操作 DOM，绕过 `escHtml` 转义，支持 HTML 换行和状态图标着色显示。
+
+### v6.9.9
+- **🎨 探测结果图标化**：探测结果状态改用图标符号显示（✓ 可用、⚠ 受限、✗ 失效、⏱ 超时、? 未知、⏳ 检测中），界面更简洁。
+- **📊 批量探测完成摘要**：批量测试完成后自动弹出模态框，显示各状态账号数量统计，快速了解整体测试结果。
+
+### v6.9.8
+- **🔎 账号可用性探测**：统计面板新增真实发送探活能力，可对单个账号或多选账号/分组顺序测试，发送最小消息后自动判定 `available / limited / invalid / timeout / unknown`。
+- **📋 批量测试报告**：新增探测结果面板，保留每个账号的状态、原因与时间戳，方便快速定位被试用全局速率限制拦截的账号。
+
+### v6.9.7
+- **🛡️ v6.9.5/6 三次审查修复**（2 项）：
+  - 🟡 **修复 sessionInjector 频率熔断失效**：v6.9.5 #17 引入的熔断逻辑有 bug——触发熔断后 `_switchTimestamps` 未清空，10s 冷却结束后第一次调用立即又触发熔断（因为 60s 窗口内仍有 8+ 次记录），等于无效熔断。修复：触发熔断时清空时间戳数组。
+  - 🟢 **`logPanelProvider` onDidDispose 清理防抖定时器**：面板关闭时清理 `_pushDebounceTimer`，避免悬挂定时器（虽然 `if (_panel)` 保护已无害，但代码更干净）。
+
+### v6.9.6
+- **🛡️ v6.9.5 二次审查修复**（2 个回归 + 1 个加固）：
+  - 🔴 **回滚 v6.9.5 #2**：`forceSwitch` 路径下不再调用 `_onAutoSwitchDone`。原修改会导致 windsurf-better.js 收到**两次** pool-result（一次来自 `_onAutoSwitchDone` 的 enqueueCommand，一次来自 `handlePoolSignal` 的 respond），触发两次"切号成功"提示和两次 retry。设计上 forceSwitch 通知靠 handlePoolSignal 的 respond 回路完成，无需重复推送。
+  - 🔴 **回滚 v6.9.5 #10**：`activate` 不再 `await autoSwitchByBindMark`。原修改会让扩展启动**卡 5-30 秒**——因为 `autoSwitchByBindMark` 内部 `injectSession` 在 silent 模式下会等待 PATCHED_CMD 最多 30s，期间所有命令未注册、侧栏空白、状态栏不显示。改回后台异步运行，AutoSwitcher 的 `_switching` 互斥已能避免与定时器切号冲突。
+  - 🟡 **dispose 幂等加固**：`usageTracker.dispose` 改用 `_disposePromise` 缓存，subscriptions 触发的第一次 dispose 启动写入但 VS Code 不 await；`deactivate` 显式 await 同一个 promise 等到落盘完成，避免数据丢失。
+
+### v6.9.5
+- **🛡️ 全面稳定性 & 安全性审查修复**（18 项）：
+  - 🔴 `refreshAll` 所有 fire-and-forget 调用加 `.catch()`，杜绝 unhandled promise rejection
+  - 🔴 `forceSwitch` 路径也触发 `_onAutoSwitchDone`，与定时器切号路径行为一致
+  - 🔴 `usageTracker.dispose` 改 async 并 `await Promise.all`，确保扩展卸载时统计数据落盘
+  - 🔴 `accountLock.writeLockFile` 增加 Windows 下 EPERM/EBUSY 回退（仿 usageDiskCache）
+  - 🟡 跨日重置时同步清空 `_lastQuotaMap`，避免 dDelta 基于昨天数据产生伪重置标记
+  - 🟡 `bridgeServer` CORS 收紧为 `vscode-file://` / `vscode-webview://`，防本机恶意网页 token 探测
+  - 🟡 `usageDiskCache.writeEntry` 改返回 `Promise<void>`，调用方可选择 await
+  - 🟡 `pendingQueue` 无 ack 限制文档化（依赖每秒轮询 + 命令幂等性兜底）
+  - 🟡 `logPanelProvider.pushAllData` 加 200ms 防抖，避免多账号刷新时频繁全量推送
+  - 🟡 `activate` 改 async 并 await `autoSwitchByBindMark`，确保 `lastEmail` 在 `AutoSwitcher.start()` 前确定
+  - 🟡 `statusBar` 无条件重绘间隔 5s → 30s（事件驱动已覆盖大多数变化）
+  - 🟡 `SidebarProvider` 注册到 `context.subscriptions`，扩展卸载时 OutputChannel 正确释放
+  - 🟢 `accountStore._writeQueue.then(task, task)` 重写为更清晰的 `then().catch()` 模式
+  - 🟢 `applyPatch` 提取的混淆变量名增加 `\w+` 严格性验证，防御文件污染或版本变化
+  - 🟢 `soundPlayer` 所有 `setTimeout` 加入 `_pendingPlayTimers` 集合，`shutdownSoundPlayer` 统一清理
+  - 🟢 `usageDiskCache` 跨进程"最后写入获胜"行为文档化（自愈机制兜底）
+  - 🟢 `injectSession` 频率熔断：60s 内超过 8 次自动暂停 10s，避免循环切号刷接口
+  - 🟢 `enhancementInjector` patchVersion 从 SHA1+10 位升级到 SHA256+12 位
+
+### v6.9.4
+- **🛡️ 自动继续 & 自动切号 稳定性修复**（7 项）：
+  - 🔴 修复 `_checkAndSwitch` async 调用未捕获异常，可能导致 unhandled promise rejection
+  - 🔴 长任务 brainless→smart 切换时增加模式保护，防止 setInterval 回调竞态多发一条消息
+  - 🟡 `stopBrainlessMode` 现在会自动恢复守护模式（`continueMode='smart'` + 重启 autoContinue），避免长任务因错误/上限停止后自动续写和突破限制功能静默失效
+  - 🟡 长任务参数（空闲等待、最大轮数）优先读 `longTask.*` 新字段，兼容回退旧字段 `brainlessIdleSeconds/brainlessMaxConsecutive`
+  - 🟡 切号成功后恢复冷却从 30s 缩短至 15s，新错误可更快触发恢复
+  - 🟢 切号成功后重置长任务连续计数 `_brainlessConsecutive`，避免跨号累计导致上限提前触发
+  - 🟢 `checkForContinuePrompts` 注释修正，明确"按钮存在时跳过"的设计意图
+
+### v6.9.3
+- **🔧 统计面板全面修复**（11 项）：
+  - 🔴 手动刷新按钮现在真正触发 API 重拉配额（之前只重推缓存数据），`force=true` 跳过 TTL 和 skipUntil
+  - 🔴 刷新完成后显示结果 toast（「3 个已更新，1 个失败」），并提前结束按钮冷却
+  - 🔴 图表「全部账号」模式不再聚合均值误导，改为按账号分线绘制（实线日/虚线周，不同颜色区分）
+  - 🟡 窗口 resize 时图表自动重绘（ResizeObserver）
+  - 🟡 均日/均周配额统计排除异常和禁用账号
+  - 🟡 「当前账号」快捷筛选按钮在无历史记录时优雅降级并 toast 提示
+  - 🟡 倒计时支持天数（`3天1h45m` 而非 `73h45m`）
+  - 🟡 恢复日志和扫描诊断表格加分页（之前截断前 100 条）
+  - 🟢 单账号图表检测配额重置事件（+20pt 以上跳跃），折线断开并标记绿色三角
+  - 🟢 时间戳跨年自动显示年份
+  - 🟢 隐私模式 SVG 图标初始 opacity 与按钮状态同步
+
+### v6.9.2
+- **📊 配额历史 UX 改进**：单条记录时图表画单点（带数值标签）而非显示空白「数据不足」；0 条时给出友好引导（「切换至 24h/全部查看更多」）；表头「日变化/周变化」加 `pt` 单位标注避免百分点/百分比混淆；当 delta 来自时间窗口外的上一次记录时（跨窗口对比），视觉弱化为灰色斜体 + ↗ 标记，hover 显示 tooltip 说明；图例的 30%/10% 线标注为「警戒/危险」。
+
+### v6.9.1
+- **🎨 多实例面板重设计**：采用 Linear 风格的工业精致美学。左侧状态色条取代冗余的状态点（当前窗口带 emerald 辉光，运行中实色，已停止淡灰）；操作徽章统一改为小型大写描边样式（CURRENT/RUNNING/STOPPED）；智能选号去掉 emoji ⭐ 改用矢量旋光图标 + 等宽邮箱主标识；"默认分组" 屎黄改为低调灰；跳转按钮归入操作区。悬停时左条变宽 + 卡片微抬升。完整适配深色 / 浅色 / 高对比主题。
+
+### v6.9.0
+- **🔓 强制切换占用账号**：被其他实例占用的账号卡片上新增"强制切换"按钮，允许两个实例同时使用同一个号。强制切换后当前实例接管锁，原实例心跳自动感知并放弃持有。手动切号成功后也会正确更新跨窗口锁状态。
+
+### v6.8.9
+- **🎨 移除多实例当前窗口多余 ✓ 按钮**：当前窗口实例已有"当前窗口"文字标识，不再显示无功能的 ✓ 按钮。
+
+### v6.8.8
+- **🐛 修复多实例账号显示映射**：跨窗口账号锁改用真实实例 ID，非当前但正在运行的实例也能在分身面板显示其当前使用账号。
+
+### v6.8.7
+- **🐛 修复多实例分身面板显示**：未分配号池分组改为"默认分组"；当前实例处于智能选号时，优先展示当前窗口的实际账号，不再误显示"尚未启动"。
+
+### v6.8.6
+- **🐛 彻底修复账号卡片闪烁**：三管齐下消灭闪烁——
+  1. `scheduleRerender` 改为**就地 patch**：usage 数据到达时只更新现有卡片的文本/进度条，**不再全量重建 DOM**（零 DOM 变动 = 零闪烁）
+  2. `renderCards` 改用 **DocumentFragment + replaceChildren**：需要全量重建时，先在内存构建全部卡片，再一次性原子替换（消除 `innerHTML=''` 到 `appendChild` 之间的中间空白帧）
+  3. 所有 `renderCards` 调用均**禁用 `cardFadeIn` 入场动画**（`no-card-anim` class），下一帧恢复，确保后续真正新增的卡片仍有动画
 
 ### v6.7.13
 - 修复换号日志表格右侧列数据为空问题：改用 indexOf 定位箭头字符，彻底解决正则编码不一致导致的解析失败
@@ -483,6 +603,30 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
   - **备份恢复**：首次修改前自动备份为 `product.json.origin`；执行「恢复原始 Workbench」会一并恢复 `product.json`。
   - **已知现象**：Windsurf 自动更新后**首次启动**可能仍会闪一下「已损坏」通知（此时扩展尚未激活、checksums 还未重算），扩展激活后会自动修复，**第二次启动起完全无感**。该闪动已由 DOM 兜底逻辑关闭。
   - **权限要求**：`product.json` 已加入权限预检，macOS/Linux 若目录不可写会弹一键 `sudo chmod` 提示。
+
+### v7.3.1
+- **macOS LS 二进制搜索增强**：新增 `windsurf-next` 扩展目录、`~/Applications/` 路径、`find` 命令兜底，修复 Mac 上测活找不到 LS 的问题。
+- **卡片错误摘要优化**：去掉模型前缀，英文 quota/exhausted 正确识别为限速，探针失败简短显示"探针检测异常"。
+- **标签列重叠修复**：多标签自动换行，不再溢出到模型列。
+
+### v7.3.0
+- **测活面板默认配置调优**：默认模型改为 Claude Opus 4.6，并发改为稳定 x1，间隔改为 60 秒。移除 SWE-1.6 冗余静态选项。
+- **测活面板暂停/停止按钮重设计**：pill 形状 + SVG 图标 + 半透明填充背景 + 平滑过渡动画；暂停态琥珀色，继续态绿色，停止按钮红色系。
+- **构建修复**：修正 `tsconfig.json` 的 `rootDir` 配置，确保编译产物正确输出到 `out/` 目录。
+- **切号通知去重**：blocked 类型只保留 webview toast，移除 VS Code 原生弹窗；非 blocked 类型走 showAlert 模态弹窗不再重复 toast。
+- **命令面板失败反馈**：`switchAccount` / `switchNextAccount` 失败时显示具体原因。
+- **自动恢复 Bug F 修复**：切号成功后 `waitForAIIdle` 回调补上 `autoRecoveryEnabled` 短路检查。
+
+### v7.2.37
+- **360 拦截优化（零 PowerShell 启动）**：
+  - 所有启动路径的 PowerShell 调用替换为原生 Windows 命令（wmic / tasklist / taskkill / reg），不触发 360 等安全软件拦截。
+  - `getRunningWindsurfEntries`: wmic 异步优先，PowerShell 降为 fallback。
+  - `detectWindsurfExePath`: wmic 获取进程路径 + reg query 查注册表，不再用 PowerShell。
+  - `warmupSoundPlayer`: 不在启动时预创建 PowerShell 进程，改为首次播放时惰性初始化。
+  - `acpRecovery`: wmic 查询进程 + taskkill 终止，完全移除 PowerShell。
+  - `findLsBinary`: wmic 替代 PowerShell Get-CimInstance。
+  - `stopInstance`: taskkill 替代 PowerShell CloseMainWindow。
+  - 所有 runShellAsync 添加 windowsHide: true，避免控制台弹窗。
 
 ### v4.13.2
 - **跨平台兼容（macOS / Linux 关键修复）**：

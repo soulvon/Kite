@@ -152,11 +152,14 @@ async function loginBySessionToken(sessionToken: string): Promise<LoginResult> {
   if (!sessionToken) {
     return { ok: false, error: '空 session token' };
   }
+  if (sessionToken.startsWith('eyJ')) {
+    sessionToken = 'devin-session-token$' + sessionToken;
+  }
 
   try {
     // 用 sessionToken 查询邮箱（GetUserStatus）
     const ur = await post(
-      'https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetUserStatus',
+      'https://server.self-serve.windsurf.com/exa.seat_management_pb.SeatManagementService/GetUserStatus',
       {
         metadata: {
           apiKey: sessionToken,
@@ -170,13 +173,25 @@ async function loginBySessionToken(sessionToken: string): Promise<LoginResult> {
       { 'Connect-Protocol-Version': '1', Accept: 'application/json' }
     );
 
+    if (ur.status === 401) {
+      return { ok: false, error: 'Session Token 已失效或不适用于 Windsurf API (401)' };
+    }
+    if (ur.status === 403) {
+      return { ok: false, error: 'Session Token 无权限或账号受限 (403)' };
+    }
+    if (ur.status !== 200) {
+      return { ok: false, error: `Session Token 校验失败:HTTP${ur.status}` };
+    }
+
+    const ud = safeJsonParse(ur.body);
+    if (!ud?.userStatus) {
+      return { ok: false, error: 'Session Token 校验响应缺少 userStatus' };
+    }
+
     let email = '';
     let name = '';
-    if (ur.status === 200) {
-      const ud = safeJsonParse(ur.body);
-      email = ud?.userStatus?.email || ud?.userStatus?.userName || '';
-      name = ud?.userStatus?.name || ud?.userStatus?.userName || '';
-    }
+    email = ud.userStatus.email || ud.userStatus.userName || '';
+    name = ud.userStatus.name || ud.userStatus.userName || '';
 
     if (!email) {
       email = 'session_' + sessionToken.substring(0, 12) + '...';
@@ -208,7 +223,7 @@ export async function loginByAuth1Token(auth1Token: string): Promise<LoginResult
   // devin-session-token$ 前缀 → 已经是 session token，跳过 PostAuth 直接入库
   const SESSION_PREFIX = 'devin-session-token$';
   if (auth1Token.startsWith(SESSION_PREFIX)) {
-    return loginBySessionToken(auth1Token.substring(SESSION_PREFIX.length));
+    return loginBySessionToken(auth1Token);
   }
 
   try {

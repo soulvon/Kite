@@ -2,7 +2,9 @@ import * as vscode from 'vscode';
 import { UsageTracker } from './usageTracker';
 import { AutoSwitcher, UsageCacheEntry } from './autoSwitcher';
 import * as accountStore from './accountStore';
-import { requestSyncLogs, onBridgeResult } from './bridgeServer';
+import { requestSyncLogs, onBridgeResult, getBridgeInfo } from './bridgeServer';
+import { getBridgeRelayScript } from './signalBridge';
+import { getContextMonitorSnapshot } from './contextMonitor';
 
 let _panel: vscode.WebviewPanel | undefined;
 let _listenerDisposable: { dispose(): void } | undefined;
@@ -46,6 +48,9 @@ export function openLogPanel(
 
   // 请求 windsurf-better.js 同步日志到 globalState
   requestSyncLogs();
+  // 延迟重试：bridge 可能尚未就绪（统计面板 relay → window.top.postMessage → 轮询启动 需 1-3s）
+  setTimeout(() => requestSyncLogs(), 2000);
+  setTimeout(() => requestSyncLogs(), 4000);
 
   // 监听 bridge 返回的日志数据
   const resultListener = async (result: any) => {
@@ -63,20 +68,47 @@ export function openLogPanel(
   const unsubscribeBridge = onBridgeResult(resultListener);
 
   webview.onDidReceiveMessage(async (msg: any) => {
-    if (msg.type === 'refresh') {
+  if (msg.type === 'requestBridgeInfo') {
+      // 统计面板的 relay 脚本请求 bridge 信息 → 广播到 workbench 顶层 frame
+      const info = getBridgeInfo();
+      if (info) webview.postMessage({ type: 'bridgeInfo', port: info.port, token: info.token });
+      return;
+    }
+  if (msg.type === 'refresh') {
+      requestSyncLogs(); // 重新从 windsurf-better.js 拉取最新日志
       pushAllData(ctx, tracker, webview);
+      // 触发后端重新拉取配额，等结果后告知前端
+      if (_autoSwitcher) {
+        try {
+          const result = await _autoSwitcher.refreshAll(true);
+          webview.postMessage({ type: 'refreshDone', result });
+        } catch (err) {
+          webview.postMessage({ type: 'refreshDone', error: err instanceof Error ? err.message : String(err) });
+        }
+      } else {
+        webview.postMessage({ type: 'refreshDone', result: { total: 0, success: 0, failed: 0, skippedExhausted: 0 } });
+      }
+    } else if (msg.type === 'refreshContext') {
+      const contextMonitor = await getContextMonitorSnapshot();
+      webview.postMessage({ type: 'contextData', contextMonitor });
     }
   });
 
-  // 实时推送配额变动
+  // 实时推送配额变动（200ms 防抖，避免多账号并发刷新时频繁全量推送）
+  let _pushDebounceTimer: NodeJS.Timeout | null = null;
   _listenerDisposable = tracker.addHistoryListener(() => {
-    if (_panel) pushAllData(ctx, tracker, _panel.webview);
+    if (_pushDebounceTimer) clearTimeout(_pushDebounceTimer);
+    _pushDebounceTimer = setTimeout(() => {
+      _pushDebounceTimer = null;
+      if (_panel) pushAllData(ctx, tracker, _panel.webview);
+    }, 200);
   });
 
   _panel.onDidDispose(() => {
     _listenerDisposable?.dispose();
     _listenerDisposable = undefined;
     unsubscribeBridge?.();
+    if (_pushDebounceTimer) { clearTimeout(_pushDebounceTimer); _pushDebounceTimer = null; }
     _panel = undefined;
   });
 }
@@ -89,7 +121,9 @@ async function pushAllData(ctx: vscode.ExtensionContext, tracker: UsageTracker, 
   const switchLogs: string[] = ctx.globalState.get('autoSwitchLogs', []);
   const recoveryLogs: any[] = ctx.globalState.get('recoveryLogs', []);
   const diagnoseLogs: any[] = ctx.globalState.get('diagnoseLogs', []);
+  const diagnosticLogs = tracker.getDiagnosticHistory(undefined, 500);
   const summary = tracker.getSummary();
+  const contextMonitor = await getContextMonitorSnapshot();
 
   // 账号总览：从 autoSwitcher 缓存 + accountStore 组合
   let accountOverview: any[] = [];
@@ -102,7 +136,7 @@ async function pushAllData(ctx: vscode.ExtensionContext, tracker: UsageTracker, 
       return {
         email: a.email,
         name: a.name || '',
-        tags: a.tag ? [a.tag] : [],
+        tags: a.tags || (a.tag ? [a.tag] : []),
         disabled: !!a.disabled,
         daily: snap ? Math.round(snap.dailyRemainingPercent) : null,
         weekly: snap ? Math.round(snap.weeklyRemainingPercent) : null,
@@ -116,7 +150,7 @@ async function pushAllData(ctx: vscode.ExtensionContext, tracker: UsageTracker, 
 
   webview.postMessage({
     type: 'allData', currentEmail, quotaEntries, quotaEmails,
-    switchLogs, recoveryLogs, diagnoseLogs, summary, accountOverview,
+    switchLogs, recoveryLogs, diagnoseLogs, diagnosticLogs, summary, accountOverview, contextMonitor,
   });
 }
 
@@ -173,6 +207,14 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
     <button class="lp-tab" data-tab="diagnose">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="11"/><line x1="11" y1="14" x2="11.01" y2="14"/></svg>
       扫描诊断
+    </button>
+    <button class="lp-tab" data-tab="diagnostic">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-7"/><circle cx="7" cy="15" r="1"/><circle cx="11" cy="11" r="1"/><circle cx="14" cy="14" r="1"/><circle cx="19" cy="7" r="1"/></svg>
+      账号诊断
+    </button>
+    <button class="lp-tab" data-tab="context">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6M7 16h8"/></svg>
+      上下文
     </button>
   </nav>
 
@@ -231,8 +273,8 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
       <div class="lp-chart-legend">
         <span class="lp-legend"><span class="lp-legend-dot" style="background:#5b9aff"></span>日配额</span>
         <span class="lp-legend"><span class="lp-legend-dot" style="background:#ff9a5b"></span>周配额</span>
-        <span class="lp-legend"><span class="lp-legend-line lp-line-warn"></span>30%</span>
-        <span class="lp-legend"><span class="lp-legend-line lp-line-danger"></span>10%</span>
+        <span class="lp-legend" title="剩余 30% 警戒线"><span class="lp-legend-line lp-line-warn"></span>30% 警戒</span>
+        <span class="lp-legend" title="剩余 10% 危险线"><span class="lp-legend-line lp-line-danger"></span>10% 危险</span>
       </div>
     </div>
     <div class="lp-section-header">
@@ -246,8 +288,8 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
           <th>账号</th>
           <th>日剩余</th>
           <th>周剩余</th>
-          <th>日变化</th>
-          <th>周变化</th>
+          <th title="百分点变化（与该账号上一次记录相比）">日变化 <span class="lp-th-unit">pt</span></th>
+          <th title="百分点变化（与该账号上一次记录相比）">周变化 <span class="lp-th-unit">pt</span></th>
           <th>重置时间</th>
           <th>倒计时</th>
         </tr></thead>
@@ -312,6 +354,7 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
         <tbody id="lpRecoveryBody"></tbody>
       </table>
     </div>
+    <div class="lp-pagination" id="lpRecoveryPagination"></div>
   </div>
 
   <!-- 扫描诊断 -->
@@ -349,6 +392,81 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
         <tbody id="lpDiagnoseBody"></tbody>
       </table>
     </div>
+    <div class="lp-pagination" id="lpDiagnosePagination"></div>
+  </div>
+
+  <!-- 账号诊断 -->
+  <div class="lp-content" id="lpDiagnostic" hidden>
+    <div class="lp-filter-row">
+      <div class="lp-filter-group">
+        <label class="lp-filter-label">结果</label>
+        <select class="lp-select" id="lpDiagnosticFilter">
+          <option value="">全部</option>
+          <option value="warn">限速/暂不可用</option>
+          <option value="error">无权/失败</option>
+          <option value="ok">正常</option>
+        </select>
+      </div>
+      <div class="lp-filter-group">
+        <span class="lp-filter-label">说明</span>
+        <span style="color:var(--lp-fg-mute,#8a93a4);font-size:12px">记录测活与切号预检结果；账号卡片会展示每个账号最新结论</span>
+      </div>
+    </div>
+    <div class="lp-section-header">
+      <span>账号诊断记录</span>
+      <span class="lp-count" id="lpDiagnosticCount"></span>
+    </div>
+    <div class="lp-table-wrap">
+      <table class="lp-table">
+        <thead><tr>
+          <th>时间</th>
+          <th>来源</th>
+          <th>账号</th>
+          <th>模型</th>
+          <th>结果</th>
+          <th>原因</th>
+        </tr></thead>
+        <tbody id="lpDiagnosticBody"></tbody>
+      </table>
+    </div>
+    <div class="lp-pagination" id="lpDiagnosticPagination"></div>
+  </div>
+
+  <!-- 上下文监控 -->
+  <div class="lp-content" id="lpContext" hidden>
+    <div class="lp-context-toolbar">
+      <div>
+        <div class="lp-section-title">Windsurf 上下文监控</div>
+        <div class="lp-context-sub" id="lpContextMeta">等待刷新…</div>
+      </div>
+      <button class="lp-btn" id="lpContextRefresh">刷新上下文</button>
+    </div>
+    <div class="lp-stats-row">
+      <div class="lp-stat-card"><div class="lp-stat-num" id="lpCtxUsed">—</div><div class="lp-stat-label">上下文</div></div>
+      <div class="lp-stat-card"><div class="lp-stat-num" id="lpCtxPct">—</div><div class="lp-stat-label">占用率</div></div>
+      <div class="lp-stat-card"><div class="lp-stat-num" id="lpCtxInput">—</div><div class="lp-stat-label">Input</div></div>
+      <div class="lp-stat-card"><div class="lp-stat-num" id="lpCtxOutput">—</div><div class="lp-stat-label">Output</div></div>
+      <div class="lp-stat-card"><div class="lp-stat-num" id="lpCtxCache">—</div><div class="lp-stat-label">Cache</div></div>
+      <div class="lp-stat-card"><div class="lp-stat-num" id="lpCtxSteps">—</div><div class="lp-stat-label">Steps</div></div>
+    </div>
+    <div class="lp-context-active" id="lpContextActive"></div>
+    <div class="lp-section-header">
+      <span>最近会话</span>
+      <span class="lp-count" id="lpContextCount"></span>
+    </div>
+    <div class="lp-table-wrap">
+      <table class="lp-table">
+        <thead><tr>
+          <th>会话</th>
+          <th>状态</th>
+          <th>模型</th>
+          <th>上下文</th>
+          <th>Steps</th>
+          <th>最新回复</th>
+        </tr></thead>
+        <tbody id="lpContextBody"></tbody>
+      </table>
+    </div>
   </div>
 
 
@@ -357,6 +475,8 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
 
   <footer class="lp-footer" id="lpFooter"></footer>
 </div>
+<script>var vscode = acquireVsCodeApi();</script>
+<script>${getBridgeRelayScript()}</script>
 <script src="${jsUri}"></script>
 </body></html>`;
 }

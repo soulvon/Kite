@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${cspSource} data:;">
+  <link href="${cssUri}" rel="stylesheet">
+  <title>分身管理</title>
+</head>
+<body>
+  <header class="topbar">
+    <div class="title-row">
+      <h1>分身管理</h1>
+      <span class="header-sub">独立窗口同时使用多个 Windsurf 账号</span>
+    </div>
+    <p class="hint">
+      每个分身有独立的数据目录，互不干扰；以某账号「创建并启动」会自动登录该账号。
+    </p>
+  </header>
+
+  <section class="action-bar">
+    <div class="action-group">
+      <label for="accountSelect">以账号开新分身：</label>
+      <select id="accountSelect">
+        <option value="">— 选择账号 —</option>
+      </select>
+      <button id="btnCreateWithAccount" class="btn-primary" disabled title="选中账号后可点击">创建并启动</button>
+    </div>
+    <div class="action-group action-group-right">
+      <button id="btnCreateBlank" class="btn-secondary">+ 创建空白分身</button>
+      <button id="btnRefresh" class="btn-ghost" title="刷新分身列表">↻ 刷新</button>
+    </div>
+  </section>
+
+  <section class="instance-section">
+    <div class="instance-table-wrap">
+      <table class="instance-table">
+        <thead>
+          <tr>
+            <th class="col-name">分身名</th>
+            <th class="col-status">状态</th>
+            <th class="col-email">登录账号</th>
+            <th class="col-time">创建时间</th>
+            <th class="col-action">操作</th>
+          </tr>
+        </thead>
+        <tbody id="instanceTableBody">
+          <tr class="empty-row"><td colspan="5">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div id="msgBar" class="msg-bar" role="status" aria-live="polite"></div>
+
+  <footer class="footer">
+    <span>列表每 5 秒自动刷新一次</span>
+    <span class="dot-sep">·</span>
+    <span id="countHint">分身：0</span>
+  </footer>
+
+  <script nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>

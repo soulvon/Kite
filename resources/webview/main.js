@@ -19,6 +19,9 @@
   let autoSwitchPoolTags = [];
   let autoSwitchPoolTagsDirty = false; // 本地已修改但未被后端确认
   let autoSwitchRefreshMin = 5;
+  let autoSwitchRefreshConcurrency = 12;
+  let autoSwitchRefreshBatchDelayMs = 250;
+  let autoSwitchPeriodRefreshHours = 6;
   let autoSwitchSynced = false; // 是否已收到后端同步
   let pageSize = 20; // 每页显示数量，0=全部
   let currentPage = 1;
@@ -29,6 +32,10 @@
   let perAccountStats = {}; // email → { switchToCount, dailyUsedPct, weeklyUsedPct }
   let tagColors = {}; // tag → color hex（用户自定义颜色，持久化到 localStorage）
   let privacyMode = false;
+  let healthCheckCache = new Map(); // email → { ok, reason, ts, testing }
+  let healthCheckBusy = false;
+  let switchIssueCache = new Map(); // email → { reason, kind, ts }
+  let switchingEmail = '';
 
   // ── 标签颜色系统 ──
   const TAG_PALETTE = [
@@ -48,6 +55,7 @@
 
   function saveTagColors() {
     try { localStorage.setItem('ws-pool-tag-colors', JSON.stringify(tagColors)); } catch(e) {}
+    postMsg('syncTagColors', { colors: tagColors });
   }
 
   function getTagColor(tag) {
@@ -296,6 +304,7 @@
   let filterPlans = new Set();   // 套餐名称
   let filterTags = new Set();    // 标签
   let filterStatuses = new Set(); // 状态
+  let filterHealth = new Set();  // 测活结果
 
   // 兼容旧分组逻辑（现在不做分组，只过滤）
   let groupBy = 'none';
@@ -306,6 +315,14 @@
   let tagEditMode = null; // null | 'add' | 'edit' | 'batch'
   let tagEditEmail = null; // 正在编辑标签的账号邮箱
   let tagEditBatchEmails = null; // 批量模式下要打标签的账号列表
+  let tagEditPendingTags = []; // 编辑弹窗中的临时标签列表
+
+  // 获取账号标签数组（兼容旧 tag 字段）
+  function getAccTags(a) {
+    if (a.tags && a.tags.length > 0) return a.tags;
+    if (a.tag) return [a.tag];
+    return [];
+  }
 
   // ========== 过滤器辅助 ==========
   function getAccountStatus(account) {
@@ -318,6 +335,18 @@
     if ((snap.weeklyRemainingPercent || 0) <= 0) return '周额度耗尽';
     if ((snap.dailyRemainingPercent || 0) <= 0) return '日额度耗尽';
     return '正常';
+  }
+
+  function getHealthStatus(email) {
+    const hc = getHealthEntry(email);
+    if (!hc) return '未检测';
+    if (hc.testing) return '检测中';
+    if (hc.stale) return '待复测';
+    if (hc.ok) return '可用';
+    const reason = hc.reason || '';
+    if (/待复测/i.test(reason)) return '待复测';
+    if (/全局限制|长期不可用|限流|限速|rate limit|剩余\s*0|消息已用尽|模型额度|额度.*上限|已达上限|用尽|overall|暂不可用/i.test(reason)) return '限速';
+    return '异常';
   }
 
   function planTierClass(planName) {
@@ -337,8 +366,13 @@
 
   function passesFilter(account) {
     if (filterPlans.size > 0 && !filterPlans.has(getAccountPlan(account))) return false;
-    if (filterTags.size > 0 && !filterTags.has(account.tag || '无标签')) return false;
+    if (filterTags.size > 0) {
+      const at = getAccTags(account);
+      const matched = at.length > 0 ? at.some(t => filterTags.has(t)) : filterTags.has('未分类');
+      if (!matched) return false;
+    }
     if (filterStatuses.size > 0 && !filterStatuses.has(getAccountStatus(account))) return false;
+    if (filterHealth.size > 0 && !filterHealth.has(getHealthStatus(account.email))) return false;
     return true;
   }
 
@@ -347,7 +381,7 @@
     let list = accounts.slice();
     const q = (searchQuery || '').trim().toLowerCase();
     if (q) {
-      list = list.filter(a => (a.email || '').toLowerCase().includes(q) || (a.tag || '').toLowerCase().includes(q));
+      list = list.filter(a => (a.email || '').toLowerCase().includes(q) || getAccTags(a).some(t => t.toLowerCase().includes(q)));
     }
     list = list.filter(a => passesFilter(a));
     return list;
@@ -357,19 +391,27 @@
     const planList = document.getElementById('filterPlanList');
     const tagList = document.getElementById('filterTagList');
     const statusList = document.getElementById('filterStatusList');
-    if (!planList || !tagList || !statusList) return;
+    const healthList = document.getElementById('filterHealthList');
+    if (!planList || !tagList || !statusList || !healthList) return;
 
     // 统计各维度计数
     const planCounts = {};
     const tagCounts = {};
     const statusCounts = {};
+    const healthCounts = {};
     accounts.forEach(a => {
       const p = getAccountPlan(a);
       planCounts[p] = (planCounts[p] || 0) + 1;
-      const t = a.tag || '无标签';
-      tagCounts[t] = (tagCounts[t] || 0) + 1;
+      const accTags = getAccTags(a);
+      if (accTags.length === 0) {
+        tagCounts['未分类'] = (tagCounts['未分类'] || 0) + 1;
+      } else {
+        accTags.forEach(t => { tagCounts[t] = (tagCounts[t] || 0) + 1; });
+      }
       const s = getAccountStatus(a);
       statusCounts[s] = (statusCounts[s] || 0) + 1;
+      const h = getHealthStatus(a.email);
+      healthCounts[h] = (healthCounts[h] || 0) + 1;
     });
 
     function renderOptions(container, counts, activeSet) {
@@ -386,6 +428,7 @@
     renderOptions(planList, planCounts, filterPlans);
     renderOptions(tagList, tagCounts, filterTags);
     renderOptions(statusList, statusCounts, filterStatuses);
+    renderOptions(healthList, healthCounts, filterHealth);
 
     // 更新触发器标签
     updateFilterLabel();
@@ -395,7 +438,7 @@
     const labelEl = document.getElementById('filterLabel');
     const countEl = document.getElementById('filterCount');
     if (!labelEl || !countEl) return;
-    const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size;
+    const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size + filterHealth.size;
     if (totalFilters === 0) {
       labelEl.textContent = 'ALL';
       countEl.textContent = '(' + accounts.length + ')';
@@ -404,13 +447,15 @@
       labelEl.textContent = '筛选中';
       countEl.textContent = '(' + matched + '/' + accounts.length + ')';
     }
+    const quickHealthOkBtn = document.getElementById('quickHealthOkBtn');
+    if (quickHealthOkBtn) quickHealthOkBtn.classList.toggle('is-active', filterHealth.has('可用'));
   }
 
   function getAccountGroup(account) {
     const snap = usageCache.get(account.email)?.snapshot;
     const err = usageCache.get(account.email)?.error;
     switch (groupBy) {
-      case 'tag': return account.tag || '未分组';
+      case 'tag': return getAccTags(account).join(', ') || '未分组';
       case 'plan': return snap ? (snap.planName || 'Unknown') : '未加载';
       case 'status': {
         if (err) return '异常';
@@ -489,16 +534,22 @@
     const cached = usageCache.get(account.email);
     const snap = cached?.snapshot;
     const err = cached?.error;
-    const tagActive = account.tag && filterTags.has(account.tag);
-    const tagColor = account.tag ? getTagColor(account.tag) : '';
-    const tagHtml = account.tag ? `<span class="grid-tag-chip${tagActive ? ' is-active' : ''}" data-action="filterTag" title="点击筛选此标签 / 右键修改标签 / 双击改色" style="background:${tagColor}">${escHtml(account.tag)}</span>` : `<span class="grid-tag-add" data-action="editTag" title="添加标签">+ 标签</span>`;
+    const accTags = getAccTags(account);
+    const tagHtml = accTags.length > 0
+      ? accTags.map(t => {
+          const tc = getTagColor(t);
+          const active = filterTags.has(t);
+          return `<span class="grid-tag-chip${active ? ' is-active' : ''}" data-action="filterTag" data-tag="${escHtml(t)}" title="点击筛选此标签 / 右键修改标签 / 双击改色" style="background:${tc}">${escHtml(t)}</span>`;
+        }).join('') + `<span class="grid-tag-add" data-action="editTag" title="编辑标签">+</span>`
+      : `<span class="grid-tag-add" data-action="editTag" title="添加标签">+ 标签</span>`;
 
     if (selectMode) card.classList.add('is-select-mode');
     if (account.disabled) card.classList.add('is-disabled');
+    if (getAccountIssue(account.email)) card.classList.add('has-switch-issue');
     const lockInfo = !isActive && lockedEmailsMap[account.email];
     if (lockInfo) card.classList.add('is-locked');
     card.innerHTML = `
-      ${lockInfo ? `<div class="grid-lock-overlay"><div class="grid-lock-overlay-inner"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>${escHtml(lockInfo.instanceName)} 使用中</span></div></div>` : ''}
+      ${lockInfo ? `<div class="grid-lock-overlay"><div class="grid-lock-overlay-box"><div class="grid-lock-overlay-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><div class="grid-lock-overlay-text">${escHtml(lockInfo.instanceName)} 使用中</div><button class="grid-force-switch-btn" data-action="forceSwitch" title="强制切换到此账号（将从其他实例抢占）">强制切换</button></div></div>` : ''}
       ${selectMode ? `<div class="grid-check-col"><input type="checkbox" class="grid-check-input" data-email="${escHtml(account.email)}" ${selectedEmails.has(account.email) ? 'checked' : ''}></div>` : ''}
       <div class="grid-card-body">
       <div class="grid-card-head">
@@ -510,6 +561,8 @@
       <div class="grid-card-meta">
         <span class="grid-plan-chip ${snap ? planTierClass(snap.planName) : ''}" data-field="plan">${snap ? escHtml(snap.planName || 'Unknown') : '...'}</span>
         ${tagHtml}
+        ${buildHealthBadge(account.email)}
+        ${buildSwitchIssueBadge(account.email)}
       </div>
       <div class="grid-card-quotas">
         <div class="grid-quota-item">
@@ -528,10 +581,11 @@
         <div class="grid-extra-row"><span>会员期限</span><span class="grid-extra-val ${snap && snap.planEnd ? periodClass(snap.planEnd) : ''}" data-field="period">${snap && snap.planStart && snap.planEnd ? formatPeriodSimple(snap.planStart, snap.planEnd) : '—'}</span></div>
         <div class="grid-extra-row"><span>今日切号</span><span class="grid-extra-val" data-field="switchCount">${perAccountStats[account.email]?.switchToCount || 0} 次</span></div>
       </div>
+      ${buildSwitchIssueRow(account.email)}
       <div class="grid-card-actions">
         ${isActive
           ? '<span class="grid-current-label"><span style="color:#3fb950">●</span> 使用中</span>'
-          : '<button class="grid-switch-btn" data-action="switch">切换</button>'
+          : `<button class="grid-switch-btn" data-action="switch" ${switchingEmail === account.email ? 'disabled' : ''}>${switchingEmail === account.email ? '<span class="btn-mini-spinner"></span>检查中' : '切换'}</button>`
         }
         <div class="grid-actions-right">
           <button class="status-toggle-btn ${account.disabled ? 'is-disabled' : 'is-enabled'}" data-action="toggleDisabled" title="${account.disabled ? '点击启用账号' : '点击禁用账号'}">${account.disabled ? '已禁用' : '已启用'}</button>
@@ -607,17 +661,29 @@
     const errEl = card.querySelector('.grid-card-error');
     if (errEl) errEl.hidden = true;
 
+    maybeDowngradeTemporaryHealth(email, snapshot);
     usageCache.set(email, { snapshot, ts: Date.now() });
     persistState();
   }
 
   let _rerenderTimer = null;
-  // 防抖重排：usage 消息陆续到达时合并为一次渲染
+  // 防抖 patch：usage 消息陆续到达时合并为一次就地 patch（不重建 DOM，避免闪烁）
   function scheduleRerender() {
     if (_rerenderTimer) clearTimeout(_rerenderTimer);
     _rerenderTimer = setTimeout(() => {
       _rerenderTimer = null;
-      renderCards();
+      if (!accountGrid) return;
+      accountGrid.querySelectorAll('.grid-card').forEach(card => {
+        const email = card.dataset.email;
+        if (!email) return;
+        const cached = usageCache.get(email);
+        if (cached?.snapshot) updateCard(card, cached.snapshot);
+        if (cached?.error) {
+          const errEl = card.querySelector('.grid-card-error');
+          if (errEl) { errEl.textContent = cached.error; errEl.hidden = false; }
+        }
+      });
+      updateSummary();
     }, 400);
   }
 
@@ -691,7 +757,7 @@
     let filtered = [...accounts];
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      filtered = filtered.filter(a => (a.email || '').toLowerCase().includes(q) || (a.tag || '').toLowerCase().includes(q));
+      filtered = filtered.filter(a => (a.email || '').toLowerCase().includes(q) || getAccTags(a).some(t => t.toLowerCase().includes(q)));
     }
     // 统一过滤器
     filtered = filtered.filter(a => passesFilter(a));
@@ -704,11 +770,14 @@
       return cmpByMode(a, b, sortMode);
     });
 
-    // 始终重建（分组模式下有 header）
-    accountGrid.innerHTML = '';
+    // 禁用入场动画（避免全量重建时卡片闪烁）
+    accountGrid.classList.add('no-card-anim');
 
     // 更新标签栏
     renderTagBar();
+
+    // 使用 DocumentFragment 先在内存中构建，再一次性替换（原子操作，无中间空白帧）
+    const frag = document.createDocumentFragment();
 
     if (groupBy === 'none') {
       // 分页
@@ -722,7 +791,7 @@
         pageItems = sorted.slice(start, start + pageSize);
       }
       pageItems.forEach(account => {
-        accountGrid.appendChild(buildCard(account, account.email === lastEmail));
+        frag.appendChild(buildCard(account, account.email === lastEmail));
       });
       // 分页控件
       if (pageSize > 0 && total > pageSize) {
@@ -735,7 +804,7 @@
           <button class="pager-btn" data-page="next" ${currentPage >= maxPage ? 'disabled' : ''}>&gt;</button>
           <span class="pager-info pager-total">共 ${total} 个</span>
         `;
-        accountGrid.appendChild(pager);
+        frag.appendChild(pager);
         pager.querySelectorAll('.pager-btn').forEach(btn => {
           btn.addEventListener('click', () => {
             if (btn.dataset.page === 'prev' && currentPage > 1) { currentPage--; renderCards(); }
@@ -773,14 +842,21 @@
           <span class="group-name">${escHtml(key)}</span>
           <span class="group-count">${items.length}</span>
         `;
-        accountGrid.appendChild(header);
+        frag.appendChild(header);
         items.forEach(account => {
-          accountGrid.appendChild(buildCard(account, account.email === lastEmail));
+          frag.appendChild(buildCard(account, account.email === lastEmail));
         });
       }
     }
 
-    const hasFilter = searchQuery.trim() || activeTagFilters.length > 0 || activeTagFilter;
+    accountGrid.replaceChildren(frag);
+
+    // 下一帧恢复动画（后续真正新增卡片时才有动画）
+    requestAnimationFrame(() => {
+      if (accountGrid) accountGrid.classList.remove('no-card-anim');
+    });
+
+    const hasFilter = searchQuery.trim() || activeTagFilters.length > 0 || activeTagFilter || filterPlans.size > 0 || filterTags.size > 0 || filterStatuses.size > 0 || filterHealth.size > 0;
     if (gridCount) gridCount.textContent = hasFilter ? filtered.length + ' / ' + accounts.length + ' 个' : accounts.length + ' 个';
     if (emptyState) emptyState.hidden = accounts.length > 0;
     if (accountGrid) accountGrid.hidden = accounts.length === 0;
@@ -859,6 +935,277 @@
 
   // 已移除列表视图，仅保留卡片视图
 
+  // ==================== 测活 badge ====================
+  function parseHealthRecoverAt(reason, baseTs) {
+    const text = String(reason || '');
+    if (!text) return 0;
+    if (/官方全局限制|长期不可用/i.test(text)) return 0;
+
+    const now = Date.now();
+    const base = Number(baseTs) || now;
+    const minuteMatch = text.match(/约\s*(\d+)\s*分钟/) || text.match(/(\d+)\s*min/i);
+    if (minuteMatch) return base + Number(minuteMatch[1]) * 60 * 1000;
+    const secondMatch = text.match(/约\s*(\d+)\s*秒/) || text.match(/(\d+)\s*s/i);
+    if (secondMatch) return base + Number(secondMatch[1]) * 1000;
+
+    const etaMatch = text.match(/预计\s*(明天\s*)?(\d{1,2})[:：](\d{2})\s*恢复?/);
+    if (etaMatch) {
+      const d = new Date();
+      d.setHours(Number(etaMatch[2]), Number(etaMatch[3]), 0, 0);
+      if (etaMatch[1]) d.setDate(d.getDate() + 1);
+      if (d.getTime() < now - 60 * 1000) d.setDate(d.getDate() + 1);
+      return d.getTime();
+    }
+    return 0;
+  }
+
+  function isTemporaryHealthLimit(reason) {
+    const text = String(reason || '');
+    return !/官方全局限制|长期不可用/i.test(text)
+      && /限流|限速|频率限制|消息.*限制|rate limit|message limit|模型额度|额度.*上限|已达上限|用尽|overall|暂不可用|恢复时间|预计/i.test(text);
+  }
+
+  function normalizeHealthEntry(email, entry) {
+    if (!entry || entry.testing || entry.ok) return entry;
+    if (!isTemporaryHealthLimit(entry.reason)) return entry;
+    const recoverAt = entry.recoverAt || parseHealthRecoverAt(entry.reason, entry.ts);
+    if (recoverAt && Date.now() >= recoverAt) {
+      return {
+        ...entry,
+        ok: false,
+        stale: true,
+        reason: '临时限速已到预计恢复时间，待复测',
+        recoverAt,
+      };
+    }
+    return recoverAt ? { ...entry, recoverAt } : entry;
+  }
+
+  function getHealthEntry(email) {
+    const entry = healthCheckCache.get(email);
+    if (!entry) return null;
+    const normalized = normalizeHealthEntry(email, entry);
+    if (normalized !== entry) healthCheckCache.set(email, normalized);
+    return normalized;
+  }
+
+  function maybeDowngradeTemporaryHealth(email, snapshot) {
+    if (!email || !snapshot) return false;
+    const hc = healthCheckCache.get(email);
+    if (!hc || hc.ok || hc.testing) return false;
+    if (/官方全局限制|长期不可用/i.test(hc.reason || '')) return false;
+    if (!isTemporaryHealthLimit(hc.reason)) return false;
+    // 如果用量刷新显示有剩余配额，直接标记为正常
+    const dailyPct = snapshot.dailyRemainingPercent ?? 0;
+    const weeklyPct = snapshot.weeklyRemainingPercent ?? 0;
+    if (dailyPct > 0 && weeklyPct > 0) {
+      const reason = '用量刷新正常，限速已解除';
+      healthCheckCache.set(email, {
+        ...hc,
+        ok: true,
+        stale: false,
+        reason,
+        ts: Date.now(),
+      });
+      // 同步到扩展端 cache，避免下次推送覆盖
+      try { vscode.postMessage({ type: 'clearHealthRateLimit', email, reason }); } catch (e) {}
+      return true;
+    }
+    healthCheckCache.set(email, {
+      ...hc,
+      ok: false,
+      stale: true,
+      reason: '配额统计已正常刷新，待复测确认',
+      ts: Date.now(),
+    });
+    return true;
+  }
+
+  function buildHealthBadge(email) {
+    var hc = getHealthEntry(email);
+    if (!hc) return '';
+    if (hc.testing) {
+      return '<span class="grid-health-badge grid-health-testing" title="检测中..."><svg class="grid-health-spin" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></span>';
+    }
+    var ago = hc.ts ? formatTimeAgo(hc.ts) : '';
+    var tip = escHtml((hc.reason || '') + (ago ? ' · ' + ago : ''));
+    if (hc.stale) {
+      return '<span class="grid-health-badge grid-health-warn" title="' + tip + '">待复测</span>';
+    }
+    if (hc.ok) {
+      return '<span class="grid-health-badge grid-health-ok" title="' + tip + '">✓ 正常</span>';
+    }
+    if (hc.reason && /全局限制|长期不可用|限流|限速|rate limit|message limit|quota.*exhaust|usage.*quota|daily.*quota|模型额度|额度.*上限|已达上限|用尽|overall|暂不可用/i.test(hc.reason)) {
+      var label = /官方全局限制|长期不可用/i.test(hc.reason)
+        ? '全局限制'
+        : (/官方临时限流|暂不可用/i.test(hc.reason) ? '官方限流' : '限速');
+      return '<span class="grid-health-badge grid-health-warn" title="' + tip + '">⚠ ' + label + '</span>';
+    }
+    return '<span class="grid-health-badge grid-health-fail" title="' + tip + '">✗ 异常</span>';
+  }
+
+  function getSwitchIssue(email) {
+    const issue = switchIssueCache.get(email);
+    if (!issue) return null;
+    return issue;
+  }
+
+  function summarizeAccountIssue(reason) {
+    // 去掉模型前缀（如 "GPT-5.5: " "Claude Opus 4.6: "）
+    const text = String(reason || '暂不可用').replace(/\s+/g, ' ').replace(/^[A-Za-z0-9. -]+:\s*/, '').trim();
+    if (!text) return '暂不可用';
+    const minuteMatch = text.match(/约\s*(\d+)\s*分钟/) || text.match(/(\d+)\s*min/i);
+    if (/官方全局限制|长期不可用/i.test(text)) {
+      return '官方全局限制，全模型疑似长期不可用';
+    }
+    if (/官方临时限流|暂不可用/i.test(text)) {
+      const resetMatch = text.match(/恢复时间\s*([^|]+)/);
+      return resetMatch ? `官方临时限流，${resetMatch[1].trim()} 后再试` : '官方临时限流，稍后再试';
+    }
+    if (/消息.*额度|消息.*限制|模型额度|额度.*上限|已达上限|用尽|频率|限流|限速|rate limit|quota.*exhaust|usage.*quota|daily.*quota|overall|reset/i.test(text)) {
+      if (minuteMatch) return `消息/频率限制，约 ${minuteMatch[1]} 分钟后恢复`;
+      const secondMatch = text.match(/(\d+)\s*s/i) || text.match(/(\d+)\s*秒/);
+      if (secondMatch) return `消息/频率限制，约 ${secondMatch[1]} 秒后恢复`;
+      return '账号消息/频率限制，稍后恢复';
+    }
+    if (/探针失败|probe.*fail|probe.*error|probe:/i.test(text)) return '探针检测异常';
+    if (/NO_ACCESS|无权限|不支持|unsupported|not.*support/i.test(text)) return '当前模型无权限';
+    if (/401|unauthori[sz]ed|key.*失效|invalid.*key|token/i.test(text)) return '登录凭据失效，需要重新导入';
+    if (/封禁|suspend|ban|disabled/i.test(text)) return '账号异常/封禁';
+    if (/异常|失败|错误|error|fail|timeout|超时|请求失败/i.test(text)) return '检测异常';
+    return text.length > 30 ? text.slice(0, 30) + '…' : text;
+  }
+
+  function getAccountIssue(email) {
+    const switchIssue = getSwitchIssue(email);
+    if (switchIssue) {
+      return {
+        reason: switchIssue.reason || '暂不可用',
+        summary: summarizeAccountIssue(switchIssue.reason),
+        kind: switchIssue.kind || 'error',
+        ts: switchIssue.ts,
+        source: 'switch',
+      };
+    }
+    const hc = getHealthEntry(email);
+    if (hc && !hc.testing && !hc.ok) {
+      const reason = hc.reason || '测活异常';
+      return {
+        reason,
+        summary: hc.stale ? '测活：待复测确认' : '测活：' + summarizeAccountIssue(reason),
+        kind: /全局限制|长期不可用|限流|限速|rate limit|message limit|quota.*exhaust|usage.*quota|daily.*quota|消息|模型额度|额度.*上限|已达上限|用尽|overall|reset|暂不可用/i.test(reason) ? 'blocked' : 'error',
+        ts: hc.ts,
+        source: 'health',
+      };
+    }
+    return null;
+  }
+
+  function applyDiagnosticSync(latest) {
+    if (!latest || typeof latest !== 'object') return;
+    Object.keys(latest).forEach(function (email) {
+      var item = latest[email] || {};
+      if (item.health) {
+        const entry = {
+          ok: item.health.level === 'ok',
+          reason: item.health.reason,
+          ts: item.health.ts || Date.now(),
+          testing: false,
+        };
+        healthCheckCache.set(email, normalizeHealthEntry(email, entry));
+      }
+      if (item.switch) {
+        if (item.switch.level === 'ok') {
+          switchIssueCache.delete(email);
+        } else {
+          switchIssueCache.set(email, {
+            reason: item.switch.reason || '暂不可用',
+            kind: item.switch.level === 'warn' ? 'blocked' : 'error',
+            ts: item.switch.ts || Date.now(),
+          });
+        }
+      }
+    });
+    renderCards();
+    updateHealthBadges();
+  }
+
+  function buildSwitchIssueBadge(email) {
+    const issue = getAccountIssue(email);
+    if (!issue) return '';
+    if (issue.source === 'health') return '';
+    const tip = escHtml((issue.reason || '暂不可用') + ' · ' + formatTimeAgo(issue.ts));
+    const label = '暂不可用';
+    return `<span class="grid-switch-issue-badge ${issue.kind === 'blocked' ? 'is-blocked' : 'is-error'}" title="${tip}">${escHtml(label)}</span>`;
+  }
+
+  function buildSwitchIssueRow(email) {
+    const issue = getAccountIssue(email);
+    if (!issue) return '';
+    const tip = escHtml((issue.reason || issue.summary || '暂不可用') + (issue.ts ? ' · ' + formatTimeAgo(issue.ts) : ''));
+    return `
+      <div class="grid-switch-issue ${issue.kind === 'blocked' ? 'is-blocked' : 'is-error'}" title="${tip}">
+        <span class="grid-switch-issue-dot"></span>
+        <span class="grid-switch-issue-text">${escHtml(issue.summary || issue.reason || '暂不可用')}</span>
+      </div>
+    `;
+  }
+
+  function formatTimeAgo(ts) {
+    var diff = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (diff < 60) return diff + '秒前';
+    if (diff < 3600) return Math.floor(diff / 60) + '分钟前';
+    return Math.floor(diff / 3600) + '小时前';
+  }
+
+  function updateHealthBadges() {
+    if (!accountGrid) return;
+    accountGrid.querySelectorAll('.grid-card').forEach(function (card) {
+      var email = card.dataset.email;
+      if (!email) return;
+      var metaEl = card.querySelector('.grid-card-meta');
+      if (!metaEl) return;
+      var old = metaEl.querySelector('.grid-health-badge');
+      var newHtml = buildHealthBadge(email);
+      if (old) old.remove();
+      if (newHtml) metaEl.insertAdjacentHTML('beforeend', newHtml);
+    });
+    updateHealthBarCount();
+  }
+
+  function updateHealthBarCount() {
+    var countEl = document.getElementById('hcBarCount');
+    if (!countEl) return;
+    if (healthCheckCache.size === 0) { countEl.textContent = ''; return; }
+    var ok = 0, fail = 0;
+    healthCheckCache.forEach(function (v) {
+      if (v.testing) return;
+      if (v.ok) ok++; else fail++;
+    });
+    countEl.textContent = ok + ' 正常' + (fail > 0 ? ' / ' + fail + ' 异常' : '');
+    countEl.className = 'health-check-bar-count' + (fail > 0 ? ' has-fail' : '');
+  }
+
+  setInterval(function () {
+    var changed = false;
+    healthCheckCache.forEach(function (entry, email) {
+      var normalized = normalizeHealthEntry(email, entry);
+      if (normalized !== entry) {
+        healthCheckCache.set(email, normalized);
+        changed = true;
+      }
+    });
+    if (changed) {
+      renderCards();
+      updateFilterLabel();
+    }
+  }, 60 * 1000);
+
+  // 测活面板入口事件
+  (function () {
+    // 侧栏入口按钮使用 summary 内联 onclick，避免折叠行点击同时触发。
+  })();
+
   // ==================== 用量统计 ====================
   function updateUsageStatsUI(stats) {
     if (!stats) return;
@@ -921,18 +1268,25 @@
     const tagListEl = document.getElementById('tagList');
     if (!tagListEl) return;
 
-    // 获取所有唯一标签
-    const tags = new Set();
+    // 统计每个标签的账号数
+    const tagCounts = {};
+    let untaggedCount = 0;
     accounts.forEach(acc => {
-      if (acc.tag) tags.add(acc.tag);
+      const at = getAccTags(acc);
+      if (at.length > 0) {
+        at.forEach(t => { tagCounts[t] = (tagCounts[t] || 0) + 1; });
+      } else {
+        untaggedCount++;
+      }
     });
+    const tags = Object.keys(tagCounts);
 
     tagListEl.innerHTML = '';
 
     // "全部"按钮 → 清空标签筛选
     const allChip = document.createElement('span');
     allChip.className = 'tag-chip' + (filterTags.size === 0 ? ' is-active' : '');
-    allChip.textContent = '全部';
+    allChip.textContent = '全部(' + accounts.length + ')';
     allChip.onclick = () => {
       filterTags.clear();
       persistTagFilters();
@@ -949,7 +1303,7 @@
       const chip = document.createElement('span');
       const isActive = filterTags.has(tag);
       chip.className = 'tag-chip' + (isActive ? ' is-active' : '');
-      chip.textContent = tag;
+      chip.textContent = tag + '(' + (tagCounts[tag] || 0) + ')';
       // 应用标签颜色
       const tc = getTagColor(tag);
       if (isActive) {
@@ -971,14 +1325,47 @@
         renderTagBar();
         renderCards();
       };
+      chip.oncontextmenu = (e) => {
+        e.preventDefault();
+        openTagColorPicker(tag, chip);
+      };
       tagListEl.appendChild(chip);
     });
+
+    // "未分类"按钮 → 筛选没有 tag 的账号
+    if (untaggedCount > 0) {
+      const untaggedChip = document.createElement('span');
+      const isActive = filterTags.has('未分类');
+      untaggedChip.className = 'tag-chip' + (isActive ? ' is-active' : '');
+      untaggedChip.textContent = '未分类(' + untaggedCount + ')';
+      if (isActive) {
+        untaggedChip.style.background = '#8b8b8b';
+        untaggedChip.style.borderColor = '#8b8b8b';
+        untaggedChip.style.color = '#fff';
+      } else {
+        untaggedChip.style.background = '#8b8b8b20';
+        untaggedChip.style.borderColor = '#8b8b8b60';
+        untaggedChip.style.color = '#8b8b8b';
+      }
+      untaggedChip.onclick = () => {
+        if (filterTags.has('未分类')) filterTags.delete('未分类');
+        else filterTags.add('未分类');
+        persistTagFilters();
+        currentPage = 1;
+        const dropdown = document.getElementById('filterDropdown');
+        if (dropdown && !dropdown.hidden) buildFilterDropdown();
+        renderTagBar();
+        renderCards();
+      };
+      tagListEl.appendChild(untaggedChip);
+    }
   }
 
   function openTagEditModal(mode, emailOrEmails = null) {
     tagEditMode = mode;
     tagEditEmail = null;
     tagEditBatchEmails = null;
+    tagEditPendingTags = [];
 
     const overlay = document.getElementById('tagEditOverlay');
     const title = document.getElementById('tagEditTitle');
@@ -993,19 +1380,111 @@
     if (mode === 'edit' && typeof emailOrEmails === 'string') {
       tagEditEmail = emailOrEmails;
       const account = accounts.find(a => a.email === emailOrEmails);
+      tagEditPendingTags = account ? [...getAccTags(account)] : [];
       title.textContent = '编辑标签';
-      input.value = account?.tag || '';
-      input.placeholder = '输入标签名称';
     } else if (mode === 'batch' && Array.isArray(emailOrEmails)) {
       tagEditBatchEmails = [...emailOrEmails];
+      // 预填所有选中账号的共有标签
+      const batchAccounts = emailOrEmails.map(e => accounts.find(a => a.email === e)).filter(Boolean);
+      if (batchAccounts.length > 0) {
+        const first = new Set(getAccTags(batchAccounts[0]));
+        tagEditPendingTags = [...first].filter(t => batchAccounts.every(a => getAccTags(a).includes(t)));
+      } else {
+        tagEditPendingTags = [];
+      }
       title.textContent = `为 ${emailOrEmails.length} 个账号打标签`;
-      input.placeholder = '输入标签名称（留空则清除标签）';
     } else {
       title.textContent = '添加标签';
-      input.placeholder = '输入标签名称';
     }
 
+    renderTagEditUI();
     overlay.hidden = false;
+    input.focus();
+  }
+
+  function renderTagEditUI() {
+    const selectedEl = document.getElementById('tagEditSelected');
+    const existingEl = document.getElementById('tagEditExisting');
+    if (!selectedEl || !existingEl) return;
+
+    // 已选标签 chips（带颜色圆点 + × 移除）
+    if (tagEditPendingTags.length === 0) {
+      selectedEl.innerHTML = '<span style="color:var(--muted);font-size:11px">暂无标签</span>';
+    } else {
+      selectedEl.innerHTML = tagEditPendingTags.map(t => {
+        const tc = getTagColor(t);
+        return `<span class="tag-edit-chip" style="background:${tc}18;border:1px solid ${tc}60;color:${tc};padding:2px 10px;border-radius:10px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px" data-tag="${escHtml(t)}"><span class="tag-edit-color-dot" data-tag="${escHtml(t)}" style="width:10px;height:10px;border-radius:50%;background:${tc};cursor:pointer;flex-shrink:0;border:2px solid #fff;box-shadow:0 0 0 1px ${tc}" title="点击换色"></span>${escHtml(t)} <span style="opacity:0.5;font-size:13px;margin-left:2px" class="tag-edit-remove">×</span></span>`;
+      }).join('');
+    }
+
+    // 点击已选标签的 × → 移除；点击颜色圆点 → 改色
+    selectedEl.querySelectorAll('.tag-edit-chip').forEach(chip => {
+      const removeBtn = chip.querySelector('.tag-edit-remove');
+      if (removeBtn) {
+        removeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const t = chip.dataset.tag;
+          tagEditPendingTags = tagEditPendingTags.filter(x => x !== t);
+          renderTagEditUI();
+        });
+      }
+      const colorDot = chip.querySelector('.tag-edit-color-dot');
+      if (colorDot) {
+        colorDot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openTagColorPicker(colorDot.dataset.tag, colorDot);
+        });
+      }
+    });
+
+    // 已有标签列表（带颜色圆点，可点击改色 / 点标签名 toggle 选中）
+    const allTags = getTagList();
+    const pending = new Set(tagEditPendingTags);
+    existingEl.innerHTML = allTags
+      .map(t => {
+        const tc = getTagColor(t);
+        const selected = pending.has(t);
+        return `<span class="tag-edit-opt" style="padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border:1px solid ${tc}60;background:${selected ? tc : tc + '20'};color:${selected ? '#fff' : tc}" data-tag="${escHtml(t)}"><span class="tag-edit-color-dot" data-tag="${escHtml(t)}" style="width:10px;height:10px;border-radius:50%;background:${selected ? '#fff' : tc};cursor:pointer;flex-shrink:0;border:1px solid ${selected ? '#fff8' : tc + '80'};box-shadow:0 0 0 1px ${tc}40" title="点击换色"></span>${escHtml(t)}</span>`;
+      }).join('') || '<span style="color:var(--muted);font-size:11px">暂无标签</span>';
+
+    // 点击已有标签 → toggle；点击颜色圆点 → 改色
+    existingEl.querySelectorAll('.tag-edit-opt').forEach(opt => {
+      const colorDot = opt.querySelector('.tag-edit-color-dot');
+      if (colorDot) {
+        colorDot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openTagColorPicker(colorDot.dataset.tag, colorDot);
+        });
+      }
+      opt.addEventListener('click', () => {
+        const t = opt.dataset.tag;
+        if (tagEditPendingTags.includes(t)) {
+          tagEditPendingTags = tagEditPendingTags.filter(x => x !== t);
+        } else {
+          tagEditPendingTags.push(t);
+        }
+        renderTagEditUI();
+      });
+    });
+  }
+
+  function addTagFromInput() {
+    const input = document.getElementById('tagEditInput');
+    const error = document.getElementById('tagEditError');
+    if (!input || !error) return;
+    const newTag = input.value.trim();
+    if (!newTag) return;
+    error.hidden = true;
+    if (!tagEditPendingTags.includes(newTag)) {
+      // 新标签首次出现时随机分配颜色
+      if (!tagColors[newTag] && !getTagList().includes(newTag)) {
+        tagColors[newTag] = TAG_PALETTE[Math.floor(Math.random() * TAG_PALETTE.length)];
+        saveTagColors();
+      }
+      tagEditPendingTags.push(newTag);
+      renderTagEditUI();
+    }
+    input.value = '';
     input.focus();
   }
 
@@ -1015,28 +1494,15 @@
     tagEditMode = null;
     tagEditEmail = null;
     tagEditBatchEmails = null;
+    tagEditPendingTags = [];
   }
 
   function saveTagEdit() {
-    const input = document.getElementById('tagEditInput');
-    const error = document.getElementById('tagEditError');
-    if (!input || !error) return;
-
-    const newTag = input.value.trim();
-
-    // 批量模式允许空标签（用于清除）；其他模式空值视为非法
-    if (!newTag && tagEditMode !== 'batch') {
-      error.textContent = '标签不能为空';
-      error.hidden = false;
-      return;
-    }
-
     if (tagEditMode === 'edit' && tagEditEmail) {
-      postMsg('updateTag', { email: tagEditEmail, tag: newTag });
+      postMsg('updateTag', { email: tagEditEmail, tags: [...tagEditPendingTags] });
     } else if (tagEditMode === 'batch' && tagEditBatchEmails && tagEditBatchEmails.length > 0) {
-      postMsg('batchTag', { emails: tagEditBatchEmails, tag: newTag });
+      postMsg('batchTag', { emails: tagEditBatchEmails, tags: [...tagEditPendingTags] });
     }
-
     closeTagEditModal();
   }
 
@@ -1070,13 +1536,19 @@
     picker.style.zIndex = '9999';
     document.body.appendChild(picker);
 
+    function applyColorChange() {
+      renderAccounts();
+      // 如果标签编辑弹窗打开则同步刷新
+      const overlay = document.getElementById('tagEditOverlay');
+      if (overlay && !overlay.hidden) renderTagEditUI();
+    }
     // 点击预设色
     picker.querySelectorAll('.tag-color-dot').forEach(dot => {
       dot.addEventListener('click', () => {
         tagColors[tag] = dot.dataset.color;
         saveTagColors();
         picker.remove();
-        renderAccounts();
+        applyColorChange();
       });
     });
     // 自定义取色器
@@ -1084,14 +1556,14 @@
     colorInput.addEventListener('input', () => {
       tagColors[tag] = colorInput.value;
       saveTagColors();
-      renderAccounts();
+      applyColorChange();
     });
     // 重置
     picker.querySelector('.tag-color-reset').addEventListener('click', () => {
       delete tagColors[tag];
       saveTagColors();
       picker.remove();
-      renderAccounts();
+      applyColorChange();
     });
     // 点击外部关闭
     setTimeout(() => {
@@ -1295,6 +1767,7 @@
     if (!queue || idx >= total) return;
     const item = queue[idx];
     const isToken = !!item.token;
+    const isStoredAccount = !!item.apiKey;
     const itemLabel = isToken ? (item.token.substring(0, 20) + '...') : item.email;
     const retries = (st._batchRetries || {})[itemLabel] || 0;
     const retryHint = retries > 0 ? `重试 ${retries}/${BATCH_RETRY_MAX}` : '';
@@ -1314,6 +1787,8 @@
     _lastBatchSentAt = Date.now();
     if (isToken) {
       postMsg('batchTokenImport', { token: item.token, batch: true, tag: item.tag || '' });
+    } else if (isStoredAccount) {
+      postMsg('batchStoredAccountImport', { account: item, batch: true });
     } else {
       postMsg('loginSave', { email: item.email, password: item.password, batch: true, authMethod: item.authMethod || 'auto', tag: item.tag || '' });
     }
@@ -1441,18 +1916,20 @@
 
       // ── 优先级1：整行就是 token ──────────────────────────────────
       if (/^auth1_[A-Za-z0-9_]+$/.test(raw) || /^devin-session-token\$/.test(raw)) {
-        const tokenKey = raw.substring(0, 32);
+        const tokenKey = raw.trim();
         if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
         seen.add(tokenKey);
         accts.push({ token: raw });
         continue;
       }
 
-      // ── 优先级2：行内任意位置有 auth1_ 或 devin-session-token$ → 直接取 token ──
+      // ── 优先级2：行内任意位置有 token → 直接取 token ──────────────
+      // 同一行同时带 devin-session-token 与 auth1= 时优先 auth1。
+      // 部分导出数据里的 devin session 已过期/不适配，但 auth1 仍可 PostAuth 换新 session。
       const tokenMatch = raw.match(/\b(auth1_[A-Za-z0-9_]+)/) || raw.match(/(devin-session-token\$[A-Za-z0-9._\-]+)/);
       if (tokenMatch) {
         const tok = tokenMatch[1];
-        const tokenKey = tok.substring(0, 32);
+        const tokenKey = tok.trim();
         if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
         seen.add(tokenKey);
         accts.push({ token: tok });
@@ -1502,7 +1979,7 @@
     }
     const batchTagEl = document.getElementById('batchTag');
     const batchTag = batchTagEl ? batchTagEl.value.trim() : '';
-    if (batchTag) accts.forEach(a => a.tag = batchTag);
+    if (batchTag) accts.forEach(a => { a.tag = batchTag; a.tags = [batchTag]; });
     const { fresh, skipped } = filterExistingAccounts(accts);
     if (fresh.length === 0) {
       const msg = skipped.length ? `所有 ${skipped.length} 个账号已存在，跳过导入` : (errors.length ? errors.join('\n') : '未解析到有效账号');
@@ -1533,20 +2010,36 @@
       setBatchMsg('JSON 格式错误: ' + e.message, true);
       return;
     }
-    if (!Array.isArray(data)) {
-      setBatchMsg('JSON 必须是数组格式 [{email, password}, ...]', true);
+    const rows = Array.isArray(data) ? data : (Array.isArray(data.accounts) ? data.accounts : null);
+    if (!rows) {
+      setBatchMsg('JSON 必须是数组，或 { accounts: [...] } 格式', true);
       return;
     }
     const accts = [];
     const errors = [];
     const seen = new Set();
-    for (let i = 0; i < data.length; i++) {
-      const item = data[i];
-      if (!item.email || !item.password) { errors.push(`第 ${i+1} 项缺少 email 或 password`); continue; }
+    for (let i = 0; i < rows.length; i++) {
+      const item = rows[i];
+      if (!item.email || (!item.password && !item.apiKey && !item.token)) { errors.push(`第 ${i+1} 项缺少 email/password、apiKey 或 token`); continue; }
       const em = String(item.email).trim().toLowerCase();
       if (seen.has(em)) { errors.push(`第 ${i+1} 项邮箱重复: ${item.email}`); continue; }
       seen.add(em);
-      accts.push({ email: String(item.email).trim(), password: String(item.password).trim() });
+      const itemTags = Array.isArray(item.tags) ? item.tags.map(t => String(t).trim()).filter(Boolean) : (item.tag ? [String(item.tag).trim()] : undefined);
+      if (item.apiKey) {
+        accts.push({
+          email: String(item.email).trim(),
+          apiKey: String(item.apiKey).trim(),
+          apiServerUrl: String(item.apiServerUrl || 'https://server.self-serve.windsurf.com').trim(),
+          name: item.name ? String(item.name).trim() : undefined,
+          tag: itemTags ? itemTags[0] : undefined,
+          tags: itemTags,
+          disabled: item.disabled === true,
+        });
+      } else if (item.token) {
+        accts.push({ token: String(item.token).trim(), tag: itemTags ? itemTags[0] : undefined, tags: itemTags });
+      } else {
+        accts.push({ email: String(item.email).trim(), password: String(item.password).trim() });
+      }
     }
     const { fresh, skipped } = filterExistingAccounts(accts);
     if (fresh.length === 0) {
@@ -1578,24 +2071,28 @@
     for (let i = 0; i < lines.length; i++) {
       let line = lines[i].trim();
       if (!line) continue;
+      const auth1Inline = line.match(/\b(auth1_[A-Za-z0-9_]+)/);
+      if (auth1Inline) {
+        line = auth1Inline[1];
+      }
       // 自动补前缀
-      if (!line.startsWith('devin-session-token$')) {
+      if (!line.startsWith('auth1_') && !line.startsWith('devin-session-token$')) {
         // 如果粘的是纯 JWT，自动加前缀
         if (line.startsWith('eyJ')) {
           line = 'devin-session-token$' + line;
         } else {
-          errors.push(`第 ${i+1} 行格式错误（需以 devin-session-token$ 或 eyJ 开头）`);
+          errors.push(`第 ${i+1} 行格式错误（需以 auth1_、devin-session-token$ 或 eyJ 开头）`);
           continue;
         }
       }
-      const tokenKey = line.substring(0, 40);
+      const tokenKey = line.trim();
       if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
       seen.add(tokenKey);
       accts.push({ token: line });
     }
     const batchTagEl = document.getElementById('batchTag');
     const batchTag = batchTagEl ? batchTagEl.value.trim() : '';
-    if (batchTag) accts.forEach(a => a.tag = batchTag);
+    if (batchTag) accts.forEach(a => { a.tag = batchTag; a.tags = [batchTag]; });
     const { fresh, skipped } = filterExistingAccounts(accts);
     if (fresh.length === 0) {
       const msg = skipped.length ? `所有 ${skipped.length} 个 token 已存在` : (errors.length ? errors.join('\n') : '未解析到有效 token');
@@ -1882,8 +2379,14 @@
     // 刷新频率（位于 Windsurf 增强面板）
     const enhRefCurEl = document.getElementById('enhRefreshCurrent');
     const enhRefAllEl = document.getElementById('enhRefreshAll');
+    const enhRefreshConcurrencyEl = document.getElementById('enhRefreshConcurrency');
+    const enhRefreshBatchDelayEl = document.getElementById('enhRefreshBatchDelay');
+    const enhPeriodRefreshHoursEl = document.getElementById('enhPeriodRefreshHours');
     if (enhRefCurEl) enhRefCurEl.value = autoSwitchCheckSec;
     if (enhRefAllEl) enhRefAllEl.value = autoSwitchRefreshMin;
+    if (enhRefreshConcurrencyEl) enhRefreshConcurrencyEl.value = autoSwitchRefreshConcurrency;
+    if (enhRefreshBatchDelayEl) enhRefreshBatchDelayEl.value = autoSwitchRefreshBatchDelayMs;
+    if (enhPeriodRefreshHoursEl) enhPeriodRefreshHoursEl.value = autoSwitchPeriodRefreshHours;
     const asScoreModeEl = document.getElementById('asScoreMode');
     if (asScoreModeEl) asScoreModeEl.value = autoSwitchScoreMode;
     updateScoreModeHint();
@@ -1912,14 +2415,15 @@
     if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
   }
 
-  function refreshAll() {
-    // 通知后端全量刷新（后端串行+限流，结果通过 usage 消息逐个推送）
-    postMsg('refreshAllUsage', {});
-    if (refreshAllBtn) {
+  function refreshAll(force = true, showSpinner = true) {
+    // 通知后端全量刷新（后端分批限流，结果通过 usage 消息逐个推送）
+    postMsg('refreshAllUsage', { force });
+    if (showSpinner && refreshAllBtn) {
       refreshAllBtn.classList.add('is-spinning');
       refreshAllBtn._pendingCount = accounts.length || 1;
     }
   }
+
 
   // ==================== 通用提示/确认弹窗 ====================
   const alertIcons = {
@@ -1983,7 +2487,14 @@
 
     switch (action) {
       case 'switch':
+        switchingEmail = email;
+        renderCards();
         postMsg('switch', { email });
+        break;
+      case 'forceSwitch':
+        switchingEmail = email;
+        renderCards();
+        postMsg('switch', { email, force: true });
         break;
       case 'refresh':
         postMsg('fetchUsageFor', { email });
@@ -2003,8 +2514,8 @@
         break;
       }
       case 'filterTag': {
-        const acc = accounts.find(a => a.email === email);
-        const tag = acc?.tag;
+        const chipEl = target.closest('[data-tag]');
+        const tag = chipEl?.dataset.tag;
         if (!tag) break;
         if (filterTags.has(tag)) filterTags.delete(tag);
         else filterTags.add(tag);
@@ -2040,12 +2551,13 @@
     lastEmail = newLastEmail;
     externalAccount = newExternalAccount || '';
     // 自动清除无效过滤器：如果过滤器激活但 0 条匹配，清掉过时状态
-    const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size;
+    const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size + filterHealth.size;
     if (totalFilters > 0 && accounts.length > 0 && accounts.filter(a => passesFilter(a)).length === 0) {
       filterPlans.clear();
       filterTags.clear();
       filterStatuses.clear();
-      try { const st = vscode.getState() || {}; st._filterPlans = []; st._filterTags = []; st._filterStatuses = []; vscode.setState(st); } catch {}
+      filterHealth.clear();
+      try { const st = vscode.getState() || {}; st._filterPlans = []; st._filterTags = []; st._filterStatuses = []; st._filterHealth = []; vscode.setState(st); } catch {}
     }
     renderCards();
     // 账号数据到达后重新渲染标签选择器（修复时序问题：settingsSync 先到，accounts 后到时标签列表为空）
@@ -2083,6 +2595,7 @@
       case 'usage': {
         const { email, snapshot, error } = msg;
         if (!email) break;
+        if (snapshot) maybeDowngradeTemporaryHealth(email, snapshot);
         usageCache.set(email, { snapshot: snapshot || null, error, ts: Date.now() });
         lastRefreshTime = Date.now();
         persistState();
@@ -2109,6 +2622,48 @@
         if (globalThis._wsBatchMode) {
           handleBatchItemResult(msg.email, msg.ok, msg.error);
         }
+        break;
+      }
+
+      case 'oauthStatus': {
+        const el = document.getElementById('oauthMsg');
+        if (el) {
+          el.hidden = false;
+          el.textContent = msg.message || (msg.ok ? 'OAuth 导入成功' : 'OAuth 导入失败');
+          el.className = 'batch-msg ' + (msg.ok === false ? 'is-error' : 'is-ok');
+        }
+        if (msg.ok) showToast(msg.message || 'OAuth 导入成功', 'success', 3500);
+        else if (msg.ok === false) showToast(msg.message || 'OAuth 导入失败', 'error', 8000);
+        else showToast(msg.message || '正在打开 OAuth 授权页…', 'info', 3000);
+        break;
+      }
+
+      case 'exportAccountsResult': {
+        if (msg.ok) {
+          showToast(msg.message || `已导出 ${msg.count || 0} 个账号设置`, 'success', 6000);
+        } else {
+          showToast(msg.message || '导出账号设置失败', 'error', 8000);
+        }
+        break;
+      }
+
+      case 'switchResult': {
+        const { email, ok, reason, kind, ts } = msg;
+        switchingEmail = '';
+        if (email) {
+          if (ok) {
+            switchIssueCache.delete(email);
+            showToast('已切换：' + displayEmail(email), 'success', 1800);
+          } else {
+            switchIssueCache.set(email, { reason: reason || '切换失败', kind: kind || 'error', ts: ts || Date.now() });
+            // blocked 类型（限速/额度不足）：用 toast 通知（sidebar 不弹 showAlert）
+            // 非 blocked 类型（补丁/异常）：由 sidebar 的 showAlert 模态弹窗处理，不重复 toast
+            if (kind === 'blocked') {
+              showToast(displayEmail(email) + ' 暂不可用：' + (reason || '额度不足'), 'warning', 5000, 'switch-unavailable');
+            }
+          }
+        }
+        renderCards();
         break;
       }
 
@@ -2158,6 +2713,9 @@
           autoSwitchPoolTags = msg.poolTags || [];
         }
         autoSwitchRefreshMin = msg.refreshMin || 5;
+        autoSwitchRefreshConcurrency = msg.refreshConcurrency || 12;
+        autoSwitchRefreshBatchDelayMs = msg.refreshBatchDelayMs ?? 250;
+        autoSwitchPeriodRefreshHours = msg.periodRefreshHours ?? 6;
         autoSwitchSynced = true;
         syncAutoSwitchUI();
         syncStrategyUI();
@@ -2174,6 +2732,42 @@
 
       case 'usageStatsSync': {
         updateUsageStatsUI(msg);
+        break;
+      }
+
+      case 'testModelResult': {
+        const entry = {
+          ok: msg.ok,
+          reason: msg.reason,
+          ts: msg.ts || Date.now(),
+          testing: !!msg.testing,
+        };
+        healthCheckCache.set(msg.email, normalizeHealthEntry(msg.email, entry));
+        // 交叉检查：如果显示限速但已有配额数据显示正常，自动清除
+        if (!entry.ok && !entry.testing) {
+          const cached = usageCache.get(msg.email);
+          if (cached && cached.snapshot) {
+            maybeDowngradeTemporaryHealth(msg.email, cached.snapshot);
+          }
+        }
+        renderCards();
+        updateFilterLabel();
+        const dropdown = document.getElementById('filterDropdown');
+        if (dropdown && !dropdown.hidden) buildFilterDropdown();
+        break;
+      }
+
+      case 'testModelAllDone': {
+        healthCheckBusy = false;
+        renderCards();
+        updateFilterLabel();
+        const dropdown = document.getElementById('filterDropdown');
+        if (dropdown && !dropdown.hidden) buildFilterDropdown();
+        break;
+      }
+
+      case 'diagnosticSync': {
+        applyDiagnosticSync(msg.latest);
         break;
       }
 
@@ -2222,6 +2816,11 @@
           _ltRunning = false;
         }
         updateLtState(msg.state || 'idle', { label: msg.label, count: msg.count, action: msg.action, reason: msg.reason });
+        break;
+      }
+
+      case 'acStatsUpdate': {
+        updateAcStats(msg.stats || {});
         break;
       }
     }
@@ -2653,6 +3252,30 @@
     }
   }
 
+  // 自动操作统计更新
+  const acStatsBar = $('#acStatsBar');
+  const acStatsTotal = $('#acStatsTotal');
+  const statEls = {
+    continueBtn: $('#acStatContinueBtn'),
+    sendMsg: $('#acStatSendMsg'),
+    retry: $('#acStatRetry'),
+    switchAcct: $('#acStatSwitchAcct'),
+    switchModel: $('#acStatSwitchModel'),
+    permission: $('#acStatPermission'),
+    dismiss: $('#acStatDismiss'),
+  };
+  function updateAcStats(stats) {
+    let total = 0;
+    for (const [key, el] of Object.entries(statEls)) {
+      const v = stats[key] || 0;
+      total += v;
+      if (el) el.textContent = v;
+    }
+    if (acStatsTotal) acStatsTotal.textContent = total;
+    // 有任何非零计数时显示统计条
+    if (acStatsBar) acStatsBar.style.display = total > 0 ? '' : 'none';
+  }
+
   function applyEnhSettingsToUI(s) {
     if (!s || typeof s !== 'object') return;
     try {
@@ -2942,9 +3565,7 @@
 
     let primaryBtn;
     if (isCurrent) {
-      primaryBtn = `<button class="inst-card-btn current" disabled title="正是当前窗口，无需操作">
-         <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3 3 7-7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-       </button>`;
+      primaryBtn = '';
     } else if (inst.running) {
       primaryBtn = `<button class="inst-card-btn stop" data-inst-action="stop" title="停止">
          <svg width="11" height="11" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" fill="currentColor" rx="1"/></svg>
@@ -2957,12 +3578,29 @@
        </button>`;
     }
 
-    // 跳转按钮：始终占位，运行中非当前窗口时可见
+    // 跳转按钮：运行中非当前窗口时显示，其余不渲染（避免空白占位）
     const canFocus = !isCurrent && inst.running;
-    const focusBtn = `<button class="icon-btn focus" data-inst-action="focus" title="跳转到此窗口"${canFocus ? '' : ' style="visibility:hidden" disabled'}>
+    const focusBtn = canFocus ? `<button class="icon-btn focus" data-inst-action="focus" title="跳转到此窗口">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-       </button>`;
-    return { statusClass, stateText, isDefault, isCurrent, sourceBadge, primaryBtn, focusBtn };
+       </button>` : '';
+    return { statusClass, stateText, isDefault, isCurrent, sourceBadge, primaryBtn, focusBtn, running: inst.running };
+  }
+
+  // 智能选号图标（取代 emoji ⭐）
+  const SMART_ICON_SVG = '<svg class="inst-smart-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M3 12h3M18 12h3M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>';
+
+  function buildInstEmailHTML(inst) {
+    if (inst.bindEmail === '__auto__') {
+      const smartLabel = `<span class="inst-smart-label">${SMART_ICON_SVG}智能选号</span>`;
+      if (inst.currentEmail) {
+        return `${smartLabel}<span class="inst-email-sep">·</span><span class="inst-email-text">${escHtml(inst.currentEmail)}</span>`;
+      }
+      return `${smartLabel}<span class="inst-email-sep">·</span><span class="inst-email-empty">尚未启动</span>`;
+    }
+    if (inst.bindEmail) {
+      return `<span class="inst-email-text">${escHtml(inst.bindEmail)}</span>`;
+    }
+    return `<span class="inst-email-empty">未绑定账号</span>`;
   }
 
   function renderInstanceList(instances, hasUnimported) {
@@ -2989,16 +3627,19 @@
     if (structChanged) {
       list.innerHTML = instances.map(inst => {
         const { statusClass, stateText, isDefault, isCurrent, sourceBadge, primaryBtn, focusBtn } = buildInstCardHTML(inst);
+        const emailHTML = buildInstEmailHTML(inst);
+        const tagHTML = inst.assignedTag
+          ? `<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">${escHtml(inst.assignedTag)}</span>`
+          : `<span class="inst-tag-none" data-inst-action="viewTag">默认分组</span>`;
         return `<div class="inst-card ${statusClass}" data-inst-id="${escHtml(inst.id)}">
           <div class="inst-card-header">
-            <span class="inst-status-dot ${statusClass}" title="${stateText}"></span>
             <div class="inst-card-name">${escHtml(inst.name)}</div>${sourceBadge}
-            ${focusBtn}<span class="inst-card-state ${statusClass}">${stateText}</span>
+            <span class="inst-card-state ${statusClass}">${stateText}</span>
           </div>
-          <div class="inst-card-email" title="${escHtml(inst.bindEmail === '__auto__' ? (inst.currentEmail || '智能选号') : (inst.bindEmail || ''))}">${inst.bindEmail === '__auto__' ? '<span style="color:var(--ac-emerald)">⭐ 智能选号</span>' + (inst.currentEmail ? ' <span style="opacity:0.75">· 当前 ' + escHtml(inst.currentEmail) + '</span>' : ' <span style="opacity:0.5">· 尚未启动</span>') : inst.bindEmail ? escHtml(inst.bindEmail) : '<span style="opacity:0.4">未绑定账号</span>'}</div>
-          <div class="inst-card-tag">${inst.assignedTag ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">📌 ' + escHtml(inst.assignedTag) + '</span>' : '<span class="inst-tag-none" data-inst-action="viewTag">未分配号池分组</span>'}</div>
+          <div class="inst-card-email" title="${escHtml(inst.bindEmail === '__auto__' ? (inst.currentEmail || '智能选号') : (inst.bindEmail || ''))}">${emailHTML}</div>
+          <div class="inst-card-tag">${tagHTML}</div>
           <div class="inst-card-actions">
-            ${primaryBtn}
+            ${focusBtn}${primaryBtn}
             <button class="icon-btn" data-inst-action="edit" title="编辑">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
             </button>
@@ -3015,8 +3656,6 @@
         if (!card) return;
         const { statusClass, stateText, isDefault, isCurrent, sourceBadge, primaryBtn, focusBtn } = buildInstCardHTML(inst);
         card.className = 'inst-card ' + statusClass;
-        const dot = card.querySelector('.inst-status-dot');
-        if (dot) { dot.className = 'inst-status-dot ' + statusClass; dot.title = stateText; }
         const nameEl = card.querySelector('.inst-card-name');
         if (nameEl) {
           nameEl.textContent = inst.name;
@@ -3035,25 +3674,27 @@
         const emailEl = card.querySelector('.inst-card-email');
         if (emailEl) {
           emailEl.title = inst.bindEmail === '__auto__' ? (inst.currentEmail || '智能选号') : (inst.bindEmail || '');
-          emailEl.innerHTML = inst.bindEmail === '__auto__' ? '<span style="color:var(--ac-emerald)">⭐ 智能选号</span>' + (inst.currentEmail ? ' <span style="opacity:0.75">· 当前 ' + escHtml(inst.currentEmail) + '</span>' : ' <span style="opacity:0.5">· 尚未启动</span>') : inst.bindEmail ? escHtml(inst.bindEmail) : '<span style="opacity:0.4">未绑定账号</span>';
+          emailEl.innerHTML = buildInstEmailHTML(inst);
         }
         const tagEl = card.querySelector('.inst-card-tag');
         if (tagEl) {
           tagEl.innerHTML = inst.assignedTag
-            ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">📌 ' + escHtml(inst.assignedTag) + '</span>'
-            : '<span class="inst-tag-none" data-inst-action="viewTag">未分配号池分组</span>';
+            ? '<span class="inst-tag-badge" data-inst-action="viewTag" title="点击查看该标签下的账号">' + escHtml(inst.assignedTag) + '</span>'
+            : '<span class="inst-tag-none" data-inst-action="viewTag">默认分组</span>';
         }
         const actionsEl = card.querySelector('.inst-card-actions');
         if (actionsEl) {
-          // 更新主按钮
-          const oldPrimary = actionsEl.querySelector('.inst-card-btn');
-          if (oldPrimary) {
-            const tmp = document.createElement('div');
-            tmp.innerHTML = primaryBtn;
-            actionsEl.replaceChild(tmp.firstElementChild, oldPrimary);
-          }
-          // 更新删除按钮禁用状态
+          // 更新 focus + 主按钮（全部重建前头部分，保留 edit/delete）
+          const editBtn = actionsEl.querySelector('[data-inst-action="edit"]');
           const delBtn = actionsEl.querySelector('[data-inst-action="delete"]');
+          // 清除除 edit/delete 以外的所有按钮
+          [...actionsEl.children].forEach(c => {
+            if (c !== editBtn && c !== delBtn) c.remove();
+          });
+          // 新插入 focus + primary 在头部
+          const headFrag = document.createElement('div');
+          headFrag.innerHTML = focusBtn + primaryBtn;
+          [...headFrag.children].reverse().forEach(c => actionsEl.insertBefore(c, actionsEl.firstChild));
           if (delBtn) delBtn.disabled = isCurrent || isDefault;
         }
       });
@@ -3071,6 +3712,7 @@
 
   // 持久 toast 引用（用于"加载中"等持续状态，done 时被替换/关闭）
   let _persistentToast = null;
+  const _toastByKey = new Map();
 
   function showInstProgress(msg, done, error) {
     if (!msg) return;
@@ -3088,11 +3730,16 @@
     }
   }
 
-  function createToast(msg, type) {
+  function createToast(msg, type, key) {
     const container = document.getElementById('toastContainer');
     if (!container) return null;
+    if (key && _toastByKey.has(key)) {
+      const old = _toastByKey.get(key);
+      removeToast(old, true);
+    }
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
+    if (key) toast.dataset.toastKey = key;
     const iconHtml = type === 'loading'
       ? '<span class="toast-spinner"></span>'
       : type === 'success'
@@ -3101,12 +3748,31 @@
     toast.innerHTML = `${iconHtml}<span class="toast-msg">${escHtml(msg)}</span><button class="toast-close" aria-label="关闭">✕</button>`;
     toast.querySelector('.toast-close').addEventListener('click', () => removeToast(toast));
     container.appendChild(toast);
+    if (key) _toastByKey.set(key, toast);
+    while (container.children.length > 3) removeToast(container.firstElementChild, true);
     requestAnimationFrame(() => toast.classList.add('toast-in'));
     return toast;
   }
 
-  function removeToast(toast) {
+  function showToast(msg, type = 'success', ttl = 2200, key = '') {
+    const toast = createToast(msg, type, key);
+    if (toast) {
+      if (toast._hideTimer) clearTimeout(toast._hideTimer);
+      toast._hideTimer = setTimeout(() => removeToast(toast), ttl);
+    }
+  }
+
+  function removeToast(toast, immediate = false) {
     if (!toast || !toast.parentNode) return;
+    if (toast._hideTimer) clearTimeout(toast._hideTimer);
+    if (toast.dataset && toast.dataset.toastKey && _toastByKey.get(toast.dataset.toastKey) === toast) {
+      _toastByKey.delete(toast.dataset.toastKey);
+    }
+    if (immediate) {
+      toast.remove();
+      if (_persistentToast === toast) _persistentToast = null;
+      return;
+    }
     toast.classList.remove('toast-in');
     toast.classList.add('toast-out');
     setTimeout(() => { if (toast.parentNode) toast.remove(); }, 220);
@@ -3331,7 +3997,7 @@
 
   function getTagList() {
     const tags = new Set();
-    accounts.forEach(a => { if (a.tag) tags.add(a.tag); });
+    accounts.forEach(a => { getAccTags(a).forEach(t => tags.add(t)); });
     return [...tags].sort();
   }
 
@@ -3527,28 +4193,31 @@
       if (!chip) return;
       const card = chip.closest('.grid-card');
       const email = card?.dataset.email;
-      const account = accounts.find(a => a.email === email);
-      if (!account?.tag) return;
+      const tagName = chip.dataset.tag;
+      if (!tagName) return;
       e.preventDefault();
-      openTagColorPicker(account.tag, chip);
+      openTagColorPicker(tagName, chip);
     });
 
     // ── 统一过滤器 ──
     const filterTrigger = document.getElementById('filterTrigger');
     const filterDropdown = document.getElementById('filterDropdown');
     const filterClearBtn = document.getElementById('filterClearBtn');
+    const quickHealthOkBtn = document.getElementById('quickHealthOkBtn');
     // 恢复持久化
     try {
       const st = vscode.getState() || {};
       if (st._filterPlans) filterPlans = new Set(st._filterPlans);
       if (st._filterTags) filterTags = new Set(st._filterTags);
       if (st._filterStatuses) filterStatuses = new Set(st._filterStatuses);
+      if (st._filterHealth) filterHealth = new Set(st._filterHealth);
     } catch {}
     function persistFilters() {
       const st = vscode.getState() || {};
       st._filterPlans = [...filterPlans];
       st._filterTags = [...filterTags];
       st._filterStatuses = [...filterStatuses];
+      st._filterHealth = [...filterHealth];
       vscode.setState(st);
     }
     if (filterTrigger && filterDropdown) {
@@ -3569,6 +4238,7 @@
         if (sectionId === 'filterPlanSection') targetSet = filterPlans;
         else if (sectionId === 'filterTagSection') targetSet = filterTags;
         else if (sectionId === 'filterStatusSection') targetSet = filterStatuses;
+        else if (sectionId === 'filterHealthSection') targetSet = filterHealth;
         else return;
         if (targetSet.has(name)) targetSet.delete(name); else targetSet.add(name);
         persistFilters();
@@ -3588,9 +4258,21 @@
         filterPlans.clear();
         filterTags.clear();
         filterStatuses.clear();
+        filterHealth.clear();
         persistFilters();
         currentPage = 1;
         buildFilterDropdown();
+        renderCards();
+      });
+    }
+    if (quickHealthOkBtn) {
+      quickHealthOkBtn.addEventListener('click', () => {
+        if (filterHealth.has('可用')) filterHealth.delete('可用');
+        else filterHealth.add('可用');
+        persistFilters();
+        currentPage = 1;
+        const dropdown = document.getElementById('filterDropdown');
+        if (dropdown && !dropdown.hidden) buildFilterDropdown();
         renderCards();
       });
     }
@@ -3703,6 +4385,7 @@
       });
     }
 
+
     // 取消多选
     const batchCancelBtn = document.getElementById('batchCancelBtn');
     if (batchCancelBtn) {
@@ -3735,7 +4418,13 @@
     });
 
     // 刷新全部
-    if (refreshAllBtn) refreshAllBtn.addEventListener('click', refreshAll);
+    if (refreshAllBtn) refreshAllBtn.addEventListener('click', () => refreshAll(true, true));
+    const exportAccountsBtn = document.getElementById('exportAccountsBtn');
+    if (exportAccountsBtn) {
+      exportAccountsBtn.addEventListener('click', () => {
+        postMsg('exportAccounts', {});
+      });
+    }
 
     const savedState = vscode.getState() || {};
     privacyMode = savedState.privacyMode === true;
@@ -3759,6 +4448,17 @@
     if (batchJsonBtn) batchJsonBtn.addEventListener('click', () => { doBatchImportJson(); closeAddAccountModal(); });
     const batchDevinBtn = $('[data-action="batchImportDevin"]');
     if (batchDevinBtn) batchDevinBtn.addEventListener('click', () => { doBatchImportDevin(); closeAddAccountModal(); });
+    const oauthLoginBtn = $('[data-action="oauthLogin"]');
+    if (oauthLoginBtn) oauthLoginBtn.addEventListener('click', () => {
+      const tagEl = document.getElementById('oauthTag');
+      const msgEl = document.getElementById('oauthMsg');
+      if (msgEl) {
+        msgEl.hidden = false;
+        msgEl.textContent = '正在打开授权页…';
+        msgEl.className = 'batch-msg is-ok';
+      }
+      postMsg('oauthLogin', { tag: tagEl ? tagEl.value.trim() : '' });
+    });
 
     // 从当前账户添加
     const addCurrentBtn = $('[data-action="addCurrent"]');
@@ -3884,6 +4584,9 @@
         checkSec: autoSwitchCheckSec,
         cooldownSec: autoSwitchCooldownSec,
         refreshMin: autoSwitchRefreshMin,
+        refreshConcurrency: autoSwitchRefreshConcurrency,
+        refreshBatchDelayMs: autoSwitchRefreshBatchDelayMs,
+        periodRefreshHours: autoSwitchPeriodRefreshHours,
         scoreMode: autoSwitchScoreMode,
         switchStrategy: autoSwitchStrategy,
         minQuota: autoSwitchMinQuota,
@@ -3921,6 +4624,30 @@
       enhRefreshAllEl.addEventListener('change', () => {
         autoSwitchRefreshMin = Math.max(1, parseInt(enhRefreshAllEl.value) || 5);
         enhRefreshAllEl.value = autoSwitchRefreshMin;
+        sendAutoSwitchSettings();
+      });
+    }
+    const enhRefreshConcurrencyEl = document.getElementById('enhRefreshConcurrency');
+    if (enhRefreshConcurrencyEl) {
+      enhRefreshConcurrencyEl.addEventListener('change', () => {
+        autoSwitchRefreshConcurrency = Math.max(1, Math.min(50, parseInt(enhRefreshConcurrencyEl.value) || 12));
+        enhRefreshConcurrencyEl.value = autoSwitchRefreshConcurrency;
+        sendAutoSwitchSettings();
+      });
+    }
+    const enhRefreshBatchDelayEl = document.getElementById('enhRefreshBatchDelay');
+    if (enhRefreshBatchDelayEl) {
+      enhRefreshBatchDelayEl.addEventListener('change', () => {
+        autoSwitchRefreshBatchDelayMs = Math.max(0, Math.min(10000, parseInt(enhRefreshBatchDelayEl.value) || 0));
+        enhRefreshBatchDelayEl.value = autoSwitchRefreshBatchDelayMs;
+        sendAutoSwitchSettings();
+      });
+    }
+    const enhPeriodRefreshHoursEl = document.getElementById('enhPeriodRefreshHours');
+    if (enhPeriodRefreshHoursEl) {
+      enhPeriodRefreshHoursEl.addEventListener('change', () => {
+        autoSwitchPeriodRefreshHours = Math.max(0, Math.min(168, Number(enhPeriodRefreshHoursEl.value) || 0));
+        enhPeriodRefreshHoursEl.value = autoSwitchPeriodRefreshHours;
         sendAutoSwitchSettings();
       });
     }
@@ -4014,10 +4741,14 @@
       const singleArea = document.getElementById('singleLoginArea');
       const batchArea = document.getElementById('batchImportArea');
       const currentArea = document.getElementById('currentAccountArea');
+      const oauthArea = document.getElementById('oauthLoginArea');
       if (singleArea) singleArea.hidden = mode !== 'single';
       if (batchArea) batchArea.hidden = mode !== 'batch';
       if (currentArea) currentArea.hidden = mode !== 'current';
+      if (oauthArea) oauthArea.hidden = mode !== 'oauth';
       setBatchMsg('', false);
+      const oauthMsg = document.getElementById('oauthMsg');
+      if (oauthMsg && mode !== 'oauth') oauthMsg.hidden = true;
     }
     addTabs.forEach(tab => {
       tab.addEventListener('click', () => switchAddTab(tab.getAttribute('data-tab') || 'single'));
@@ -4113,6 +4844,14 @@
         if (e.target === tagEditOverlay) closeTagEditModal();
       });
     }
+    // 标签输入框回车 → 添加标签
+    const tagEditInput = document.getElementById('tagEditInput');
+    if (tagEditInput) tagEditInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); addTagFromInput(); }
+    });
+    // "添加"按钮
+    const tagEditAddBtn = document.getElementById('tagEditAddBtn');
+    if (tagEditAddBtn) tagEditAddBtn.addEventListener('click', addTagFromInput);
 
     // 实例编辑模态框
     const instEditClose = document.getElementById('instEditClose');
@@ -4168,6 +4907,12 @@
     if (enhanceRestoreBtn) {
       enhanceRestoreBtn.addEventListener('click', () => {
         postMsg('runCommand', { command: 'windsurfPool.restoreWorkbench' });
+      });
+    }
+    var enhResetMachineIdBtn = $('#enhResetMachineIdBtn');
+    if (enhResetMachineIdBtn) {
+      enhResetMachineIdBtn.addEventListener('click', () => {
+        postMsg('resetMachineId');
       });
     }
 
@@ -4546,6 +5291,8 @@
     postMsg('instanceList', {});
     // 主动请求增强状态
     postMsg('getEnhancementStatus', {});
+    // 同步标签颜色给其他面板
+    postMsg('syncTagColors', { colors: tagColors });
 
     // 实例状态自动轮询（8s）—— 检测实例启停变化
     setInterval(() => {
@@ -4584,7 +5331,7 @@
 
     // 初始加载后延迟拉配额
     setTimeout(() => {
-      if (accounts.length > 0) refreshAll();
+      if (accounts.length > 0) refreshAll(false, false);
     }, 1500);
   }
 

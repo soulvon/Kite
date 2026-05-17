@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Windsurf Pool 统计面板 - 极简科技拟物版</title>
+    <!-- 引入纯净且现代的字体 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* 页面大背景：极浅灰 */
+            --bg-primary: #f5f6f8;
+            
+            /* 卡片和主要白底按钮 */
+            --bg-card: #ffffff;
+            
+            /* 灰色填充：用于搜索框和分段控制器的底槽 */
+            --bg-fill: #eef0f3;
+            
+            /* 品牌色：降低黑色的使用频率，强化科技蓝 */
+            --accent-blue: #2b66ff;
+            --accent-black: #1a1a1a;
+            
+            /* 文字颜色 */
+            --text-primary: #1a1a20;
+            --text-secondary: #5c6370;
+            --text-muted: #8c95a5;
+            --text-inverse: #ffffff;
+
+            /* 边框 */
+            --border: rgba(0, 0, 0, 0.04);
+            --border-strong: rgba(0, 0, 0, 0.08);
+
+            /* 阴影 */
+            --shadow-sm:
+                0 1px 2px rgba(0, 0, 0, 0.03),
+                inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            
+            --shadow-card:
+                0 2px 8px rgba(0, 0, 0, 0.02),
+                0 10px 30px rgba(0, 0, 0, 0.03);
+
+            --shadow-blue-glow: 0 4px 12px rgba(43, 102, 255, 0.35);
+            --shadow-black-glow: 0 4px 12px rgba(26, 26, 26, 0.2);
+
+            --radius-pill: 100px;
+            --radius-lg: 16px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Manrope', 'Noto Sans SC', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            letter-spacing: -0.01em;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            background-color: #ffffff;
+            border-radius: 24px;
+            padding: 30px;
+            box-shadow: var(--shadow-card);
+            border: 1px solid var(--border);
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* 优化1：移除粗笨的黑色正方形Logo底色，改用纯文字或更轻量的图标 */
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent-blue) 0%, #60a5fa 100%);
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #ffffff;
+            font-size: 16px;
+            font-weight: bold;
+            box-shadow: var(--shadow-blue-glow);
+        }
+
+        h1 {
+            font-size: 20px;
+            font-weight: 800;
+            color: var(--accent-black);
+            letter-spacing: -0.02em;
+        }
+
+        .version-badge {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 6px;
+            background-color: var(--bg-fill);
+            color: var(--text-secondary);
+            font-weight: 600;
+            margin-left: 4px;
+        }
+
+        /* 药丸按钮 */
+        .pill-btn {
+            border: 1px solid var(--border);
+            outline: none;
+            background-color: #ffffff;
+            padding: 8px 18px;
+            border-radius: var(--radius-pill);
+            box-shadow: var(--shadow-sm);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .pill-btn:hover {
+            transform: translateY(-1px);
+            border-color: var(--border-strong);
+            color: var(--text-primary);
+        }
+
+        /* 优化2：只有在真正激活某个大分类时才用黑色（如原图），不作为通用按钮色 */
+        .pill-btn.active-black {
+            background-color: var(--accent-black);
+            color: #ffffff;
+            border-color: var(--accent-black);
+            box-shadow: var(--shadow-black-glow);
+        }
+
+        .pill-btn.active-blue {
+            background-color: var(--accent-blue);
+            color: #ffffff;
+            border-color: var(--accent-blue);
+            box-shadow: var(--shadow-blue-glow);
+        }
+
+        /* 搜索框风格的输入框 */
+        .search-style-input {
+            background-color: var(--bg-fill);
+            border: 1px solid transparent;
+            outline: none;
+            padding: 10px 18px;
+            border-radius: var(--radius-pill);
+            color: var(--text-primary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .search-style-input:hover {
+            background-color: #e4e7ec;
+        }
+
+        /* Toolbars */
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        /* 分段控制器 */
+        .segmented-control {
+            display: flex;
+            background-color: var(--bg-fill);
+            padding: 4px;
+            border-radius: var(--radius-pill);
+            gap: 2px;
+        }
+
+        .segment-item {
+            padding: 6px 16px;
+            border-radius: var(--radius-pill);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .segment-item.active {
+            background-color: #ffffff;
+            color: var(--text-primary);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .segment-item.active-blue {
+            background-color: var(--accent-blue);
+            color: #ffffff;
+            box-shadow: var(--shadow-blue-glow);
+        }
+
+        /* 卡片 */
+        .card {
+            background-color: #ffffff;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.01);
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 15px;
+        }
+
+        /* Table 样式 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            padding: 12px;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 14px 12px;
+            font-size: 13px;
+            color: var(--text-primary);
+            border-bottom: 1px solid #f5f6f8;
+        }
+
+        tr:hover td {
+            background-color: #fafbfc;
+        }
+
+        .mono-font {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- Header -->
+    <header>
+        <div class="logo-area">
+            <!-- 优化：Logo改为渐变蓝，更显科技感 -->
+            <div class="logo-icon">W</div>
+            <h1>WINDSURF POOL <span class="version-badge">v6.9.11</span></h1>
+        </div>
+        <div class="header-actions">
+            <button class="pill-btn"><span style="opacity: 0.6;">👁</span> 隐私</button>
+            <!-- 优化：刷新按钮改为白底，不再使用笨重的纯黑 -->
+            <button class="pill-btn">⟳ 刷新</button>
+        </div>
+    </header>
+
+    <!-- Toolbar 1 -->
+    <div class="toolbar">
+        <div style="display: flex; gap: 8px;">
+            <!-- 保留唯一的黑色激活态，符合原图的特定分类设计 -->
+            <button class="pill-btn active-black">🖼 图片</button>
+            <button class="pill-btn">🌐 网页</button>
+            <button class="pill-btn">≡ 文本</button>
+            <button class="pill-btn">📹 视频</button>
+        </div>
+        
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <span style="font-size: 13px; color: var(--text-muted);">共 <span style="font-weight: 700; color: var(--text-primary);">3444</span> 个模板</span>
+            <button class="pill-btn active-blue">全部</button>
+            <button class="pill-btn">🎨 创意趣味</button>
+            <button class="pill-btn">📷 生活写真</button>
+        </div>
+    </div>
+
+    <!-- Toolbar 2 -->
+    <div class="toolbar" style="margin-bottom: 25px;">
+        <div style="display: flex; gap: 10px; align-items: center;">
+            <select class="search-style-input">
+                <option>suvon2501@gmail.com</option>
+                <option>alpha@gmail.com</option>
+            </select>
+            
+            <div class="segmented-control">
+                <div class="segment-item active">当前</div>
+                <div class="segment-item">最近</div>
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; align-items: center;">
+            <div class="segmented-control">
+                <div class="segment-item">1小时</div>
+                <div class="segment-item active-blue">24h</div>
+                <div class="segment-item">7天</div>
+                <div class="segment-item">30天</div>
+            </div>
+
+            <div class="segmented-control">
+                <div class="segment-item">大 ⚃</div>
+                <div class="segment-item active">小 ▦</div>
+            </div>
+            
+            <div class="segmented-control">
+                <div class="segment-item active">最新</div>
+                <div class="segment-item">A-Z</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Card -->
+    <div class="card">
+        <div class="card-title">明细列表</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>记录时间</th>
+                    <th>账号</th>
+                    <th>日变化</th>
+                    <th>倒计时</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="mono-font">05/14 19:27:22</td>
+                    <td style="font-weight: 600;">suvon2501@gmail.com</td>
+                    <td class="mono-font" style="color: #EF4444; font-weight: 600;">-2</td>
+                    <td class="mono-font">20h 32m</td>
+                </tr>
+                <tr>
+                    <td class="mono-font">05/14 19:13:55</td>
+                    <td style="font-weight: 600;">suvon2501@gmail.com</td>
+                    <td class="mono-font" style="color: #EF4444; font-weight: 600;">-2</td>
+                    <td class="mono-font">20h 45m</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+</body>
+</html>

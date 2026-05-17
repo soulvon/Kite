@@ -368,6 +368,35 @@ body {
 .lp-c-yellow { color: #e5a445; }
 .lp-c-green { color: #3fb950; }
 
+/* 跨窗口 delta（相对于时间范围外的记录算出，视觉弱化）*/
+.lp-delta-dim {
+  color: var(--lp-fg-dim);
+  opacity: 0.55;
+  font-weight: 400;
+  font-style: italic;
+}
+.lp-delta-cross-icon {
+  display: inline-block;
+  margin-left: 3px;
+  font-size: 9px;
+  opacity: 0.7;
+  vertical-align: middle;
+  cursor: help;
+}
+/* 表头单位徽章 */
+.lp-th-unit {
+  display: inline-block;
+  margin-left: 3px;
+  padding: 0 4px;
+  border-radius: 2px;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  background: rgba(128, 128, 128, 0.15);
+  color: var(--lp-fg-dim);
+  vertical-align: middle;
+}
+
 /* ─── Pagination ─── */
 .lp-pagination {
   display: flex;
@@ -460,6 +489,108 @@ body {
 
 /* Dim color */
 .lp-c-dim { color: var(--lp-fg-dim); }
+
+/* ─── Context Monitor ─── */
+.lp-context-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.lp-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--lp-fg);
+}
+.lp-context-sub {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--lp-fg-dim);
+}
+.lp-context-active {
+  margin-bottom: 14px;
+}
+.lp-context-card {
+  background: var(--lp-surface);
+  border: 1px solid var(--lp-border);
+  border-radius: var(--lp-radius);
+  padding: 12px;
+}
+.lp-context-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.lp-context-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: var(--lp-accent);
+  background: rgba(91,154,255,0.12);
+  border: 1px solid rgba(91,154,255,0.25);
+}
+.lp-context-bar {
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(128,128,128,0.18);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.lp-context-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+.lp-context-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 12px;
+  font-size: 11px;
+  color: var(--lp-fg-dim);
+  margin-bottom: 10px;
+}
+.lp-context-grid b {
+  color: var(--lp-fg);
+  font-weight: 600;
+}
+.lp-context-reply {
+  max-height: 54px;
+  overflow: hidden;
+  padding: 8px 10px;
+  border-radius: var(--lp-radius);
+  background: rgba(128,128,128,0.10);
+  color: var(--lp-fg);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.lp-session-title {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--lp-fg);
+}
+.lp-code-cell {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+}
+.lp-context-reply-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--lp-fg-dim);
+  font-size: 11px;
+}
 
 /* ─── Mini progress bars (overview + quota table) ─── */
 .lp-pct-cell {

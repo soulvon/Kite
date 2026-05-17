@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+	<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
+		<Metadata>
+			<Identity Language="en-US" Id="xinghuo-windsurf" Version="8.4.3" Publisher="SparkCore" />
+			<DisplayName>星火无痕换号</DisplayName>
+			<Description xml:space="preserve">Windsurf 账号调度中枢：AI 驱动 · 全自动 · 零感知换号。多账号轮转、消息锚定、自动预热、节省积分、持续对话、免魔法直连、无人值守。</Description>
+			<Tags>windsurf,cascade,codeium,ai,星火无痕换号,xinghuo,xinghuowindsurf,xinghuo-windsurf,sparkcore,spark core,account,account switch,account rotation,account pool,multi account,auto switch,auto rotate,seamless switch,token rotation,token inject,账号切换,账号轮转,无感换号,自动换号,切号,换号,多账号,账号池,quota,quota monitor,quota management,配额,配额监控,message anchor,消息锚定,save points,节省积分,省积分,auto preheat,自动预热,秒切,health score,健康评分,fingerprint,device fingerprint,设备指纹,指纹重置,auto continue,持续对话,unlimited conversation,model unhide,pro skin,proxy,免魔法,免翻墙,直连,cloudflare worker,unattended,hands free,无人值守,全自动,multi instance,多实例,windsurf pro,windsurf free,windsurf unlimited,too many free,解除限流,keybindings</Tags>
+			<Categories>AI,Other</Categories>
+			<GalleryFlags>Public</GalleryFlags>
+			
+			<Properties>
+				<Property Id="Microsoft.VisualStudio.Code.Engine" Value="^1.71.0" />
+				<Property Id="Microsoft.VisualStudio.Code.ExtensionDependencies" Value="" />
+				<Property Id="Microsoft.VisualStudio.Code.ExtensionPack" Value="" />
+				<Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="workspace" />
+				<Property Id="Microsoft.VisualStudio.Code.LocalizedLanguages" Value="" />
+				<Property Id="Microsoft.VisualStudio.Code.EnabledApiProposals" Value="" />
+				
+				<Property Id="Microsoft.VisualStudio.Code.ExecutesCode" Value="true" />
+				
+				
+				
+				
+				<Property Id="Microsoft.VisualStudio.Services.Branding.Color" Value="#1e1e1e" />
+				<Property Id="Microsoft.VisualStudio.Services.Branding.Theme" Value="dark" />
+				<Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true" />
+				<Property Id="Microsoft.VisualStudio.Services.Content.Pricing" Value="Free"/>
+
+				<Property Id="Microsoft.VisualStudio.Services.EnableMarketplaceQnA" Value="true" />
+				
+			</Properties>
+			<License>extension/LICENSE.txt</License>
+			<Icon>extension/resources/windsurf-icon.png</Icon>
+		</Metadata>
+		<Installation>
+			<InstallationTarget Id="Microsoft.VisualStudio.Code"/>
+		</Installation>
+		<Dependencies/>
+		<Assets>
+			<Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
+			<Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/readme.md" Addressable="true" />
+<Asset Type="Microsoft.VisualStudio.Services.Content.License" Path="extension/LICENSE.txt" Addressable="true" />
+<Asset Type="Microsoft.VisualStudio.Services.Icons.Default" Path="extension/resources/windsurf-icon.png" Addressable="true" />
+		</Assets>
+	</PackageManifest>

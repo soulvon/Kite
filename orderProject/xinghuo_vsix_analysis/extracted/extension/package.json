@@ -1,0 +1,352 @@
+{
+  "name": "xinghuo-windsurf",
+  "displayName": "星火无痕换号",
+  "description": "Windsurf 账号调度中枢：AI 驱动 · 全自动 · 零感知换号。多账号轮转、消息锚定、自动预热、节省积分、持续对话、免魔法直连、无人值守。",
+  "version": "8.4.3",
+  "publisher": "SparkCore",
+  "author": {
+    "name": "xinghuoWindsurf"
+  },
+  "license": "MIT",
+  "icon": "resources/windsurf-icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "markdown": "github",
+  "qna": "marketplace",
+  "keywords": [
+    "windsurf",
+    "cascade",
+    "codeium",
+    "ai",
+    "星火无痕换号",
+    "xinghuo",
+    "xinghuowindsurf",
+    "xinghuo-windsurf",
+    "sparkcore",
+    "spark core",
+    "account",
+    "account switch",
+    "account rotation",
+    "account pool",
+    "multi account",
+    "auto switch",
+    "auto rotate",
+    "seamless switch",
+    "token rotation",
+    "token inject",
+    "账号切换",
+    "账号轮转",
+    "无感换号",
+    "自动换号",
+    "切号",
+    "换号",
+    "多账号",
+    "账号池",
+    "quota",
+    "quota monitor",
+    "quota management",
+    "配额",
+    "配额监控",
+    "message anchor",
+    "消息锚定",
+    "save points",
+    "节省积分",
+    "省积分",
+    "auto preheat",
+    "自动预热",
+    "秒切",
+    "health score",
+    "健康评分",
+    "fingerprint",
+    "device fingerprint",
+    "设备指纹",
+    "指纹重置",
+    "auto continue",
+    "持续对话",
+    "unlimited conversation",
+    "model unhide",
+    "pro skin",
+    "proxy",
+    "免魔法",
+    "免翻墙",
+    "直连",
+    "cloudflare worker",
+    "unattended",
+    "hands free",
+    "无人值守",
+    "全自动",
+    "multi instance",
+    "多实例",
+    "windsurf pro",
+    "windsurf free",
+    "windsurf unlimited",
+    "too many free",
+    "解除限流"
+  ],
+  "engines": {
+    "vscode": "^1.71.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "files": [
+    "dist/**/*",
+    "resources/windsurf-icon.png",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "windsurfSwitch",
+          "title": "星火无痕换号",
+          "icon": "$(account)"
+        }
+      ]
+    },
+    "views": {
+      "windsurfSwitch": [
+        {
+          "type": "webview",
+          "id": "windsurfSwitch.accountPanel",
+          "name": "控制面板"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "xinghuo.refresh",
+        "title": "刷新面板",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.switchNext",
+        "title": "切换下一个账号",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.dialog.show",
+        "title": "显示对话框",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.repairExtension",
+        "title": "修复扩展 (清理重复补丁)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.restoreFromBackup",
+        "title": "从备份恢复扩展",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.saveWindsurfBaseline",
+        "title": "保存 Windsurf 原版 (打补丁前的安全网)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.restoreWindsurfBaseline",
+        "title": "还原 Windsurf 原版 (一键回到未打补丁状态)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.enableProSkin",
+        "title": "开启 Pro UI 伪装 (仅前端显示, 重启生效)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.disableProSkin",
+        "title": "关闭 Pro UI 伪装 (恢复真实账号等级显示)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.applyAutoContinuePatch",
+        "title": "应用 Auto-Continue 补丁 (解除 Cascade 对话回合数限制)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.removeAutoContinuePatch",
+        "title": "移除 Auto-Continue 补丁 (还原 Windsurf 原版)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.applySwitchInjectionPatch",
+        "title": "应用切号注入补丁 (apiKey 直注 secret session, 切号最快通道)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.removeSwitchInjectionPatch",
+        "title": "移除切号注入补丁 (还原 Windsurf 原版)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.applyModelUnhidePatch",
+        "title": "应用 Model Unhide 补丁 (改 webview MAX_INVOCATIONS)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.removeModelUnhidePatch",
+        "title": "移除 Model Unhide 补丁 (还原 Windsurf 原版)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.checkUpdate",
+        "title": "检查更新",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.showAdaptiveSnapshot",
+        "title": "查看自适应运行时快照",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.showInstances",
+        "title": "查看活跃实例列表",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.clearBlacklist",
+        "title": "清空失败黑名单",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.restoreArchived",
+        "title": "恢复归档账号",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.scanExpiry",
+        "title": "刷新所有账号有效期/配额",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.verifyAll",
+        "title": "批量验证并清理无效账号",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.panicSwitch",
+        "title": "紧急切号 (跳过评分随机选号)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.showActivateHealth",
+        "title": "查看激活健康报告",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.selfTest",
+        "title": "统一自检 (诊断切号核心链路)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.resetFingerprint",
+        "title": "手动刷新设备指纹 (后台静默, 下次启动生效)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.resetFingerprintAndRestart",
+        "title": "设备码重置 (重置后自动重启 Windsurf, 立即解除 too many free 限流)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.toggleDevMode",
+        "title": "切换开发者日志模式 (开启后输出全部内部诊断细节)",
+        "category": "星火无痕换号"
+      },
+      {
+        "command": "xinghuo.openInstanceManager",
+        "title": "分身管理 (独立窗口同时登录多账号)",
+        "category": "星火无痕换号"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "xinghuo.switchNext",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s",
+        "when": "xinghuo.shortcutSwitchEnabled"
+      }
+    ],
+    "configuration": {
+      "title": "星火无痕换号",
+      "properties": {
+        "xinghuo-windsurf.enableAutoSwitch": {
+          "type": "boolean",
+          "default": false,
+          "description": "开启无痕换号功能：当账号额度用尽时自动切换到下一个账号"
+        },
+        "xinghuo-windsurf.enableSavePoints": {
+          "type": "boolean",
+          "default": false,
+          "description": "开启节省积分功能：优化API调用减少积分消耗"
+        },
+        "xinghuo-windsurf.enableShortcutSwitch": {
+          "type": "boolean",
+          "default": false,
+          "description": "开启快捷键换号功能：使用快捷键快速切换账号"
+        },
+        "xinghuo-windsurf.injectCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "自定义注入命令列表（覆盖内置默认）。留空使用内置：windsurf.provideAuthTokenToAuthProvider / codeium.provideAuthToken / windsurf.provideAuthToken。高级用户调试 Windsurf fork（Trae/Void/Kiro）或未来命令改名时使用"
+        },
+        "xinghuo-windsurf.notifyLevel": {
+          "type": "string",
+          "enum": [
+            "silent",
+            "notify",
+            "verbose"
+          ],
+          "enumDescriptions": [
+            "零弹窗，仅写日志",
+            "仅用户主动操作弹窗，自动行为静默",
+            "全部弹窗，调试用"
+          ],
+          "default": "notify",
+          "description": "通知级别：silent=零弹窗，notify=用户主动操作才弹窗，verbose=全部弹窗"
+        },
+        "xinghuo-windsurf.manualProxyPort": {
+          "type": "string",
+          "default": "",
+          "description": "手动代理端口（仅 127.0.0.1，例如 7890）。留空时走默认直连（插件本身使用 Cloudflare Worker 中转）。当公司网络封锁或 Worker 不可达时填入本地代理端口（Clash/V2Ray 等），插件的登录/配额查询请求会走该代理。"
+        },
+        "xinghuo-windsurf.disableProxy": {
+          "type": "boolean",
+          "default": false,
+          "description": "强制直连（忽略上面的手动代理端口）。软路由/网关透明代理用户可开启此项，确保插件走网关路由而不是二次代理。"
+        },
+        "xinghuo-windsurf.logoutBeforeSwitch": {
+          "type": "boolean",
+          "default": false,
+          "description": "切号前先主动登出当前账号。开启后在命令注入前调用 windsurf.logout / codeium.signOut 并等待 300ms，以清除 Windsurf 侧的旧会话残留，避免极个别场景下\"注入成功但仍显示旧账号\"的问题。默认关闭，切号最快。"
+        },
+        "xinghuo-windsurf.preferShitInject": {
+          "type": "boolean",
+          "default": true,
+          "description": "切号优先使用补丁通道（学习 wf-dialog-mcp 的 provideAuthTokenToAuthProviderWithShit）。需要先运行命令『应用切号注入补丁』并重启 Windsurf。补丁应用后，切号链路自动按【补丁通道 → 命令注入 → URI 回调】优先级走，补丁不可用或调用失败时透明降级，用户无感。关闭此开关则始终走旧链路。"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1",
+    "sql.js": "^1.13.0",
+    "uuid": "^9.0.0"
+  },
+  "scripts": {
+    "vscode:prepublish": "echo \"[vsce] prepublish skipped (dist already built and obfuscated)\""
+  }
+}

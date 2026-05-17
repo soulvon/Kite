@@ -1260,6 +1260,7 @@
 		['Group by', '分组'],
 		['Adaptive', '自适应'],
 		['Automatically balances quality and cost', '自动平衡质量和成本'],
+		['Add Opus 4.5 for difficult problems and planning', '添加 Opus 4.5，用于困难问题和规划'],
 		['Recently Used', '最近使用'],
 		['Recommended', '推荐'],
 		// ['New', '新'],  // 移除：模型徒章/徒章上下文保留原文
@@ -2168,6 +2169,23 @@
 	
 	// (Settings UI removed — moved to sidebar panel)
 	
+	// ========== 自动操作统计 ==========
+	const _acStats = { continueBtn: 0, sendMsg: 0, retry: 0, switchAcct: 0, switchModel: 0, permission: 0, dismiss: 0, _startTs: Date.now() };
+	let _acStatsPushTimer = null;
+	function pushAcStats() {
+		// 节流：50ms 内多次 bump 只推一次
+		if (_acStatsPushTimer) return;
+		_acStatsPushTimer = setTimeout(() => {
+			_acStatsPushTimer = null;
+			try {
+				if (typeof bridgePostResult === 'function' && typeof getBridgeUrl === 'function' && getBridgeUrl()) {
+					bridgePostResult({ action: 'ac-stats', stats: { ..._acStats } });
+				}
+			} catch {}
+		}, 50);
+	}
+	function bumpAcStat(key) { _acStats[key] = (_acStats[key] || 0) + 1; pushAcStats(); }
+
 	// ========== 自动继续 ==========
 	let autoContinueObserver = null;
 	let _autoContinueDebounceTimer = null;
@@ -2193,6 +2211,7 @@
 					if (typeof isVisibleAndClickable === 'function' && !isVisibleAndClickable(btn)) continue;
 					_autoContinueLastFireTs = Date.now();
 					if (typeof markActionClick === 'function') markActionClick();
+					bumpAcStat('continueBtn');
 					console.log(LOG_PREFIX + '[AutoContinue] 检测到截断，自动继续...');
 					setTimeout(() => btn.click(), 800);
 					return;
@@ -2220,8 +2239,8 @@
 				const x = (t.textContent || '').toLowerCase();
 				if (kw.some(k => x.includes(k))) {
 					const c = t.querySelector('.codicon-notifications-clear,.codicon-close,.action-label[title*="Close"],.action-label[title*="关闭"]');
-					if (c) { c.click(); logLocalization('✅关闭损坏通知'); }
-					else { t.style.display = 'none'; logLocalization('✅隐藏损坏通知'); }
+					if (c) { c.click(); logLocalization('✅关闭损坏通知'); bumpAcStat('dismiss'); }
+					else { t.style.display = 'none'; logLocalization('✅隐藏损坏通知'); bumpAcStat('dismiss'); }
 				}
 			});
 		}
@@ -2263,13 +2282,15 @@
 		{ pattern: /monthly acu limit reached/i,                              category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /you have reached your.*limit/i,                           category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /reached your usage limit/i,                               category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /resource_exhausted/i,                                      category: 'quotaErrors', signal: 'rate-limited' },
+		{ pattern: /resource_exhausted/i,                                      category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /all API providers are over capacity/i,                     category: 'quotaErrors', signal: 'provider-overloaded' },
 		{ pattern: /Failed precondition.*quota/i,                              category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /all API providers are over their global rate limit/i,      category: 'quotaErrors', signal: 'rate-limited' },
 		{ pattern: /rate limit exceeded/i,                                     category: 'quotaErrors', signal: 'rate-limited' },
 		{ pattern: /upgrade to a Pro account for higher limits/i,              category: 'quotaErrors', signal: 'rate-limited' },
 		{ pattern: /权限拒绝.*rate limit/i,                                    category: 'quotaErrors', signal: 'rate-limited' },
+		{ pattern: /权限拒绝.*全局速率限制/,                                    category: 'quotaErrors', signal: 'rate-limited' },
+		{ pattern: /提供商.*全局速率限制/,                                      category: 'quotaErrors', signal: 'rate-limited' },
 		{ pattern: /Reached.*(?:message|rate) limit/i,                         category: 'quotaErrors', signal: 'rate-limited' },
 		{ pattern: /此模型已达到消息速率限制/i,                                category: 'quotaErrors', signal: 'rate-limited' },
 		{ pattern: /已达到.*(?:配额|限制|额度)/,                               category: 'quotaErrors', signal: 'quota-exhausted' },
@@ -2339,6 +2360,25 @@
 		'[role="alert"]', '[role="status"]',
 		'.status-message',
 		'[class*="error-bubble"]', '[class*="errorBubble"]',
+	];
+
+	// 统一排除选择器：这些 DOM 区域不包含真实错误（参考星火插件 isIgnoredQuotaElement）
+	const IGNORED_CONTEXT_SEL = [
+		'.monaco-editor', 'pre', 'code', 'textarea', 'input', '[contenteditable="true"]',
+		'.terminal', '.xterm', '[class*="terminal-"]', '[class*="xterm-"]', '.integrated-terminal',
+		'.notifications-center', '.notification-toast',
+		'.markers-panel', '.output-view', '.output-body',
+	].join(',');
+
+	// 限流双重确认标记：rate-limited 信号需同时命中主关键词 + 至少一个真实标记，
+	// 避免 AI 讨论 "rate limit" 文字被误判（参考星火插件 RATE_LIMIT_REAL_MARKERS）
+	const RATE_LIMIT_REAL_MARKERS = [
+		'trace id', 'credits were used', 'request was not processed',
+		'try again in about', 'upgrade to a pro account', 'add-credits',
+		'please wait', 'retry after', 'too many requests',
+		'permission denied', 'global rate limit', 'message rate limit',
+		'over capacity', 'over their global',
+		'权限拒绝', '全局速率限制', '消息速率限制',
 	];
 
 	// 获取扫描根：优先 chat root，回退到 body
@@ -2688,6 +2728,39 @@
 			.substring(0, 120);
 	}
 
+	// 防误判：检测文本是否为源码 / 终端输出 / 讨论语境（非真实错误）
+	// 参考星火插件 isSourceLikeQuotaText，防止 AI 回复 / 用户讨论中的错误关键词触发恢复
+	function isSourceLikeText(raw) {
+		const t = (raw || '').toLowerCase();
+		if (t.includes('error_patterns') || t.includes('exhaust_keywords')
+			|| t.includes('rate_limit_keywords') || t.includes('rate_limit_real_markers')
+			|| t.includes('function checkerrors') || t.includes('function getlateseterrortext')
+			|| t.includes('const error_patterns')) return true;
+		const termMarkers = ['npm run', 'npx ', 'node_modules', 'zsh', 'bash', 'fish', 'powershell'];
+		for (const m of termMarkers) { if (t.includes(m)) return true; }
+		if ((/(?:^|\n)\$\s/.test(t) || /(?:^|\n)%\s/.test(t)) && /quota|rate.?limit|exhausted/i.test(t)) return true;
+		if (/[\u201c\u201d\u300c\u300d\u2018\u2019\u300e\u300f]/.test(raw || '') && /quota|rate.?limit|exhausted/i.test(t)) return true;
+		const discussMarkers = ['能不能', '可不可以', '如何', '怎么', '实现', '脚本', '代码', '插件', '逻辑'];
+		let hasDiscuss = false;
+		for (const m of discussMarkers) { if (t.includes(m)) { hasDiscuss = true; break; } }
+		if (hasDiscuss && /quota|rate.?limit|exhausted|额度|配额|速率限制|rate limit/i.test(t)) return true;
+		return false;
+	}
+
+	// 错误元素可见性检查（参考星火插件 isVisibleQuotaElement）
+	function isVisibleErrorElement(el) {
+		try {
+			const rect = el.getBoundingClientRect();
+			return rect.width > 0 && rect.height > 0;
+		} catch { return false; }
+	}
+
+	// 限流双重确认：检查错误文本是否包含至少一个真实标记
+	function hasRateLimitRealMarker(text) {
+		const lower = (text || '').toLowerCase();
+		return RATE_LIMIT_REAL_MARKERS.some(m => lower.includes(m));
+	}
+
 	function findCascadeInput() {
 		// 复用 bubbles 模块的 findInputEl（更准确的选择器）
 		return findInputEl();
@@ -2766,10 +2839,12 @@
 				if (el.closest(ASSISTANT_MSG_SEL)) continue;
 				if (el.closest(USER_MSG_SEL)) continue;
 				if (el.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
-				if (el.closest('.monaco-editor,pre,code')) continue;
+				if (el.closest(IGNORED_CONTEXT_SEL)) continue;
 				if (el.dataset && el.dataset._wsRecoveryHandled) continue;
+				if (!isVisibleErrorElement(el)) continue;
 				const text = getElementErrorText(el);
 				if (text && text.length > 5 && text.length < 1000) {
+					if (isSourceLikeText(text)) continue;
 					latestError = text;
 					latestErrorEl = el;
 					break;
@@ -2784,14 +2859,16 @@
 			const msgEls = scanRoot.querySelectorAll('span, p, [class*="message"], [role="status"], [role="alert"]');
 			for (let i = msgEls.length - 1; i >= 0 && i > msgEls.length - 30; i--) {
 				const el = msgEls[i];
-				if (el.children.length > 5) continue; // 跳过大容器
-				if (el.dataset && el.dataset._wsRecoveryHandled) continue;
-				// 排除 AI/用户消息体、代码块、可编辑输入
 				if (el.closest(ASSISTANT_MSG_SEL)) continue;
 				if (el.closest(USER_MSG_SEL)) continue;
-				if (el.closest('.monaco-editor,pre,code,textarea,input,[contenteditable="true"]')) continue;
+				if (el.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
+				if (el.closest(IGNORED_CONTEXT_SEL)) continue;
+				if (el.children.length > 5) continue;
+				if (el.dataset && el.dataset._wsRecoveryHandled) continue;
+				if (!isVisibleErrorElement(el)) continue;
 				const t = getElementErrorText(el);
 				if (t.length < 10 || t.length > 500) continue;
+				if (isSourceLikeText(t)) continue;
 				for (const ep of ERROR_PATTERNS) {
 					if (ep.pattern.test(t)) {
 						latestError = t;
@@ -2809,7 +2886,7 @@
 		// 主路径会通过 closest(ASSISTANT_MSG_SEL) 排除，导致这种内嵌错误被忽略 → 不触发恢复
 		// 这里仅信任高置信关键词（专一的错误词组），避免把 AI 正常回复内容（如解释何谓 rate limit）误判
 		// 命中后会走 checkForErrors → ERROR_PATTERNS 分类 → 对应 action（retry/switch-account/switch-model）
-		const STRICT_RECOVERABLE_KW_RE = /权限拒绝.*rate limit|rate limit exceeded|upgrade to a Pro|quota.*exhausted|monthly acu limit|usage.*limit.*reached|额度.*耗尽|配额.*(?:用完|耗尽|不足)|over their global rate limit|reached.*(?:message|rate)\s*limit|此模型已达到消息速率限制|用量配额已耗尽|insufficient credits|no credits (?:remaining|left|available)|credit(?:s)?\s*(?:exhausted|depleted)|积分.*(?:耗尽|不足|用完)|HTTP\s*5\d{2}\b|\bstatus\s*(?:code\s*)?5\d{2}\b|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout|服务器内部错误|网关(?:错误|超时)|服务不可用|tool call failed|failed to (?:call|invoke|execute) tool|工具调用失败|model provider is currently not available|third-party model provider is experiencing issues|API provider is overloaded|all API providers are over capacity|all API providers are over their global rate limit/i;
+		const STRICT_RECOVERABLE_KW_RE = /权限拒绝.*rate limit|权限拒绝.*全局速率限制|提供商.*全局速率限制|rate limit exceeded|upgrade to a Pro|quota.*exhausted|monthly acu limit|usage.*limit.*reached|额度.*耗尽|配额.*(?:用完|耗尽|不足)|over their global rate limit|reached.*(?:message|rate)\s*limit|此模型已达到消息速率限制|用量配额已耗尽|insufficient credits|no credits (?:remaining|left|available)|credit(?:s)?\s*(?:exhausted|depleted)|积分.*(?:耗尽|不足|用完)|HTTP\s*5\d{2}\b|\bstatus\s*(?:code\s*)?5\d{2}\b|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout|服务器内部错误|网关(?:错误|超时)|服务不可用|tool call failed|failed to (?:call|invoke|execute) tool|工具调用失败|model provider is currently not available|third-party model provider is experiencing issues|API provider is overloaded|all API providers are over capacity|all API providers are over their global rate limit/i;
 		if (!latestError) {
 			const asstMsgs = scanRoot.querySelectorAll(ASSISTANT_MSG_SEL);
 			// 只看最后一条 assistant 消息（最近的错误），避免历史回复误判
@@ -2818,13 +2895,15 @@
 				const candidates = lastAsst.querySelectorAll('[role="alert"], [role="status"], [class*="error" i], [class*="warning" i], [class*="banner" i], [class*="notification" i], [class*="alert" i], [class*="toast" i], span, p, div');
 				for (let i = candidates.length - 1; i >= 0; i--) {
 					const el = candidates[i];
-					if (el.dataset && el.dataset._wsRecoveryHandled) continue;
-					if (el.closest('.monaco-editor,pre,code,textarea,input,[contenteditable="true"]')) continue;
+					if (el.closest(IGNORED_CONTEXT_SEL)) continue;
 					if (el.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
-					if (el.children.length > 5) continue;  // 跳过大容器，只看叶子/小节点
+					if (el.children.length > 5) continue;
+					if (el.dataset && el.dataset._wsRecoveryHandled) continue;
+					if (!isVisibleErrorElement(el)) continue;
 					const t = getElementErrorText(el);
 					if (t.length < 10 || t.length > 500) continue;
 					if (!STRICT_RECOVERABLE_KW_RE.test(t)) continue;
+					if (isSourceLikeText(t)) continue;
 					latestError = t;
 					latestErrorEl = el;
 					console.log(LOG_PREFIX + '[getLatestErrorText] 命中 assistant 内嵌错误: ' + t.substring(0, 80));
@@ -2842,17 +2921,16 @@
 			const errorContainers = document.body.querySelectorAll(ERROR_CONTAINER_SEL);
 			for (let i = errorContainers.length - 1; i >= 0; i--) {
 				const container = errorContainers[i];
-				// 排除 AI 聊天消息 / 用户消息 / 代码编辑器 / 我们自己的 toast
 				if (container.closest(ASSISTANT_MSG_SEL)) continue;
 				if (container.closest(USER_MSG_SEL)) continue;
-				if (container.closest('.monaco-editor,pre,code,textarea,input,[contenteditable="true"]')) continue;
+				if (container.closest(IGNORED_CONTEXT_SEL)) continue;
 				if (container.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
-				// 检查容器文本是否匹配额度关键词
 				if (container.dataset && container.dataset._wsRecoveryHandled) continue;
+				if (!isVisibleErrorElement(container)) continue;
 				const t = (container.textContent || '').trim();
 				if (t.length < 10 || t.length > 500) continue;
 				if (!QUOTA_KW_RE.test(t)) continue;
-				// 匹配成功
+				if (isSourceLikeText(t)) continue;
 				latestError = getElementErrorText(container) || t;
 				latestErrorEl = container;
 				break;
@@ -2919,25 +2997,47 @@
 
 			if (result.type === 'switched') {
 				console.log(LOG_PREFIX + '[trigger] 收到切号结果: switched, email=' + (result.email || '?'));
-				console.log(LOG_PREFIX + '[Recovery] 切号成功，等待 session 生效后重试...');
-				showRecoveryNotification('切号成功，正在重试...');
 				recoveryRetryCount = 0;
-				// 不清除 _lastSwitchFingerprint，保留它防止 DOM 残留错误反复触发切号
-				lastRecoveryTs = Date.now();  // 重置冷却起点
+				_brainlessConsecutive = 0;
+				lastRecoveryTs = Date.now();
 				recordRecoveryLog({ category: 'B', error: '', action: 'switch-result', result: 'switched:' + (result.email || '?') });
-				setTimeout(() => {
-					_recoveryCooldownMs = 10000;  // 恢复正常冷却
-					// 用户可能在 3s 切换等待期间关闭自动恢复 → 仍清理 localStorage 但不触发 retry
-					if (!settings.autoRecoveryEnabled) {
-						console.log(LOG_PREFIX + '[Recovery] 切号后 retry setTimeout 短路: autoRecoveryEnabled=false');
-						localStorage.removeItem('ws-pool-result');
-						localStorage.removeItem('ws-pool-signal');
-						return;
-					}
-					retryLastMessage({ afterSwitch: true });
-					localStorage.removeItem('ws-pool-result');
-					localStorage.removeItem('ws-pool-signal');
-				}, 3000);
+				localStorage.removeItem('ws-pool-result');
+				localStorage.removeItem('ws-pool-signal');
+
+				// 决定 afterAction
+				const rule = getRuleForCategory('quotaErrors');
+				const afterAction = (rule && rule.afterAction) || (settings.continueAfterSwitch ? 'send-continue' : 'auto');
+
+				// 弹 banner 倒计时，倒计时结束后等 AI 对话完毕再执行
+				const countdownMs = (settings.recoveryCountdownSeconds || 5) * 1000;
+				_recoveryCooldownMs = countdownMs + 5000;
+				showRecoveryPrompt({
+					title: '切号成功 → ' + (result.email || '?'),
+					category: 'quotaErrors',
+					defaultAction: afterAction,
+					errorText: '已切换账号，等待当前对话结束后自动继续',
+					countdownMs: countdownMs,
+					onExecute: (chosenAction) => {
+						_recoveryCooldownMs = 15000;
+						if (!settings.autoRecoveryEnabled) {
+							console.log(LOG_PREFIX + '[Recovery] 切号后执行短路: autoRecoveryEnabled=false');
+							return;
+						}
+						// 等 AI 生成结束再执行（最多等 120s）
+						waitForAIIdle(() => {
+							if (!settings.autoRecoveryEnabled) {
+								console.log(LOG_PREFIX + '[Recovery] waitForAIIdle 回调短路: autoRecoveryEnabled=false');
+								return;
+							}
+							console.log(LOG_PREFIX + '[Recovery] AI 已空闲，执行切号后动作: ' + chosenAction);
+							executeAfterAction(chosenAction);
+						});
+					},
+					onCancel: () => {
+						_recoveryCooldownMs = 15000;
+						recordRecoveryLog({ category: 'B', error: '', action: 'switch-cancel', result: 'user-cancelled' });
+					},
+				});
 			} else if (result.type === 'switch-failed') {
 				console.log(LOG_PREFIX + '[Recovery] 切号失败: ' + (result.error || ''));
 				showRecoveryNotification(result.error || '切换失败，所有账号可能均无额度');
@@ -2972,20 +3072,12 @@
 		return true;
 	}
 
-	function retryLastMessage(opts) {
-		opts = opts || {};
+	function retryLastMessage() {
 		if (isInCooldown()) {
 			console.log(LOG_PREFIX + '[Recovery] 冷却中，跳过 retryLastMessage');
 			return;
 		}
-		if (opts.afterSwitch) {
-			// 切号后：使用 quotaErrors 的 afterAction 配置
-			const rule = getRuleForCategory('quotaErrors');
-			const afterAction = (rule && rule.afterAction) || (settings.continueAfterSwitch ? 'send-continue' : 'auto');
-			executeAfterAction(afterAction);
-			return;
-		}
-		// 非切号场景：优先点击 Retry 按钮
+		// 优先点击 Retry 按钮
 		const retryBtn = findRetryButton();
 		if (retryBtn) {
 			console.log(LOG_PREFIX + '[Recovery] 点击重试按钮');
@@ -3008,11 +3100,10 @@
 			else if (/成功|已切换|已启用|完成|已就绪/i.test(m)) type = 'success';
 			else type = 'info';
 		}
-		// v6.6.0：统一改为实色灰色背景（按用户要求）
 		const palette = {
-			info:    { bg: '#2a2a2a', icon: '🔄' },
-			success: { bg: '#2a2a2a', icon: '✅' },
-			error:   { bg: '#2a2a2a', icon: '⚠️' },
+			info:    { accent: '#3b82f6', icon: '🔄', iconBg: 'rgba(59,130,246,0.12)' },
+			success: { accent: '#10b981', icon: '✅', iconBg: 'rgba(16,185,129,0.12)' },
+			error:   { accent: '#f59e0b', icon: '⚠️', iconBg: 'rgba(245,158,11,0.12)' },
 		};
 		const c = palette[type] || palette.info;
 
@@ -3024,37 +3115,43 @@
 		}
 		// 重置样式
 		toast.style.cssText = [
-			'position:fixed', 'top:120px', 'right:20px',
-			'max-width:360px', 'min-width:180px',
-			'background:' + c.bg,
+			'position:fixed', 'top:80px', 'right:20px',
+			'max-width:380px', 'min-width:200px',
+			'background:rgba(30,30,36,0.92)',
+			'backdrop-filter:blur(16px) saturate(1.4)',
+			'-webkit-backdrop-filter:blur(16px) saturate(1.4)',
 			'color:#e6edf3',
-			'padding:10px 32px 10px 14px',
-			'border-radius:8px',
+			'padding:0',
+			'border-radius:12px',
 			'font-size:12.5px', 'font-weight:500', 'line-height:1.4',
-			'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+			'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Inter",sans-serif',
 			'z-index:2147483647',
-			'border:1px solid rgba(100,160,255,0.15)',
-			'box-shadow:0 4px 16px rgba(0,0,0,0.4)',
-			'transition:opacity 0.3s ease,transform 0.3s ease',
-			'display:flex', 'align-items:center', 'gap:8px',
-			'pointer-events:auto',
-			'opacity:0', 'transform:translateX(16px)',
+			'border:1px solid rgba(255,255,255,0.06)',
+			'box-shadow:0 8px 32px rgba(0,0,0,0.5),0 2px 8px rgba(0,0,0,0.25),inset 0 1px 0 rgba(255,255,255,0.04)',
+			'transition:opacity 0.3s cubic-bezier(0.4,0,0.2,1),transform 0.3s cubic-bezier(0.4,0,0.2,1)',
+			'display:flex', 'align-items:stretch',
+			'pointer-events:auto', 'overflow:hidden',
+			'opacity:0', 'transform:translateX(16px) scale(0.96)',
 		].join(';');
-		setSafeHTML(toast, '<span style="font-size:14px;flex-shrink:0">' + c.icon + '</span>'
-			+ '<span style="word-break:break-word">' + escapeHtml(message) + '</span>'
-			+ '<span id="ws-toast-close" style="position:absolute;top:6px;right:8px;cursor:pointer;color:rgba(200,220,255,0.5);font-size:13px;line-height:1;padding:2px 4px;user-select:none">✕</span>');
+		setSafeHTML(toast,
+			'<div style="width:3px;background:' + c.accent + ';flex-shrink:0;border-radius:12px 0 0 12px"></div>'
+			+ '<div style="display:flex;align-items:center;gap:10px;padding:12px 36px 12px 12px;flex:1;min-width:0">'
+			+   '<div style="width:26px;height:26px;border-radius:7px;background:' + c.iconBg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="font-size:13px">' + c.icon + '</span></div>'
+			+   '<span style="word-break:break-word;color:#e2e8f0;font-size:12px">' + escapeHtml(message) + '</span>'
+			+ '</div>'
+			+ '<span id="ws-toast-close" style="position:absolute;top:8px;right:10px;cursor:pointer;color:rgba(148,163,184,0.5);font-size:12px;line-height:1;padding:3px 5px;user-select:none;border-radius:4px;transition:all 0.15s">✕</span>');
 
 		// 滑入动画
 		requestAnimationFrame(() => {
 			toast.style.opacity = '1';
-			toast.style.transform = 'translateX(0)';
+			toast.style.transform = 'translateX(0) scale(1)';
 		});
 
 		// 隐藏函数（动画结束后彻底隐藏）
 		function hideToast() {
 			if (!toast) return;
 			toast.style.opacity = '0';
-			toast.style.transform = 'translateX(16px)';
+			toast.style.transform = 'translateX(16px) scale(0.96)';
 			setTimeout(() => { if (toast) toast.style.display = 'none'; }, 350);
 		}
 
@@ -3070,6 +3167,7 @@
 	// ========== 恢复日志 ==========
 	const RECOVERY_LOG_KEY = 'ws-recovery-log';
 	const RECOVERY_LOG_MAX = 100;
+	let _logSyncSeq = 0;
 	function recordRecoveryLog(entry) {
 		try {
 			const raw = localStorage.getItem(RECOVERY_LOG_KEY);
@@ -3077,6 +3175,27 @@
 			list.push(Object.assign({ ts: Date.now() }, entry));
 			while (list.length > RECOVERY_LOG_MAX) list.shift();
 			localStorage.setItem(RECOVERY_LOG_KEY, JSON.stringify(list));
+			// 新增日志后主动推送到 bridge
+			_logSyncSeq++;
+			_debouncedPushLogs();
+		} catch {}
+	}
+	let _pushLogsTimer = null;
+	let _logSyncIntervalTimer = null;
+	function _debouncedPushLogs() {
+		if (_pushLogsTimer) return;
+		_pushLogsTimer = setTimeout(() => {
+			_pushLogsTimer = null;
+			_pushLogsTobridge();
+		}, 2000);
+	}
+	function _pushLogsTobridge() {
+		try {
+			if (typeof bridgePostResult !== 'function' || typeof getBridgeUrl !== 'function' || !getBridgeUrl()) return;
+			let recoveryLogs = [], diagnoseLogs = [];
+			try { const r = localStorage.getItem(RECOVERY_LOG_KEY); if (r) recoveryLogs = JSON.parse(r) || []; } catch {}
+			try { const d = localStorage.getItem('ws-diagnose-log'); if (d) diagnoseLogs = JSON.parse(d) || []; } catch {}
+			bridgePostResult({ action: 'syncLogs', status: 'done', payload: { recoveryLogs, diagnoseLogs } });
 		} catch {}
 	}
 
@@ -3224,18 +3343,22 @@
 		banner.id = RECOVERY_BANNER_ID;
 		banner.style.cssText = [
 			'position:fixed', 'right:20px', 'bottom:120px',
-			'min-width:380px', 'max-width:520px',
-			'background:#2a2a2a', 'color:#e6edf3',
-			'padding:14px 16px 12px',
-			'border-radius:10px',
-			'border:1px solid #3a3a3a',
-			'box-shadow:0 6px 20px rgba(0,0,0,0.5)',
-			'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+			'min-width:380px', 'max-width:480px',
+			'background:rgba(30,30,36,0.92)',
+			'backdrop-filter:blur(16px) saturate(1.4)',
+			'-webkit-backdrop-filter:blur(16px) saturate(1.4)',
+			'color:#e6edf3',
+			'padding:0',
+			'border-radius:14px',
+			'border:1px solid rgba(255,255,255,0.06)',
+			'box-shadow:0 8px 32px rgba(0,0,0,0.55),0 2px 8px rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,255,0.04)',
+			'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Inter",sans-serif',
 			'font-size:12.5px', 'line-height:1.5',
 			'z-index:2147483647',
 			'pointer-events:auto',
-			'opacity:0', 'transform:translateY(8px)',
-			'transition:opacity 0.25s ease, transform 0.25s ease',
+			'opacity:0', 'transform:translateY(12px) scale(0.98)',
+			'transition:opacity 0.3s cubic-bezier(0.4,0,0.2,1),transform 0.3s cubic-bezier(0.4,0,0.2,1)',
+			'overflow:hidden',
 		].join(';');
 
 		// 头部：标题 + 错误摘要
@@ -3247,54 +3370,67 @@
 			const [act, label] = c;
 			const isDefault = act === chosen;
 			const disabled = isActionDisabled(act);
-			let bg, color, border, cursor = 'pointer', extraLabel = '';
+			let bg, color, border, cursor = 'pointer', extraLabel = '', shadow = 'none';
 			if (disabled) {
-				bg = '#2a2a2a'; color = '#6b7280'; border = '1px dashed #4a4a4a'; cursor = 'not-allowed';
+				bg = 'rgba(40,40,48,0.6)'; color = '#5b6070'; border = '1px dashed rgba(100,100,120,0.3)'; cursor = 'not-allowed';
 				extraLabel = ' (已禁用)';
 			} else if (isDefault) {
-				bg = '#3b82f6'; color = '#fff'; border = '1px solid #2563eb';
-				extraLabel = ' ✓';
+				bg = 'linear-gradient(135deg,#3b82f6,#2563eb)'; color = '#fff'; border = '1px solid rgba(59,130,246,0.5)';
+				extraLabel = ' ✓'; shadow = '0 2px 8px rgba(59,130,246,0.35)';
 			} else {
-				bg = '#3a3a3a'; color = '#cbd5e1'; border = '1px solid #4a4a4a';
+				bg = 'rgba(55,55,68,0.7)'; color = '#c8d1dc'; border = '1px solid rgba(100,100,120,0.25)';
 			}
 			return '<button data-action="' + act + '" data-disabled="' + (disabled ? '1' : '0') + '" class="ws-rb-act' + (isDefault ? ' is-default' : '') + (disabled ? ' is-disabled' : '') + '" '
 				+ 'style="background:' + bg + ';color:' + color + ';border:' + border + ';'
-				+ 'padding:5px 11px;border-radius:5px;font-size:11.5px;cursor:' + cursor + ';'
-				+ 'font-family:inherit;transition:all 0.15s;margin-right:6px;margin-bottom:4px;"'
+				+ 'padding:6px 14px;border-radius:8px;font-size:11.5px;cursor:' + cursor + ';'
+				+ 'font-family:inherit;font-weight:500;transition:all 0.2s cubic-bezier(0.4,0,0.2,1);margin-right:6px;margin-bottom:4px;'
+				+ 'box-shadow:' + shadow + ';letter-spacing:0.01em;"'
 				+ (disabled ? ' title="此动作已被子开关禁用，请在侧栏开启"' : '') + '>'
 				+ label + extraLabel + '</button>';
 		}).join('');
 
 		setSafeHTML(banner,
-			'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
-			+   '<span style="font-size:14px">⚠️</span>'
-			+   '<span style="font-weight:600;color:#f1f5f9">' + escapeHtml(headTitle) + '</span>'
-			+   '<span class="ws-rb-countdown" style="margin-left:auto;font-size:11.5px;color:#94a3b8;font-variant-numeric:tabular-nums">' + Math.ceil(countdownMs / 1000) + 's</span>'
+			// 顶部渐变装饰线
+			'<div style="height:3px;background:linear-gradient(90deg,#3b82f6,#8b5cf6,#06b6d4);border-radius:14px 14px 0 0"></div>'
+			// 内容区
+			+ '<div style="padding:16px 18px 14px">'
+			// 头部
+			+ '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+			+   '<div style="width:28px;height:28px;border-radius:8px;background:rgba(245,158,11,0.12);display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="font-size:15px">⚡</span></div>'
+			+   '<div style="flex:1;min-width:0">'
+			+     '<div style="font-weight:600;font-size:13px;color:#f1f5f9;line-height:1.3">' + escapeHtml(headTitle) + '</div>'
+			+     (errSummary ? '<div style="color:#8b95a5;font-size:11px;margin-top:2px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(errSummary) + '</div>' : '')
+			+   '</div>'
+			+   '<div class="ws-rb-countdown" style="background:rgba(59,130,246,0.12);color:#60a5fa;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;flex-shrink:0">' + Math.ceil(countdownMs / 1000) + 's</div>'
 			+ '</div>'
-			+ (errSummary ? '<div style="color:#94a3b8;font-size:11px;margin-bottom:8px;word-break:break-word">' + escapeHtml(errSummary) + '</div>' : '')
-			+ '<div style="color:#cbd5e1;font-size:11.5px;margin-bottom:8px">'
-			+   '<span class="ws-rb-status">' + Math.ceil(countdownMs / 1000) + 's 后自动「<b style="color:#fff">' + escapeHtml(ACTION_LABEL[chosen] || chosen) + '</b>」 · 点其他按钮可切换策略，再点一下立即执行</span>'
+			// 状态提示
+			+ '<div style="color:#9ca3af;font-size:11.5px;margin-bottom:12px;padding-left:38px">'
+			+   '<span class="ws-rb-status">' + Math.ceil(countdownMs / 1000) + 's 后自动「<b style="color:#e2e8f0">' + escapeHtml(ACTION_LABEL[chosen] || chosen) + '</b>」 · 点其他按钮可切换策略，再点一下立即执行</span>'
 			+ '</div>'
-			+ '<div style="margin-bottom:10px">' + btnsHtml + '</div>'
-			+ '<div style="height:3px;background:#1a1a1a;border-radius:2px;overflow:hidden;margin-bottom:10px">'
-			+   '<div class="ws-rb-bar" style="height:100%;background:linear-gradient(90deg,#3b82f6,#60a5fa);width:100%;transition:width 0.1s linear"></div>'
+			// 操作按钮
+			+ '<div style="margin-bottom:12px;padding-left:38px;display:flex;flex-wrap:wrap;gap:6px">' + btnsHtml + '</div>'
+			// 进度条
+			+ '<div style="height:4px;background:rgba(255,255,255,0.04);border-radius:4px;overflow:hidden;margin-bottom:14px;margin-left:38px">'
+			+   '<div class="ws-rb-bar" style="height:100%;background:linear-gradient(90deg,#3b82f6,#60a5fa);width:100%;transition:width 0.1s linear;border-radius:4px;box-shadow:0 0 8px rgba(59,130,246,0.4)"></div>'
 			+ '</div>'
-			+ '<div style="display:flex;align-items:center;gap:10px">'
-			+   '<label style="display:flex;align-items:center;gap:6px;color:#94a3b8;font-size:11px;cursor:pointer;user-select:none">'
-			+     '<input type="checkbox" class="ws-rb-remember" style="cursor:pointer">'
+			// 底部操作栏
+			+ '<div style="display:flex;align-items:center;gap:10px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.05)">'
+			+   '<label style="display:flex;align-items:center;gap:7px;color:#6b7280;font-size:11px;cursor:pointer;user-select:none">'
+			+     '<input type="checkbox" class="ws-rb-remember" style="cursor:pointer;accent-color:#3b82f6">'
 			+     '<span>记住此选择</span>'
 			+   '</label>'
-			+   '<div style="margin-left:auto;display:flex;gap:6px">'
-			+     '<button class="ws-rb-cancel" style="background:transparent;color:#94a3b8;border:1px solid #4a4a4a;padding:5px 11px;border-radius:5px;font-size:11.5px;cursor:pointer;font-family:inherit">✕ 取消</button>'
-			+     '<button class="ws-rb-now" style="background:#10b981;color:#fff;border:1px solid #059669;padding:5px 13px;border-radius:5px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">▶ 立即执行</button>'
+			+   '<div style="margin-left:auto;display:flex;gap:8px">'
+			+     '<button class="ws-rb-cancel" style="background:transparent;color:#6b7280;border:1px solid rgba(100,100,120,0.25);padding:6px 13px;border-radius:8px;font-size:11.5px;cursor:pointer;font-family:inherit;font-weight:500;transition:all 0.2s">✕ 取消</button>'
+			+     '<button class="ws-rb-now" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:none;padding:6px 16px;border-radius:8px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(16,185,129,0.3);transition:all 0.2s">▶ 立即执行</button>'
 			+   '</div>'
 			+ '</div>'
+			+ '</div>' // 结束内容区
 		);
 
 		document.body.appendChild(banner);
 		requestAnimationFrame(() => {
 			banner.style.opacity = '1';
-			banner.style.transform = 'translateY(0)';
+			banner.style.transform = 'translateY(0) scale(1)';
 		});
 
 		// === 状态更新 ===
@@ -3308,7 +3444,7 @@
 			const cd = banner.querySelector('.ws-rb-countdown');
 			if (cd) cd.textContent = Math.ceil(remain / 1000) + 's';
 			const status = banner.querySelector('.ws-rb-status');
-			if (status) setSafeHTML(status, Math.ceil(remain / 1000) + 's 后自动「<b style="color:#fff">' + escapeHtml(ACTION_LABEL[chosen] || chosen) + '</b>」 · 点其他按钮可切换策略，再点一下立即执行');
+			if (status) setSafeHTML(status, Math.ceil(remain / 1000) + 's 后自动「<b style="color:#e2e8f0">' + escapeHtml(ACTION_LABEL[chosen] || chosen) + '</b>」 · 点其他按钮可切换策略，再点一下立即执行');
 		}
 
 		function highlightDefault() {
@@ -3316,23 +3452,26 @@
 				const act = btn.getAttribute('data-action');
 				// 第五轮修复 #2：禁用按钮保持禁用样式，不参与默认选中切换
 				if (btn.getAttribute('data-disabled') === '1') {
-					btn.style.background = '#2a2a2a';
-					btn.style.color = '#6b7280';
-					btn.style.border = '1px dashed #4a4a4a';
+					btn.style.background = 'rgba(40,40,48,0.6)';
+					btn.style.color = '#5b6070';
+					btn.style.border = '1px dashed rgba(100,100,120,0.3)';
+					btn.style.boxShadow = 'none';
 					btn.textContent = (ACTION_LABEL[act] || act) + ' (已禁用)';
 					return;
 				}
 				if (act === chosen) {
 					btn.classList.add('is-default');
-					btn.style.background = '#3b82f6';
+					btn.style.background = 'linear-gradient(135deg,#3b82f6,#2563eb)';
 					btn.style.color = '#fff';
-					btn.style.border = '1px solid #2563eb';
+					btn.style.border = '1px solid rgba(59,130,246,0.5)';
+					btn.style.boxShadow = '0 2px 8px rgba(59,130,246,0.35)';
 					btn.textContent = (ACTION_LABEL[act] || act) + ' ✓';
 				} else {
 					btn.classList.remove('is-default');
-					btn.style.background = '#3a3a3a';
-					btn.style.color = '#cbd5e1';
-					btn.style.border = '1px solid #4a4a4a';
+					btn.style.background = 'rgba(55,55,68,0.7)';
+					btn.style.color = '#c8d1dc';
+					btn.style.border = '1px solid rgba(100,100,120,0.25)';
+					btn.style.boxShadow = 'none';
 					btn.textContent = (ACTION_LABEL[act] || act);
 				}
 			});
@@ -3344,7 +3483,7 @@
 			if (remember) saveRecoveryPref(category, chosen);
 			// 关闭 banner
 			banner.style.opacity = '0';
-			banner.style.transform = 'translateY(8px)';
+			banner.style.transform = 'translateY(8px) scale(0.96)';
 			setTimeout(() => { try { banner.remove(); } catch {} }, 250);
 			_bannerState = null;
 			console.log(LOG_PREFIX + '[Recovery] Banner 执行: ' + chosen + (remember ? ' (已记忆)' : ''));
@@ -3354,7 +3493,7 @@
 		function cancel() {
 			if (_bannerState && _bannerState.timer) clearInterval(_bannerState.timer);
 			banner.style.opacity = '0';
-			banner.style.transform = 'translateY(8px)';
+			banner.style.transform = 'translateY(8px) scale(0.96)';
 			setTimeout(() => { try { banner.remove(); } catch {} }, 250);
 			_bannerState = null;
 			console.log(LOG_PREFIX + '[Recovery] Banner 取消');
@@ -3451,7 +3590,6 @@
 	// ── 统一错误处理入口 ──
 	function checkForErrors() {
 		if (!settings.autoRecoveryEnabled) return;
-
 		const { text: errorText, el: errorEl } = getLatestErrorText();
 		if (!errorText) {
 			// 没找到错误：如果 DOM 里其实有疑似错误候选，记录一条诊断
@@ -3524,6 +3662,12 @@
 		// 匹配内置错误模式表
 		for (const ep of ERROR_PATTERNS) {
 			if (!ep.pattern.test(errorText)) continue;
+
+			// 限流双重确认：rate-limited 信号需额外验证真实标记（防 AI 讨论误判）
+			if (ep.signal === 'rate-limited' && !hasRateLimitRealMarker(errorText)) {
+				console.log(LOG_PREFIX + '[Recovery] rate-limited 双重确认失败（缺少 trace id 等真实标记），跳过: ' + errorText.substring(0, 80));
+				continue;
+			}
 
 			const category = ep.category;
 			const rule = getRuleForCategory(category);
@@ -3733,7 +3877,7 @@
 			}
 			if (isInCooldown()) return;
 			const retryBtn = findRetryButton();
-			if (retryBtn) { markActionClick(); retryBtn.click(); }
+			if (retryBtn) { markActionClick(); retryBtn.click(); bumpAcStat('retry'); }
 		}, delay);
 	}
 
@@ -3748,6 +3892,7 @@
 		const signal = ep.signal || 'quota-exhausted';
 		console.log(LOG_PREFIX + '[Recovery] 切换账号，信号=' + signal);
 		recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'switch-account:' + signal, result: 'signal-sent' });
+		bumpAcStat('switchAcct');
 		sendPoolSignal(signal, lastUserMessage);
 	}
 
@@ -3771,6 +3916,7 @@
 		}
 		showRecoveryNotification('模型不可用，尝试切换模型...');
 		recordRecoveryLog({ category, error: errorText.substring(0, 200), action: 'switch-model', result: 'attempting' });
+		bumpAcStat('switchModel');
 
 		(async () => {
 			const switched = await switchToNextModel(modelPriority);
@@ -3817,6 +3963,7 @@
 				dispatchEnterKey(inputEl);
 				_lastContinueTs = Date.now();
 				console.log(LOG_PREFIX, '[sendContinue] ✅ 已有 queued 消息 → 直接 Enter 触发队列（不重复入队）');
+				bumpAcStat('sendMsg');
 				// 等 Windsurf 处理一下队列
 				await new Promise(r => setTimeout(r, 1500));
 				return true;
@@ -3839,6 +3986,7 @@
 			// queued 状态下扩展不应清空输入框，否则会把 Windsurf 入队的消息抹掉
 			if (hasQueuedMessage()) {
 				console.log(LOG_PREFIX, '[sendContinue] ✅ 发送成功（消息已入队，不清空残留）');
+				bumpAcStat('sendMsg');
 				return true;
 			}
 			console.log(LOG_PREFIX, '[sendContinue] ⚠ 发送未生效（输入框仍有"' + remaining.substring(0, 20) + '"），清空残留');
@@ -3846,6 +3994,7 @@
 			return false;
 		}
 		console.log(LOG_PREFIX, '[sendContinue] ✅ 发送成功（输入框已清空）');
+		bumpAcStat('sendMsg');
 		return true;
 	}
 
@@ -3931,7 +4080,7 @@
 		// 避免和 checkForErrors 在同一轮双重触发
 		if (Date.now() - lastRecoveryTs < _recoveryCooldownMs) return;
 
-		// 1) 按钮文字匹配：Continue response / 继续回复（已由 autoContinue 模块处理）
+		// 1) 按钮存在时跳过（由 autoContinue 模块处理按钮点击，此处只处理文本类截断）
 		const btns = document.querySelectorAll('button, [role="button"]');
 		for (const btn of btns) {
 			const txt = (btn.textContent || '').trim();
@@ -3959,8 +4108,9 @@
 			// 排除 AI/用户消息体、代码编辑器、我们自己的 toast（同 getLatestErrorText 保持一致）
 			if (el.closest(ASSISTANT_MSG_SEL)) continue;
 			if (el.closest(USER_MSG_SEL)) continue;
-			if (el.closest('.monaco-editor,pre,code,textarea,input,[contenteditable="true"]')) continue;
+			if (el.closest(IGNORED_CONTEXT_SEL)) continue;
 			if (el.closest('#ws-recovery-toast,[id^="ws-"]')) continue;
+			if (!isVisibleErrorElement(el)) continue;
 			// 用 getElementErrorText 拿原文 + 可见文，让英文 pattern 在汉化后仍生效
 			const txt = getElementErrorText(el);
 			if (!txt || txt.length > 1000) continue;
@@ -4046,6 +4196,7 @@
 				_lastPermApprovalTs = Date.now();
 				console.log(LOG_PREFIX + '[Recovery] 自动批准权限请求: ' + txt);
 				recordRecoveryLog({ category: 'permissionRequests', error: '', action: 'auto-allow', result: txt });
+				bumpAcStat('permission');
 				btn.click();
 				return;
 			}
@@ -4053,16 +4204,47 @@
 	}
 
 	let recoveryPollTimer = null;
+	// 启动冷静期：grace period 内不触发恢复，避免页面加载时把历史错误当新错误处理
+	// 另外还要等 bridge 真正就绪（_bridgeReady），否则恢复时无法切号会显示"没连上插件"
+	let _recoveryGraceUntil = 0;
+	let _bridgeReady = false;
+	let _recoveryEverStarted = false; // 是否曾经启动过（grace 只在首次启动时计算）
+	const RECOVERY_GRACE_MS = 8000;
+
 	function startAutoRecovery() {
 		if (recoveryObserver) { recoveryObserver.disconnect(); recoveryObserver = null; }
 		if (recoveryPollTimer) { clearInterval(recoveryPollTimer); recoveryPollTimer = null; }
 		if (!settings.autoRecoveryEnabled) return;
+
+		// 进入启动冷静期：grace period 内只跟踪不触发
+		// 仅首次启动（而非用户开关切换）才重置 grace，避免用户切开关误屏蔽真实错误
+		if (!_recoveryEverStarted) {
+			_recoveryGraceUntil = Date.now() + RECOVERY_GRACE_MS;
+			// 仅预标记"独立错误容器"——不动 assistant 消息内部，否则会屏蔽用户当前未处理的真实错误
+			// assistant 内嵌错误依靠 grace period + cooldown + 指纹去重三重防护即可
+			try {
+				const scanRoot = getScanRoot();
+				scanRoot.querySelectorAll('[role="alert"], [role="status"]').forEach(el => {
+					if (el.closest(ASSISTANT_MSG_SEL)) return; // 跳过 assistant 内部
+					try { if (el.dataset) el.dataset._wsRecoveryHandled = '1'; } catch {}
+				});
+				console.log(LOG_PREFIX + '[Recovery] 启动冷静期预标记完成，' + RECOVERY_GRACE_MS + 'ms 内忽略所有错误');
+			} catch (e) {
+				console.warn(LOG_PREFIX + '[Recovery] 预标记失败:', e);
+			}
+			_recoveryEverStarted = true;
+		}
 
 		// MutationObserver 驱动错误检测
 		let debounceTimer = null;
 		recoveryObserver = new MutationObserver(() => {
 			if (debounceTimer) clearTimeout(debounceTimer);
 			debounceTimer = setTimeout(() => {
+				// 启动冷静期内或 bridge 未就绪时，只做跟踪，不触发恢复
+				if (Date.now() < _recoveryGraceUntil || !_bridgeReady) {
+					trackLastUserMessage();
+					return;
+				}
 				trackLastUserMessage();
 				checkForErrors();
 				checkForContinuePrompts();
@@ -4077,7 +4259,7 @@
 			if (settings.autoRecoveryEnabled) checkForPoolResult();
 		}, 3000);
 
-		console.log(LOG_PREFIX + '[Recovery] ✅自动恢复已启用');
+		console.log(LOG_PREFIX + '[Recovery] ✅自动恢复已启用（' + RECOVERY_GRACE_MS + 'ms 启动冷静期）');
 	}
 
 	// ========== 完成提醒 ==========
@@ -4246,6 +4428,38 @@
 		_expectingResponse = true;
 	}
 
+	// 等待 AI 停止生成后执行回调（轮询 1s，最多 maxWait ms）
+	function waitForAIIdle(callback, maxWait) {
+		maxWait = maxWait || 120000;
+		const start = Date.now();
+		function poll() {
+			if (Date.now() - start > maxWait) {
+				console.log(LOG_PREFIX + '[waitForAIIdle] 超时 ' + (maxWait / 1000) + 's，强制执行');
+				callback();
+				return;
+			}
+			if (isAIGenerating()) {
+				setTimeout(poll, 1000);
+				return;
+			}
+			// AI 已空闲，再等 1s 确认稳定
+			setTimeout(() => {
+				if (isAIGenerating()) {
+					setTimeout(poll, 1000);
+				} else {
+					callback();
+				}
+			}, 1000);
+		}
+		// 首次立即检查
+		if (!isAIGenerating()) {
+			callback();
+		} else {
+			console.log(LOG_PREFIX + '[waitForAIIdle] AI 正在生成，开始轮询等待...');
+			setTimeout(poll, 1000);
+		}
+	}
+
 	// ── 队列状态 + 停止辅助 ──
 	let _brainlessQueueIndex = 0;
 	let _brainlessSendFailCount = 0;
@@ -4254,6 +4468,11 @@
 		if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }
 		console.log(LOG_PREFIX + '[Brainless] 停止: ' + reason);
 		showRecoveryNotification('长任务已停止: ' + reason);
+		// 恢复守护模式：continueMode 回到 smart，重启 autoContinue
+		// 避免长任务因错误/上限停止后，自动续写和突破限制功能静默失效
+		settings.continueMode = 'smart';
+		try { saveSettings(settings); } catch {}
+		startAutoContinue();
 		// 通知侧栏更新状态
 		bridgePostResult({ action: 'lt-stopped', reason, count: _brainlessConsecutive });
 	}
@@ -4278,9 +4497,11 @@
 	}
 
 	async function fireBrainlessContinue() {
+		// 模式保护：clearInterval 和回调执行可能交叉，确保已切走时不多发
+		if (settings.continueMode !== 'brainless') return;
 		const now = Date.now();
 		// 长任务模式冷却 = 用户设置的空闲等待时间（界面显示多少就是多少）
-		const idleSec = (settings.brainlessIdleSeconds || 8);
+		const idleSec = (settings.longTask && settings.longTask.idleSeconds) || settings.brainlessIdleSeconds || 8;
 		const sendCd = idleSec * 1000;
 		if (now - _brainlessLastFireTs < sendCd) return;
 
@@ -4339,7 +4560,7 @@
 		}
 
 		// 最大继续次数检查（0 = 无限）
-		const maxCount = settings.brainlessMaxConsecutive || 0;
+		const maxCount = (settings.longTask && settings.longTask.maxContinueCount) || settings.brainlessMaxConsecutive || 0;
 		if (maxCount > 0 && _brainlessConsecutive >= maxCount) {
 			stopBrainlessMode('达到最大继续次数(' + maxCount + ')');
 			return;
@@ -4392,7 +4613,7 @@
 	function startBrainlessMode() {
 		if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }
 		if (settings.continueMode !== 'brainless') return;
-		console.log(LOG_PREFIX + '[Brainless] ✅已启用，idle=' + (settings.brainlessIdleSeconds || 8) + 's');
+		console.log(LOG_PREFIX + '[Brainless] ✅已启用，idle=' + ((settings.longTask && settings.longTask.idleSeconds) || settings.brainlessIdleSeconds || 8) + 's');
 		_brainlessQueueIndex = 0;
 		_brainlessSendFailCount = 0;
 		_brainlessLastFireTs = 0; // 重置冷却，让第一次发送不被阻塞
@@ -4413,7 +4634,7 @@
 				return;
 			}
 			// 内容不变 + 不在生成 → 检查 idle 时长
-			const idleMs = (settings.brainlessIdleSeconds || 8) * 1000;
+			const idleMs = ((settings.longTask && settings.longTask.idleSeconds) || settings.brainlessIdleSeconds || 8) * 1000;
 			if (Date.now() - _brainlessLastChangeTs >= idleMs) {
 				fireBrainlessContinue();
 				_brainlessLastChangeTs = Date.now();  // 触发后重置，避免连续狂发
@@ -4638,6 +4859,7 @@
 			if (e.name !== 'AbortError') console.warn(LOG_PREFIX + '[bridge] POST /result failed:', e);
 		}
 	}
+	let _bridgePollFailStreak = 0;
 	async function bridgePoll() {
 		const base = getBridgeUrl();
 		if (!base) return [];
@@ -4646,9 +4868,26 @@
 			const tid = setTimeout(() => ctrl.abort(), 5000);
 			const res = await fetch(base + '/pending', { method: 'GET', headers: getBridgeHeaders(), signal: ctrl.signal });
 			clearTimeout(tid);
-			if (!res.ok) return [];
+			if (!res.ok) {
+				_bridgePollFailStreak++;
+				if (_bridgePollFailStreak >= 3 && _bridgeReady) {
+					_bridgeReady = false;
+					console.warn(LOG_PREFIX + '[bridge] 连续 3 次响应非 200，标记为未就绪');
+				}
+				return [];
+			}
+			_bridgePollFailStreak = 0;
+			if (!_bridgeReady) {
+				_bridgeReady = true;
+				console.log(LOG_PREFIX + '[bridge] 心跳恢复，重新标记为就绪');
+			}
 			return await res.json();
 		} catch (e) {
+			_bridgePollFailStreak++;
+			if (_bridgePollFailStreak >= 3 && _bridgeReady) {
+				_bridgeReady = false;
+				console.warn(LOG_PREFIX + '[bridge] 连续 3 次连接失败，标记为未就绪');
+			}
 			return [];
 		}
 	}
@@ -4679,6 +4918,12 @@
 		} else {
 			console.log(LOG_PREFIX + '[bridge] ✅就绪，启动命令轮询');
 		}
+		// 标记 bridge 就绪（无论超时与否都置 true，超时后仍尝试轮询）
+		_bridgeReady = true;
+		// bridge 就绪后立即推送一次日志，并定期 60s 同步，确保 globalState 始终有最新数据
+		if (_logSyncIntervalTimer) { clearInterval(_logSyncIntervalTimer); _logSyncIntervalTimer = null; }
+		setTimeout(() => _pushLogsTobridge(), 1000);
+		_logSyncIntervalTimer = setInterval(() => _pushLogsTobridge(), 60000);
 		const tick = async () => {
 			const pending = await bridgePoll();
 			for (const cmd of pending) {
@@ -4993,7 +5238,9 @@
 			else if (notifyObserver) { notifyObserver.disconnect(); notifyObserver = null; }
 		}
 		// 响应无脑模式参数变化（模式切换已在上方处理）
-		if (settings.continueMode === 'brainless' && old.brainlessIdleSeconds !== settings.brainlessIdleSeconds) {
+		const oldLt = old.longTask || {};
+		const newLt = settings.longTask || {};
+		if (settings.continueMode === 'brainless' && (old.brainlessIdleSeconds !== settings.brainlessIdleSeconds || oldLt.idleSeconds !== newLt.idleSeconds)) {
 			startBrainlessMode();
 		}
 		// recoveryRules / customRecoveryRules / 其他纯数据字段：直接 Object.assign 后即生效，无需启停

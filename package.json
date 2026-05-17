@@ -2,7 +2,7 @@
   "name": "windsurf-pool",
   "displayName": "Windsurf 号池管理",
   "description": "Windsurf 无感换号：一键切换多账号，多实例分身，自动注入会话，实时显示每日/每周配额，免退出、免重启。",
-  "version": "6.8.4",
+  "version": "7.4.0",
   "publisher": "local",
   "repository": {
     "type": "git",
@@ -132,6 +132,18 @@
         "title": "打开统计面板",
         "category": "Windsurf Pool",
         "icon": "$(graph)"
+      },
+      {
+        "command": "windsurfPool.openHealthCheck",
+        "title": "打开测活面板",
+        "category": "Windsurf Pool",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "windsurfPool.recoverCascadeInput",
+        "title": "恢复 Cascade 输入",
+        "category": "Windsurf Pool",
+        "icon": "$(debug-restart)"
       }
     ],
     "keybindings": [
