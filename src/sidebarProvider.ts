@@ -689,6 +689,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // webview 启动时拉取磁盘上的真相源
         const settings = readEnhSettings();
         this.postMessage({ type: 'enhLoaded', settings } as any);
+        // 推送 globalState 中的标签颜色（跨实例同步）
+        const savedTagColors = this._context.globalState.get<Record<string, string>>('tagColors');
+        if (savedTagColors && Object.keys(savedTagColors).length > 0) {
+          this.postMessage({ type: 'tagColorsSync', colors: savedTagColors } as any);
+        }
         return;
       }
       case 'requestBridgeInfo': {
@@ -908,6 +913,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'syncTagColors': {
         const colors = (message as any).colors;
         if (colors && typeof colors === 'object') {
+          // 持久化到 globalState（跨窗口共享）
+          this._context.globalState.update('tagColors', colors);
           setTagColors(colors);
         }
         break;

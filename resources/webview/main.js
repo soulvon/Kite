@@ -2799,6 +2799,23 @@
         break;
       }
 
+      case 'tagColorsSync': {
+        // 从 globalState 同步标签颜色（跨实例共享）
+        if (msg.colors && typeof msg.colors === 'object') {
+          // 合并：globalState 为底，本地 localStorage 覆盖（用户本地修改优先）
+          const merged = { ...msg.colors, ...tagColors };
+          // 如果本地无自定义（空对象），直接采纳 globalState
+          if (Object.keys(tagColors).length === 0) {
+            tagColors = msg.colors;
+          } else {
+            tagColors = merged;
+          }
+          try { localStorage.setItem('ws-pool-tag-colors', JSON.stringify(tagColors)); } catch(e) {}
+          renderAccounts();
+        }
+        break;
+      }
+
       case 'enhSaved': {
         // 后端确认设置已写盘且 workbench 已重新注入；banner 已在保存时弹出
         break;
