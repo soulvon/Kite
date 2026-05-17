@@ -145,6 +145,25 @@ async function loginFirebase(email: string, password: string): Promise<LoginResu
 }
 
 /**
+ * 从 session token 中提取 session_id 的短后缀，用于区分同一用户的不同 org token。
+ * JWT 格式: devin-session-token$header.payload.signature
+ * payload 解码后: {"session_id":"windsurf-session-<uuid>"}
+ * 返回 uuid 的最后 4 位十六进制，例如 "cde4"
+ */
+function extractSessionSuffix(token: string): string {
+  try {
+    const jwt = token.startsWith('devin-session-token$') ? token.substring(20) : token;
+    const parts = jwt.split('.');
+    if (parts.length < 2) return '';
+    const payload = Buffer.from(parts[1], 'base64url').toString('utf-8');
+    const obj = JSON.parse(payload);
+    const sid: string = obj?.session_id || '';
+    if (sid.length >= 4) return sid.slice(-4);
+  } catch { /* ignore decode errors */ }
+  return '';
+}
+
+/**
  * 通过 devin session token 直接导入（已是最终 session token，无需 PostAuth）
  */
 async function loginBySessionToken(sessionToken: string): Promise<LoginResult> {
@@ -195,6 +214,12 @@ async function loginBySessionToken(sessionToken: string): Promise<LoginResult> {
 
     if (!email) {
       email = 'session_' + sessionToken.substring(0, 12) + '...';
+    }
+
+    // 为同一用户的不同 org token 生成唯一 email，避免 upsert 时互相覆盖
+    const suffix = extractSessionSuffix(sessionToken);
+    if (suffix) {
+      email = email + ' [' + suffix + ']';
     }
 
     return {
