@@ -16,6 +16,7 @@ import { AutoSwitcher } from './autoSwitcher';
 import { UsageSnapshot } from './types';
 import { readEnhSettings } from './enhSettingsStore';
 import { getCurrentInstanceName } from './instanceManager';
+import { readAccountsSync } from './accountStore';
 
 /**
  * 状态栏左段样式（参考 vscode-antigravity-cockpit 的 statusBarFormat）
@@ -328,10 +329,15 @@ export class StatusBarManager implements vscode.Disposable {
   private _countPool(curEmail: string): { available: number; total: number } {
     const minQ = this._auto.settings.minQuota;
     let available = 0;
-    let total = 0;
-    for (const [email, entry] of this._auto.getAllCached().entries()) {
-      total++;
-      if (email === curEmail) continue;
+    // 以 accounts.json 实际账号为准，而非 UsageTracker 缓存（缓存可能含已删除的旧账号）
+    const accounts = readAccountsSync(this._ctx);
+    const total = accounts.filter(a => !a.disabled).length;
+    const cache = this._auto.getAllCached();
+    for (const a of accounts) {
+      if (a.disabled) continue;
+      if (a.email === curEmail) continue;
+      const entry = cache.get(a.email);
+      if (!entry) continue;
       const s = entry.snapshot;
       if (!s) continue;
       if (s.planName && s.planName.toLowerCase().includes('free')) continue;
