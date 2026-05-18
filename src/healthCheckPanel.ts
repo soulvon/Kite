@@ -8,12 +8,17 @@ import { stopIsolatedCascadeProbeLs, startLsPool, acquireLs, releaseLs, stopLsPo
 import { StoredAccount } from './types';
 import { scheduleAcpConnectionRecovery } from './acpRecovery';
 import { UsageTracker } from './usageTracker';
+import { getPoolRoot, ensureDir } from './utils';
+import { injectSession, getLastInjectFailure } from './sessionInjector';
+import { acquireLock, releaseLock } from './accountLock';
 
 let _panel: vscode.WebviewPanel | undefined;
 let _abortController: AbortController | undefined;
 let _paused = false;
 let _pausePromise: Promise<void> | undefined;
 let _pauseResolve: (() => void) | undefined;
+let _diskWatcher: fs.FSWatcher | undefined;
+let _lastDiskWriteTs = 0;
 
 const DEFAULT_HEALTH_CHECK_CONCURRENCY = 5;
 const DEFAULT_HEALTH_CHECK_MODEL: ProbeModelInfo = {
@@ -31,6 +36,91 @@ const DEFAULT_PROBE_MESSAGES = [
 
 /** 测活结果缓存（跨面板生命周期保留，供侧栏卡片读取） */
 const _resultCache = new Map<string, { ok: boolean; reason?: string; status?: number; ts: number; modelUid?: string }>();
+
+const HEALTH_RESULTS_FILE = 'health-results.json';
+
+function getHealthResultsPath(): string {
+  return path.join(getPoolRoot(), HEALTH_RESULTS_FILE);
+}
+
+/** 从共享磁盘文件加载测活结果（启动时 + 文件变更时） */
+function loadResultsFromDisk(): void {
+  try {
+    const p = getHealthResultsPath();
+    if (!fs.existsSync(p)) return;
+    const raw = fs.readFileSync(p, 'utf8');
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object') return;
+    let changed = false;
+    for (const [email, entry] of Object.entries(obj)) {
+      const e = entry as any;
+      if (!e || typeof e.ok !== 'boolean') continue;
+      const existing = _resultCache.get(email);
+      // 仅当磁盘记录更新时覆盖
+      if (!existing || (e.ts && e.ts > existing.ts)) {
+        _resultCache.set(email, { ok: e.ok, reason: e.reason, status: e.status, ts: e.ts || 0, modelUid: e.modelUid });
+        changed = true;
+      }
+    }
+    if (changed) {
+      console.log('[healthCheck] Loaded', _resultCache.size, 'results from disk');
+    }
+  } catch (err) {
+    console.warn('[healthCheck] loadResultsFromDisk failed:', err);
+  }
+}
+
+/** 将测活结果持久化到共享磁盘文件 */
+function saveResultsToDisk(): void {
+  try {
+    ensureDir(getPoolRoot());
+    const p = getHealthResultsPath();
+    const obj: Record<string, any> = {};
+    for (const [email, entry] of _resultCache) {
+      obj[email] = entry;
+    }
+    const tmp = p + '.tmp.' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
+    try {
+      fs.renameSync(tmp, p);
+    } catch {
+      try { fs.writeFileSync(p, JSON.stringify(obj, null, 2), 'utf8'); } catch {}
+      try { fs.unlinkSync(tmp); } catch {}
+    }
+    _lastDiskWriteTs = Date.now();
+  } catch (err) {
+    console.warn('[healthCheck] saveResultsToDisk failed:', err);
+  }
+}
+
+/** 启动文件监听，实现多实例共享 */
+function startDiskWatcher(): void {
+  if (_diskWatcher) return;
+  try {
+    ensureDir(getPoolRoot());
+    _diskWatcher = fs.watch(getPoolRoot(), (_evt, filename) => {
+      if (filename !== HEALTH_RESULTS_FILE) return;
+      // 跳过自己刚写入的变更
+      if (Date.now() - _lastDiskWriteTs < 2000) return;
+      loadResultsFromDisk();
+      // 推送给前端
+      if (_panel) {
+        const list: any[] = [];
+        for (const [email, entry] of _resultCache) {
+          list.push({ email, ...entry });
+        }
+        _panel.webview.postMessage({ type: 'diskResults', list });
+      }
+    });
+  } catch {}
+}
+
+function stopDiskWatcher(): void {
+  if (_diskWatcher) {
+    _diskWatcher.close();
+    _diskWatcher = undefined;
+  }
+}
 
 /** 标签颜色缓存（由侧栏同步过来） */
 let _tagColors: Record<string, string> = {};
@@ -51,6 +141,7 @@ export function clearHealthResult(email: string): void {
   const cached = _resultCache.get(email);
   if (cached && !cached.ok) {
     _resultCache.set(email, { ok: true, reason: '使用正常，已清除异常', ts: Date.now() });
+    saveResultsToDisk();
   }
 }
 
@@ -83,6 +174,10 @@ export function openHealthCheckPanel(
   const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webview', 'health-check.js'));
 
   webview.html = buildHtml(cssUri.toString(), jsUri.toString(), ver);
+
+  // 启动时加载磁盘历史结果，实现重启持久化 + 多实例共享
+  loadResultsFromDisk();
+  startDiskWatcher();
 
   setTimeout(() => pushAccounts(ctx), 200);
   // 动态读取 Windsurf 本地数据库中的模型列表
@@ -139,12 +234,51 @@ export function openHealthCheckPanel(
         });
         break;
       }
+      case 'switchAccount': {
+        const email = msg.email;
+        if (!email) break;
+        const accounts = await accountStore.readAccounts(ctx);
+        const account = accounts.find(a => a.email === email);
+        if (!account) {
+          _panel?.webview.postMessage({ type: 'switchResult', email, ok: false, reason: '账号不存在' });
+          break;
+        }
+        const prevEmail = ctx.globalState.get<string>('lastEmail') || '';
+        console.log(`[healthCheck][switch] 测活面板切号: ${prevEmail} → ${email}`);
+        const switchOk = await injectSession(ctx, account);
+        if (switchOk) {
+          if (prevEmail) releaseLock(prevEmail);
+          acquireLock(email);
+          await accountStore.setCurrentAccount(ctx, email);
+          clearHealthResult(email);
+          _panel?.webview.postMessage({ type: 'switchResult', email, ok: true });
+          scheduleAcpConnectionRecovery('health-panel-switch', 1500);
+          vscode.commands.executeCommand('windsurfPool.refreshSidebar');
+          pushAccounts(ctx);
+        } else {
+          const failure = getLastInjectFailure(email);
+          _panel?.webview.postMessage({ type: 'switchResult', email, ok: false, reason: failure?.reason || '切换失败' });
+        }
+        break;
+      }
+      case 'updateTags': {
+        const email = msg.email;
+        const newTags: string[] = msg.tags || [];
+        if (!email) break;
+        await accountStore.updateTags(ctx, email, newTags);
+        // 刷新账号列表（面板 + 侧栏）
+        pushAccounts(ctx);
+        _panel?.webview.postMessage({ type: 'tagsUpdated', email, tags: newTags });
+        vscode.commands.executeCommand('windsurfPool.refreshSidebar');
+        break;
+      }
     }
   });
 
   _panel.onDidDispose(() => {
     _abortController?.abort();
     stopIsolatedCascadeProbeLs();
+    stopDiskWatcher();
     _panel = undefined;
   });
 }
@@ -299,9 +433,11 @@ async function runHealthCheck(
           const r = await testModelAccess(account, model, signal, activeProbeMessage, workerLs);
           if (workerLs) releaseLs(workerLs);
           if (signal.aborted) break;
-          // 探针连接失败 → 换 LS 重试
+          // 探针连接失败 / 提供商不可达 / 全局限速 → 换 LS 重试
           const isConnErr = r.reason && /探针失败.*(?:ECONNREFUSED|ECONNRESET|EPIPE|ETIMEDOUT|socket hang up)/i.test(r.reason);
-          if (isConnErr && attempt < MAX_PROBE_RETRIES - 1) {
+          const isProviderErr = !r.ok && r.reason && /提供商不可达|provider.*unavailable|provider.*unreachable/i.test(r.reason);
+          const isGlobalRate = !r.ok && r.reason && /全局速率限制|全局限制|global rate limit|all API providers.*rate limit|官方全局限制/i.test(r.reason);
+          if ((isConnErr || isProviderErr || isGlobalRate) && attempt < MAX_PROBE_RETRIES - 1) {
             lastError = r.reason;
             continue; // 重试
           }
@@ -326,6 +462,7 @@ async function runHealthCheck(
         ts: Date.now(),
         modelUid: model?.uid || '',
       });
+      saveResultsToDisk();
       usageTracker?.recordDiagnostic({
         ts: Date.now(),
         email: account.email,
@@ -410,6 +547,7 @@ export async function testSingleAccount(ctx: vscode.ExtensionContext, email: str
     ts: Date.now(),
     modelUid: model?.uid || '',
   });
+  saveResultsToDisk();
   return result;
 }
 
@@ -610,7 +748,7 @@ function buildHtml(cssUri: string, jsUri: string, version: string): string {
         <th class="hc-col-result">结果</th>
         <th class="hc-col-plan">会员</th>
         <th class="hc-col-quota">配额</th>
-        <th class="hc-col-time">耗时</th>
+        <th class="hc-col-ops">操作</th>
       </tr></thead>
       <tbody id="hcTableBody"></tbody>
     </table>
@@ -621,6 +759,31 @@ function buildHtml(cssUri: string, jsUri: string, version: string): string {
 
 <div class="hc-toast" id="hcToast" hidden></div>
 <div class="hc-detail-tip" id="hcDetailTip" hidden></div>
+
+<!-- 标签编辑弹窗 -->
+<div class="hc-modal-backdrop" id="hcTagEditModal" hidden>
+  <div class="hc-modal" style="width:min(400px,90vw)">
+    <div class="hc-modal-head">
+      <span id="hcTagEditTitle">编辑标签</span>
+      <button class="hc-modal-close" id="hcTagEditClose">×</button>
+    </div>
+    <div style="padding:12px">
+      <div id="hcTagEditSelected" style="display:flex;flex-wrap:wrap;gap:4px;min-height:28px;margin-bottom:8px;padding:4px 0"></div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="text" id="hcTagEditInput" placeholder="输入标签名称，回车添加" style="flex:1;padding:5px 8px;border:1px solid var(--hc-border);border-radius:var(--hc-radius);background:var(--hc-surface);color:var(--hc-fg);font-size:12px;outline:none" />
+        <button class="hc-btn hc-btn-primary hc-btn-sm" id="hcTagEditAddBtn">添加</button>
+      </div>
+      <div style="margin-top:8px">
+        <label style="font-size:11px;opacity:0.7">已有标签（点击添加/移除）</label>
+        <div id="hcTagEditExisting" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;max-height:120px;overflow-y:auto"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+        <button class="hc-btn" id="hcTagEditCancel">取消</button>
+        <button class="hc-btn hc-btn-primary" id="hcTagEditSave">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="hc-modal-backdrop" id="hcPromptModal" hidden>
   <div class="hc-modal">
     <div class="hc-modal-head">

@@ -48,6 +48,19 @@
   const statusTabsEl = document.getElementById('hcStatusTabs');
   const detailTip = document.getElementById('hcDetailTip');
 
+  // ── Tag edit modal elements ──
+  const tagEditModal = document.getElementById('hcTagEditModal');
+  const tagEditTitle = document.getElementById('hcTagEditTitle');
+  const tagEditSelected = document.getElementById('hcTagEditSelected');
+  const tagEditInput = document.getElementById('hcTagEditInput');
+  const tagEditAddBtn = document.getElementById('hcTagEditAddBtn');
+  const tagEditExisting = document.getElementById('hcTagEditExisting');
+  const tagEditSave = document.getElementById('hcTagEditSave');
+  const tagEditCancel = document.getElementById('hcTagEditCancel');
+  const tagEditClose = document.getElementById('hcTagEditClose');
+  var tagEditEmail = '';
+  var tagEditTags = [];
+
   // ── Stats elements ──
   const statTotal = document.getElementById('hcStatTotal');
   const statOk = document.getElementById('hcStatOk');
@@ -669,6 +682,12 @@
       var hBadges = buildHistoryBadges(acc.email);
       var hBadgeHtml = hBadges ? '<div class="hc-hb-row">' + hBadges + '</div>' : '';
 
+      // ── 操作列 ──
+      var opsHtml = '<div class="hc-ops-cell">'
+        + '<button class="hc-ops-btn hc-ops-switch" data-email="' + escHtml(acc.email) + '" title="切换到此账号">切号</button>'
+        + '<button class="hc-ops-btn hc-ops-tag" data-email="' + escHtml(acc.email) + '" title="编辑标签">标签</button>'
+        + '</div>';
+
       html += '<tr>'
         + '<td>' + statusHtml + '</td>'
         + '<td><span class="hc-email' + (r ? ' hc-detail-tip-target' : '') + '" data-tip="' + (r ? escHtml(detailTipText(acc, parseReason(r), r.elapsed)) : '') + '" title="' + escHtml(acc.email) + '">' + escHtml(maskEmail(acc.email)) + '</span></td>'
@@ -677,11 +696,29 @@
         + '<td>' + resultHtml + '</td>'
         + '<td><div class="hc-plan-cell">' + planCellHtml + '</div></td>'
         + '<td><div class="hc-quota-cell">' + quotaCellHtml + '</div></td>'
-        + '<td>' + elapsedHtml + '</td>'
+        + '<td>' + opsHtml + '</td>'
         + '</tr>';
     });
 
     tableBody.innerHTML = html;
+
+    // ── Bind ops buttons ──
+    tableBody.querySelectorAll('.hc-ops-switch').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var email = this.dataset.email;
+        if (!email || checking) return;
+        this.disabled = true;
+        this.textContent = '切换中...';
+        vscode.postMessage({ type: 'switchAccount', email: email });
+      });
+    });
+    tableBody.querySelectorAll('.hc-ops-tag').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var email = this.dataset.email;
+        if (!email) return;
+        openTagEditModal(email);
+      });
+    });
   }
 
   function showDetailTip(text, x, y) {
@@ -841,7 +878,154 @@
       }
 
       case 'switchTab': break;
+
+      case 'switchResult': {
+        if (msg.ok) {
+          showToast('已切换到 ' + maskEmail(msg.email), 2000);
+        } else {
+          showToast('切换失败: ' + (msg.reason || '未知原因'), 3000);
+        }
+        renderTable();
+        break;
+      }
+
+      case 'tagsUpdated': {
+        // 更新本地账号列表中的标签
+        var tagAcc = accountList.find(function (a) { return a.email === msg.email; });
+        if (tagAcc) {
+          tagAcc.tags = msg.tags || [];
+          tagAcc.tag = (msg.tags && msg.tags[0]) || '';
+        }
+        buildTagChips();
+        renderTable();
+        showToast('标签已更新', 1500);
+        break;
+      }
+
+      case 'diskResults': {
+        // 多实例共享：其他实例的测活结果同步过来
+        if (Array.isArray(msg.list)) {
+          msg.list.forEach(function (item) {
+            if (!item.email) return;
+            var existing = results.get(item.email);
+            // 仅当磁盘记录更新时覆盖
+            if (!existing || (item.ts && item.ts > (existing.ts || 0))) {
+              results.set(item.email, {
+                ok: item.ok,
+                reason: item.reason,
+                httpStatus: item.status,
+                elapsed: 0,
+                ts: item.ts,
+              });
+            }
+          });
+          renderTable();
+          updateStats();
+        }
+        break;
+      }
     }
   });
+
+  // ── Tag Edit Modal Logic ──
+  function openTagEditModal(email) {
+    tagEditEmail = email;
+    var acc = accountList.find(function (a) { return a.email === email; });
+    tagEditTags = acc ? (acc.tags && acc.tags.length > 0 ? acc.tags.slice() : (acc.tag ? [acc.tag] : [])) : [];
+    if (tagEditTitle) tagEditTitle.textContent = '编辑标签 - ' + maskEmail(email);
+    renderTagEditSelected();
+    renderTagEditExisting();
+    if (tagEditInput) tagEditInput.value = '';
+    if (tagEditModal) tagEditModal.hidden = false;
+    if (tagEditInput) tagEditInput.focus();
+  }
+
+  function renderTagEditSelected() {
+    if (!tagEditSelected) return;
+    if (tagEditTags.length === 0) {
+      tagEditSelected.innerHTML = '<span style="color:var(--hc-fg-dim);font-size:11px">无标签</span>';
+      return;
+    }
+    var html = '';
+    tagEditTags.forEach(function (t) {
+      var tc = getTagColor(t);
+      html += '<span class="hc-tag-edit-chip" data-tag="' + escHtml(t) + '" style="background:' + tc + '20;color:' + tc + ';border-color:' + tc + '60" title="点击移除">' + escHtml(t) + ' ×</span>';
+    });
+    tagEditSelected.innerHTML = html;
+    tagEditSelected.querySelectorAll('.hc-tag-edit-chip').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var tag = this.dataset.tag;
+        tagEditTags = tagEditTags.filter(function (t) { return t !== tag; });
+        renderTagEditSelected();
+        renderTagEditExisting();
+      });
+    });
+  }
+
+  function renderTagEditExisting() {
+    if (!tagEditExisting) return;
+    var allTags = new Set();
+    accountList.forEach(function (a) {
+      var at = (a.tags && a.tags.length > 0) ? a.tags : (a.tag ? [a.tag] : []);
+      at.forEach(function (t) { allTags.add(t); });
+    });
+    if (allTags.size === 0) {
+      tagEditExisting.innerHTML = '<span style="color:var(--hc-fg-dim);font-size:11px">无已有标签</span>';
+      return;
+    }
+    var html = '';
+    allTags.forEach(function (t) {
+      var active = tagEditTags.indexOf(t) >= 0;
+      var tc = getTagColor(t);
+      html += '<span class="hc-tag-edit-chip hc-tag-existing-chip' + (active ? ' hc-tag-existing-active' : '') + '" data-tag="' + escHtml(t) + '"'
+        + ' style="' + (active ? 'background:' + tc + ';color:#fff;border-color:' + tc : 'background:' + tc + '20;color:' + tc + ';border-color:' + tc + '60') + '"'
+        + '>' + escHtml(t) + '</span>';
+    });
+    tagEditExisting.innerHTML = html;
+    tagEditExisting.querySelectorAll('.hc-tag-edit-chip').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var tag = this.dataset.tag;
+        if (tagEditTags.indexOf(tag) >= 0) {
+          tagEditTags = tagEditTags.filter(function (t) { return t !== tag; });
+        } else {
+          tagEditTags.push(tag);
+        }
+        renderTagEditSelected();
+        renderTagEditExisting();
+      });
+    });
+  }
+
+  function addTagFromInput() {
+    if (!tagEditInput) return;
+    var val = tagEditInput.value.trim();
+    if (!val) return;
+    if (tagEditTags.indexOf(val) === -1) {
+      tagEditTags.push(val);
+    }
+    tagEditInput.value = '';
+    renderTagEditSelected();
+    renderTagEditExisting();
+  }
+
+  if (tagEditAddBtn) tagEditAddBtn.addEventListener('click', addTagFromInput);
+  if (tagEditInput) {
+    tagEditInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); addTagFromInput(); }
+    });
+  }
+  if (tagEditSave) {
+    tagEditSave.addEventListener('click', function () {
+      vscode.postMessage({ type: 'updateTags', email: tagEditEmail, tags: tagEditTags });
+      if (tagEditModal) tagEditModal.hidden = true;
+    });
+  }
+  if (tagEditCancel) tagEditCancel.addEventListener('click', function () { if (tagEditModal) tagEditModal.hidden = true; });
+  if (tagEditClose) tagEditClose.addEventListener('click', function () { if (tagEditModal) tagEditModal.hidden = true; });
+  if (tagEditModal) {
+    tagEditModal.addEventListener('click', function (e) {
+      if (e.target === tagEditModal) tagEditModal.hidden = true;
+    });
+  }
 
 })();
