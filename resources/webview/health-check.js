@@ -255,12 +255,18 @@
     // 测活目标只受搜索和标签限制；结果状态过滤只用于查看结果。
     // 否则选择“异常/无权限/待检测”等结果筛选时，开始检测可能被过滤成 0 个目标。
     var targetAccounts = filterAccounts(accountList, { ignoreResultStatus: true });
+    // "跳过已测"：过滤掉已有结果的账号（适合重启后继续）
+    var skipTestedCb = document.getElementById('hcSkipTested');
+    var skipTested = skipTestedCb && skipTestedCb.checked;
+    if (skipTested) {
+      targetAccounts = targetAccounts.filter(function (a) { return !results.has(a.email); });
+    }
     if (!targetAccounts.length) {
-      showToast('当前筛选没有可检测账号');
+      showToast(skipTested ? '所有账号均已测试过，取消勾选"跳过已测"可重新检测' : '当前筛选没有可检测账号');
       return;
     }
     checking = true;
-    results.clear();
+    if (!skipTested) results.clear();
     completedCheck = 0;
     startTime = Date.now();
     startBtn.disabled = true;
@@ -706,7 +712,7 @@
     tableBody.querySelectorAll('.hc-ops-switch').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var email = this.dataset.email;
-        if (!email || checking) return;
+        if (!email) return;
         this.disabled = true;
         this.textContent = '切换中...';
         vscode.postMessage({ type: 'switchAccount', email: email });

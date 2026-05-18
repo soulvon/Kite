@@ -689,6 +689,10 @@ function buildHtml(cssUri: string, jsUri: string, version: string): string {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         一键测活
       </button>
+      <label class="hc-check-label" title="跳过已有测试结果的账号，适合重启后继续未完成的测试">
+        <input type="checkbox" id="hcSkipTested" />
+        跳过已测
+      </label>
       <button class="hc-btn" id="hcResetMachineId" title="重置 Windsurf 机器码（machineId / sqmId / devDeviceId），需完全关闭后重启生效" style="color:#f59e0b;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
         重置机器码

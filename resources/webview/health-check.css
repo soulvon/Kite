@@ -370,6 +370,20 @@ body {
 body.vscode-light .hc-table tr:hover td {
   color: #1f2328;
 }
+.hc-check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+.hc-check-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
 .hc-col-status { width: 40px; text-align: center !important; }
 .hc-col-email { width: 200px; }
 .hc-col-tag { width: 100px; }
