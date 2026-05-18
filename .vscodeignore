@@ -25,6 +25,29 @@ node_modules/**
 *.vsix
 *.log
 
+# 大文件 / 非扩展资源
+*.har
+*.msi
+*.html
+orderProject/**
+docs/**
+cascade-chat-protocol.md
+*.jpg
+*.webp
+resources/wechat-reward.jpg
+
+# 开发预览 HTML（不被代码引用）
+resources/webview/*-preview.html
+resources/webview/*-demo.html
+resources/webview/*-design.html
+resources/webview/multi-instance-panel.html
+
+# 调试脚本编译产物
+out/scripts/**
+
+# Source map（用户不需要）
+**/*.js.map
+
 # 系统文件
 .DS_Store
 Thumbs.db
