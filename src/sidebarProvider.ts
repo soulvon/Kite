@@ -2792,6 +2792,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <span class="preflight-switch-thumb"></span>
           </span>
         </button>
+        <button class="balance-filter-btn" id="balanceFilterBtn" title="筛选有额外余额的账号">
+          <span class="balance-icon">💰</span>
+          <span class="balance-label">有余额</span>
+          <span class="balance-count" id="balanceCount">(0)</span>
+        </button>
         <div style="flex:1"></div>
         <select class="page-size-select" id="pageSizeSelect" title="每页显示">
           <option value="10">10/页</option>

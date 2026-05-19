@@ -326,6 +326,7 @@
   let filterTags = new Set();    // 标签
   let filterStatuses = new Set(); // 状态
   let filterHealth = new Set();  // 测活结果
+  let filterBalance = false;     // 有余额过滤
 
   // 兼容旧分组逻辑（现在不做分组，只过滤）
   let groupBy = 'none';
@@ -397,6 +398,11 @@
     }
     if (filterStatuses.size > 0 && !filterStatuses.has(getAccountStatus(account))) return false;
     if (filterHealth.size > 0 && !filterHealth.has(getHealthStatus(account.email))) return false;
+    // 余额过滤：只显示有余额的账号
+    if (filterBalance) {
+      const snap = usageCache.get(account.email)?.snapshot;
+      if (!snap || !snap.overageBalanceMicros || snap.overageBalanceMicros <= 0) return false;
+    }
     return true;
   }
 
@@ -460,7 +466,7 @@
     const labelEl = document.getElementById('filterLabel');
     const countEl = document.getElementById('filterCount');
     if (!labelEl || !countEl) return;
-    const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size + filterHealth.size;
+    const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size + filterHealth.size + (filterBalance ? 1 : 0);
     if (totalFilters === 0) {
       labelEl.textContent = 'ALL';
       countEl.textContent = '(' + accounts.length + ')';
@@ -805,6 +811,7 @@
 
     // 更新标签栏
     renderTagBar();
+    updateBalanceFilterBtn();
 
     // 使用 DocumentFragment 先在内存中构建，再一次性替换（原子操作，无中间空白帧）
     const frag = document.createDocumentFragment();
@@ -881,7 +888,7 @@
 
     accountGrid.replaceChildren(frag);
 
-    const hasFilter = searchQuery.trim() || activeTagFilters.length > 0 || activeTagFilter || filterPlans.size > 0 || filterTags.size > 0 || filterStatuses.size > 0 || filterHealth.size > 0;
+    const hasFilter = searchQuery.trim() || activeTagFilters.length > 0 || activeTagFilter || filterPlans.size > 0 || filterTags.size > 0 || filterStatuses.size > 0 || filterHealth.size > 0 || filterBalance;
     if (gridCount) gridCount.textContent = hasFilter ? filtered.length + ' / ' + accounts.length + ' 个' : accounts.length + ' 个';
     if (emptyState) emptyState.hidden = accounts.length > 0;
     if (accountGrid) accountGrid.hidden = accounts.length === 0;
@@ -1285,6 +1292,7 @@
     try {
       const st = vscode.getState() || {};
       st._filterTags = [...filterTags];
+      st._filterBalance = filterBalance;
       vscode.setState(st);
     } catch {}
   }
@@ -1296,6 +1304,7 @@
       st._filterTags = [...filterTags];
       st._filterStatuses = [...filterStatuses];
       st._filterHealth = [...filterHealth];
+      st._filterBalance = filterBalance;
       vscode.setState(st);
     } catch {}
   }
@@ -1395,6 +1404,19 @@
       };
       tagListEl.appendChild(untaggedChip);
     }
+  }
+
+  // 更新工具栏中的余额过滤按钮状态
+  function updateBalanceFilterBtn() {
+    const btn = document.getElementById('balanceFilterBtn');
+    const countEl = document.getElementById('balanceCount');
+    if (!btn) return;
+    const balanceCount = accounts.filter(a => {
+      const snap = usageCache.get(a.email)?.snapshot;
+      return snap && snap.overageBalanceMicros && snap.overageBalanceMicros > 0;
+    }).length;
+    if (countEl) countEl.textContent = '(' + balanceCount + ')';
+    btn.classList.toggle('is-active', filterBalance);
   }
 
   function openTagEditModal(mode, emailOrEmails = null) {
@@ -2598,13 +2620,14 @@
     lastEmail = newLastEmail;
     externalAccount = newExternalAccount || '';
     // 自动清除无效过滤器：如果过滤器激活但 0 条匹配，清掉过时状态
-    const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size + filterHealth.size;
+    const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size + filterHealth.size + (filterBalance ? 1 : 0);
     if (totalFilters > 0 && accounts.length > 0 && accounts.filter(a => passesFilter(a)).length === 0) {
       filterPlans.clear();
       filterTags.clear();
       filterStatuses.clear();
       filterHealth.clear();
-      try { const st = vscode.getState() || {}; st._filterPlans = []; st._filterTags = []; st._filterStatuses = []; st._filterHealth = []; vscode.setState(st); } catch {}
+      filterBalance = false;
+      try { const st = vscode.getState() || {}; st._filterPlans = []; st._filterTags = []; st._filterStatuses = []; st._filterHealth = []; st._filterBalance = false; vscode.setState(st); } catch {}
     }
     renderCards();
     // 账号数据到达后重新渲染标签选择器（修复时序问题：settingsSync 先到，accounts 后到时标签列表为空）
@@ -4288,6 +4311,7 @@
       if (st._filterTags) filterTags = new Set(st._filterTags);
       if (st._filterStatuses) filterStatuses = new Set(st._filterStatuses);
       if (st._filterHealth) filterHealth = new Set(st._filterHealth);
+      if (st._filterBalance) filterBalance = st._filterBalance;
     } catch {}
     if (filterTrigger && filterDropdown) {
       filterTrigger.addEventListener('click', (e) => {
@@ -4328,6 +4352,7 @@
         filterTags.clear();
         filterStatuses.clear();
         filterHealth.clear();
+        filterBalance = false;
         persistFilters();
         currentPage = 1;
         buildFilterDropdown();
@@ -4505,6 +4530,21 @@
         preflightEnabled = !preflightEnabled;
         updatePreflightUi();
         postMsg('togglePreflightCheck');
+      });
+    }
+
+    // 有余额过滤按钮
+    const balanceFilterBtn = document.getElementById('balanceFilterBtn');
+    if (balanceFilterBtn) {
+      updateBalanceFilterBtn();
+      balanceFilterBtn.addEventListener('click', () => {
+        filterBalance = !filterBalance;
+        persistFilters();
+        currentPage = 1;
+        updateBalanceFilterBtn();
+        const dropdown = document.getElementById('filterDropdown');
+        if (dropdown && !dropdown.hidden) buildFilterDropdown();
+        renderCards();
       });
     }
 

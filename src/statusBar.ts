@@ -39,6 +39,7 @@ export interface StatusBarConfig {
   showPool: boolean;
   showAutoSwitch: boolean;
   showInstance: boolean;
+  showBalance: boolean;
 }
 
 const DEFAULTS: StatusBarConfig = {
@@ -48,6 +49,7 @@ const DEFAULTS: StatusBarConfig = {
   showPool: true,
   showAutoSwitch: true,
   showInstance: true,
+  showBalance: true,
 };
 
 const VALID_STYLES: StatusBarStyle[] = ['dot', 'percent', 'compact', 'dual', 'labeled', 'full'];
@@ -139,6 +141,7 @@ export class StatusBarManager implements vscode.Disposable {
         showPool: sb.showPool !== false,
         showAutoSwitch: sb.showAutoSwitch !== false,
         showInstance: sb.showInstance !== false,
+        showBalance: sb.showBalance !== false,
       };
     } catch {
       return { ...DEFAULTS };
@@ -220,7 +223,12 @@ export class StatusBarManager implements vscode.Disposable {
 
     // ── 渲染主体（按 style 分发）──
     const body = this._renderBodyByStyle(cfg.style, dot, snap, curEmail);
-    this._left.text = `$(account) ${prefix}${body}`;
+    // ── 余额后缀 ──
+    let balanceSuffix = '';
+    if (cfg.showBalance && snap && typeof snap.overageBalanceMicros === 'number') {
+      balanceSuffix = ` 💰$${(snap.overageBalanceMicros / 1_000_000).toFixed(2)}`;
+    }
+    this._left.text = `$(account) ${prefix}${body}${balanceSuffix}`;
 
     this._left.tooltip = this._buildLeftTooltip(curEmail, entry);
     this._left.show();
@@ -285,6 +293,9 @@ export class StatusBarManager implements vscode.Disposable {
     md.appendMarkdown(`- **日剩余**：${Math.round(snap.dailyRemainingPercent)}%\n`);
     md.appendMarkdown(`- **周剩余**：${Math.round(snap.weeklyRemainingPercent)}%\n`);
     if (snap.flexCredits > 0) md.appendMarkdown(`- **Flex Credits**：${snap.flexCredits}\n`);
+    if (typeof snap.overageBalanceMicros === 'number') {
+      md.appendMarkdown(`- **额外余额**：$${(snap.overageBalanceMicros / 1_000_000).toFixed(2)}\n`);
+    }
     if (snap.dailyResetAtUnix) md.appendMarkdown(`- **日重置**：${formatResetTime(snap.dailyResetAtUnix)}\n`);
     if (snap.weeklyResetAtUnix) md.appendMarkdown(`- **周重置**：${formatResetTime(snap.weeklyResetAtUnix)}\n`);
     if (entry?.ts) md.appendMarkdown(`- _更新于 ${Math.round((Date.now() - entry.ts) / 1000)}s 前_\n`);

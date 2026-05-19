@@ -519,6 +519,14 @@ export async function fetchUsage(account: StoredAccount, options: FetchUsageOpti
       }
     }
 
+    // overageBalanceMicros 可能是字符串或数字，统一转换
+    const parseBalance = (v: any): number => {
+      if (typeof v === 'number') return v;
+      if (typeof v === 'string') return parseInt(v, 10) || 0;
+      return 0;
+    };
+    const overageBalanceMicros = parseBalance(period.overageBalanceMicros) || parseBalance(ps.overageBalanceMicros);
+
     const snapshot: UsageSnapshot = {
       name: account.name || account.email.split('@')[0],
       email: account.email,
@@ -528,7 +536,7 @@ export async function fetchUsage(account: StoredAccount, options: FetchUsageOpti
       dailyResetAtUnix: parseInt(String(ps.dailyQuotaResetAtUnix)) || 0,
       weeklyResetAtUnix: parseInt(String(ps.weeklyQuotaResetAtUnix)) || 0,
       flexCredits: parseInt(String(ps.availableFlexCredits)) || 0,
-      overageBalanceMicros: typeof ps.overageBalanceMicros === 'number' ? ps.overageBalanceMicros : 0,
+      overageBalanceMicros,
       planStart: period.start,
       planEnd: period.end,
       orgId,
@@ -544,7 +552,7 @@ export async function fetchUsage(account: StoredAccount, options: FetchUsageOpti
 /**
  * 获取会员期限（GetPlanStatus）
  */
-async function fetchPlanPeriod(account: StoredAccount): Promise<{ start?: string; end?: string }> {
+async function fetchPlanPeriod(account: StoredAccount): Promise<{ start?: string; end?: string; overageBalanceMicros?: number }> {
   try {
     const res = await post(
       'https://web-backend.windsurf.com/exa.seat_management_pb.SeatManagementService/GetPlanStatus',
@@ -563,10 +571,14 @@ async function fetchPlanPeriod(account: StoredAccount): Promise<{ start?: string
 
     const data = JSON.parse(res.body);
     const ps = data?.planStatus || data;
+    // topUpStatus 包含额外余额信息
+    const topUp = data?.topUpStatus || {};
 
     return {
       start: ps.planStart,
-      end: ps.planEnd
+      end: ps.planEnd,
+      // 优先从 topUpStatus 获取，其次从 planStatus 获取
+      overageBalanceMicros: topUp.overageBalanceMicros ?? topUp.balanceMicros ?? ps.overageBalanceMicros
     };
   } catch {
     return {};
