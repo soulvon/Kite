@@ -602,7 +602,7 @@ export class AutoSwitcher implements vscode.Disposable {
       if (!acct) return;
       console.log(`[autoSwitch][trigger] 执行切号: ${curEmail} → ${verified.email} (score=${Math.round(verified.score)})`);
       const { injectSession } = await import('./sessionInjector');
-      const ok = await injectSession(this._ctx, acct, { silent: true });
+      const ok = await injectSession(this._ctx, acct, { silent: true, auto: true });
       if (ok) {
         // 切换成功后才设置 cooldown（失败则立即可重试）
         this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
@@ -688,7 +688,7 @@ export class AutoSwitcher implements vscode.Disposable {
       if (!acct) return null;
 
       const { injectSession } = await import('./sessionInjector');
-      const ok = await injectSession(this._ctx, acct, { silent: true });
+      const ok = await injectSession(this._ctx, acct, { silent: true, auto: true });
       if (!ok) return null;
 
       clearHealthResult(cand.email);

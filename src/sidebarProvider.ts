@@ -547,6 +547,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._pushCachedUsage();
       this._pushAutoSwitchSettings();
       this._pushEnhancementStatus();
+      this._pushPreflightSetting();
       this._pushUsageStats();
       this._pushQuotaHistory();
       // 恢复持久化的切号日志
@@ -596,11 +597,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.refresh();
         this._pushAutoSwitchSettings();
         this._pushEnhancementStatus();
+        this._pushPreflightSetting();
         this._pushUsageStats();
         this._pushQuotaHistory();
         this.refreshBridgeInfo();
       }
     });
+
+    // 监听 VS Code 配置变更（设置面板修改时实时同步到工具栏）
+    const cfgSub = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('windsurfPool.preflightSwitchCheck')) {
+        this._pushPreflightSetting();
+      }
+    });
+    this._disposables.push(cfgSub);
 
     // 监听 webview 消息
     webviewView.webview.onDidReceiveMessage(async (message: any) => {
@@ -637,7 +647,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _pushEnhancementStatus(): void {
     try {
       const status = getInjectionStatus();
-      const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', true);
+      const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
       const autoRecovery = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('autoRecovery', true);
       const ext = vscode.extensions.getExtension('local.windsurf-pool');
       const extVersion = ext?.packageJSON?.version || '0.0.0';
@@ -678,6 +688,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     try {
       enqueueCommand({ id: Date.now(), action: 'apply-settings', payload: { autoSwitchEnabled: s.enabled } });
     } catch {}
+  }
+
+  /** 推送切号预检设置给 webview */
+  private _pushPreflightSetting(): void {
+    const enabled = vscode.workspace.getConfiguration('windsurfPool').get<boolean>('preflightSwitchCheck', true);
+    this.postMessage({ type: 'preflightSettingSync', enabled } as any);
   }
 
   /**
@@ -809,7 +825,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (isForce) {
           this.log(`[switch][trigger] 强制切号(跨窗口抢占): → ${email}`);
         }
-        const success = await injectSession(this._context, account);
+        const success = await injectSession(this._context, account, { force: isForce });
         if (success) {
           this.postMessage({ type: 'switchResult', email, ok: true } as any);
           this._recordDiagnostic(email, 'switch', true, '切换成功');
@@ -1202,13 +1218,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
 
+      case 'togglePreflightCheck': {
+        const current = vscode.workspace.getConfiguration('windsurfPool').get<boolean>('preflightSwitchCheck', true);
+        const next = !current;
+        await vscode.workspace.getConfiguration('windsurfPool').update('preflightSwitchCheck', next, vscode.ConfigurationTarget.Global);
+        this._pushPreflightSetting();
+        this.log(`[settings] 切号预检 ${next ? '已开启' : '已关闭'}`);
+        break;
+      }
+
       case 'resetMachineId': {
         await resetMachineId();
         break;
       }
 
       case 'toggleEnhancement': {
-        const current = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', true);
+        const current = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
         const next = !current;
         await vscode.workspace.getConfiguration('windsurfPool.enhancement').update('enabled', next, vscode.ConfigurationTarget.Global);
 
@@ -2761,7 +2786,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <line x1="1" y1="1" x2="23" y2="23"/>
           </svg>
         </button>
-        <button class="quick-health-filter-btn" id="quickHealthOkBtn" title="只显示测活结果为可用的账号">可用</button>
+        <button class="preflight-toggle-btn" id="preflightToggleBtn" title="切号预检：开启则切号前先调用 Windsurf 官方 API 检查限速（多 0.5-2s 延迟，但能拦截当前模型限速的账号）。关闭则直接切，速度更快但可能切到限速的号。">
+          <span class="preflight-label">切号预检</span>
+          <span class="preflight-switch" aria-hidden="true">
+            <span class="preflight-switch-thumb"></span>
+          </span>
+        </button>
         <div style="flex:1"></div>
         <select class="page-size-select" id="pageSizeSelect" title="每页显示">
           <option value="10">10/页</option>

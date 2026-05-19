@@ -88,7 +88,7 @@
 		notifyEnabled: true,
 		notifyTrigger: 'always',    // always | error | idle
 		notifySound: true,
-		notifyDesktop: true,
+		notifyDesktop: false,
 		notifyTone: 'funk',         // funk | ding | chime | beep
 		notifyRepeat: 2,            // 1-5
 	};
@@ -124,6 +124,9 @@
 	// 启动时把合并后的真相同步回 localStorage，保证 windsurf-better.js 自己的设置面板
 	// 在不重启的情况下也能反映侧栏改动
 	saveSettings(settings);
+
+	// 模块加载时间戳（用于 bridge 未就绪提醒延迟，避免启动 15s 内误报）
+	const _initTs = Date.now();
 	
 	// ========== 回复建议提示功能 ==========
 	const CHAT_ROOT_SELECTOR = '.chat-client-root';
@@ -1993,6 +1996,13 @@
 					if (!prev.includes(original)) {
 						parent.setAttribute('data-ws-orig', prev ? prev + '\n' + original : original);
 					}
+					// 3) 短 CJK 翻译（标签/标题）防止 flex 压缩导致竖排
+					// CJK 字符间每个都是断行点，flex min-content 会压缩到 1 字宽
+					const trimmed = translated.trim();
+					if (trimmed.length <= 10 && /[\u4e00-\u9fff]/.test(trimmed) && !parent.getAttribute('data-ws-nowrap')) {
+						parent.style.whiteSpace = 'nowrap';
+						parent.setAttribute('data-ws-nowrap', '1');
+					}
 				}
 			} catch {}
 		}
@@ -2026,9 +2036,15 @@
 		document.querySelectorAll('[data-ws-rainbow]').forEach(el => {
 			setSafeHTML(el, el.getAttribute('data-ws-rainbow'));
 			el.removeAttribute('data-ws-rainbow');
+			el.style.whiteSpace = '';
 			count++;
 		});
-		// 4) 清理 data-ws-orig 标记（错误检测改读 textContent）
+		// 4) 还原短 CJK 翻译的 nowrap
+		document.querySelectorAll('[data-ws-nowrap]').forEach(el => {
+			el.style.whiteSpace = '';
+			el.removeAttribute('data-ws-nowrap');
+		});
+		// 5) 清理 data-ws-orig 标记（错误检测改读 textContent）
 		document.querySelectorAll('[data-ws-orig]').forEach(el => el.removeAttribute('data-ws-orig'));
 		console.log(LOG_PREFIX + '[Localization] 已还原 ' + count + ' 个 textNode');
 	}
@@ -2101,6 +2117,9 @@
 				// 记录原始 HTML 用于还原
 				el.setAttribute('data-ws-rainbow', el.innerHTML);
 				el.textContent = translated;
+				// 防止 CJK 字符逐字换行导致竖排（原 span 的 inline-block 阻止了换行，
+				// 移除 span 后纯文本 CJK 在窄容器中会逐字断行）
+				el.style.whiteSpace = 'nowrap';
 			}
 		}
 	}
@@ -2198,24 +2217,20 @@
 		const tryClick = () => {
 			if (settings.continueMode !== 'smart') return;
 			if (settings.guardian && settings.guardian.autoContinueButton === false) return;
-			// 与 recovery 模块共用冷却，避免重复点击同一按钮
-			if (typeof isInCooldown === 'function' && isInCooldown()) return;
-			// 自身 5s 冷却，避免短时间内被 MutationObserver 反复触发
+			if (isInCooldown()) return;
 			if (Date.now() - _autoContinueLastFireTs < 5000) return;
-			// 限定在聊天根内查找，避免误点侧栏内的同名按钮
-			const scope = findChatRoot() || document;
-			const btns = scope.querySelectorAll('button, [role="button"]');
-			for (const btn of btns) {
+			const scope = findChatRoot();
+			if (!scope) return; // 聊天面板未加载，不扫（避免误点其他面板的"继续"按钮）
+			for (const btn of scope.querySelectorAll('button, [role="button"]')) {
 				const txt = (btn.textContent || '').trim();
-				if (txt === 'Continue response' || txt === '继续回复') {
-					if (typeof isVisibleAndClickable === 'function' && !isVisibleAndClickable(btn)) continue;
-					_autoContinueLastFireTs = Date.now();
-					if (typeof markActionClick === 'function') markActionClick();
-					bumpAcStat('continueBtn');
-					console.log(LOG_PREFIX + '[AutoContinue] 检测到截断，自动继续...');
-					setTimeout(() => btn.click(), 800);
-					return;
-				}
+				if (!CONTINUE_BUTTON_TEXTS.includes(txt)) continue;
+				if (!isVisibleAndClickable(btn)) continue;
+				_autoContinueLastFireTs = Date.now();
+				markActionClick();
+				bumpAcStat('continueBtn');
+				console.log(LOG_PREFIX + '[AutoContinue] 检测到截断，自动继续...');
+				setTimeout(() => btn.click(), 800);
+				return;
 			}
 		};
 		// 200ms 防抖：AI 边生成边变 DOM，每次都 querySelectorAll 太耗性能
@@ -2339,8 +2354,8 @@
 		{ pattern: /maximum context length/i,                                  category: 'userIntervention', hint: '已达模型最大上下文，请新开会话' },
 	];
 
-	// 按钮触发（继续回复 / Continue response）
-	const CONTINUE_BUTTON_TEXTS = ['Continue response', '继续回复'];
+	// 按钮触发：继续回复 / Continue response（兼容 Windsurf 文案微调）
+	const CONTINUE_BUTTON_TEXTS = ['Continue response', 'Continue', '继续回复', '继续'];
 
 	// ========== 通用选择器常量（避免字面量重复） ==========
 	const MODEL_SELECTOR_BTN_SEL = 'button[aria-label*="Model Selector"], button[aria-label*="模型选择"]';
@@ -3004,9 +3019,15 @@
 				localStorage.removeItem('ws-pool-result');
 				localStorage.removeItem('ws-pool-signal');
 
-				// 决定 afterAction
+				// 决定 afterAction：
+				// 1. 用户明确选了 retry-message / send-continue → 尊重 rule.afterAction
+				// 2. rule.afterAction='auto'（默认）+ continueAfterSwitch=true → 发 continue
+				// 3. rule.afterAction='auto'（默认）+ continueAfterSwitch=false → 走 auto（有 retry 按钮就点，否则发 continue）
 				const rule = getRuleForCategory('quotaErrors');
-				const afterAction = (rule && rule.afterAction) || (settings.continueAfterSwitch ? 'send-continue' : 'auto');
+				const ruleAct = rule && rule.afterAction;
+				const afterAction = (ruleAct && ruleAct !== 'auto')
+					? ruleAct
+					: (settings.continueAfterSwitch ? 'send-continue' : 'auto');
 
 				// 弹 banner 倒计时，倒计时结束后等 AI 对话完毕再执行
 				const countdownMs = (settings.recoveryCountdownSeconds || 5) * 1000;
@@ -3815,7 +3836,7 @@
 		const titleMap = {
 			networkErrors: '网络/超时错误',
 			modelErrors: '模型提供商不可达',
-			quotaErrors: '配额耗尽 / 限流',
+			quotaErrors: 'Windsurf 官方配额耗尽/限流',
 			continuationErrors: '工具调用上限',
 			permissionRequests: '权限请求',
 			custom: '自定义规则触发',
@@ -3941,61 +3962,59 @@
 		})();
 	}
 
-	// ── 统一发送 continue 辅助函数（防重复 + 按钮提交） ──
+	// ── 统一发送 continue 辅助函数 ──
 	// 注意：test-send-continue 不走这里（直接调 setInputText/trySendMessage 以绕过总开关）
+	let _sendingContinue = false;
 	async function sendContinueMessage(customText) {
-		// 总开关：关闭自动继续时，任何路径都不发送（切号后、工具上限、无脑模式、守护面板均生效）
-		if (settings.continueMode === 'off') {
-			console.log(LOG_PREFIX + '[trigger] sendContinueMessage 被拦截: 自动继续已关闭 (continueMode=off)');
-			return false;
-		}
-		const cooldown = (settings.sendCooldown && settings.sendCooldown > 0) ? settings.sendCooldown : 10000;
+		if (settings.continueMode === 'off') return false;
+		if (_sendingContinue) return false;
+		const cooldown = (settings.sendCooldown > 0) ? settings.sendCooldown : 10000;
 		if (Date.now() - _lastContinueTs < cooldown) return false;
 		const text = customText || (settings.continueText && String(settings.continueText).trim()) || 'continue';
 
-		// v6.6.1 关键修复：已有 queued 消息时，不再写入新文本+点按钮
-		// 直接派发 Enter 触发 Windsurf 自己处理队列。
-		// 用户反馈场景：配额耗尽 + 1 条"继续"已 queued + 输入框残留"继续" → 死锁
-		// Windsurf DOM 上已经明示「按回车发送排队消息 (⏎)」，Enter 是官方推荐路径。
-		if (hasQueuedMessage()) {
-			const inputEl = findInputEl();
-			if (inputEl) {
-				dispatchEnterKey(inputEl);
-				_lastContinueTs = Date.now();
-				console.log(LOG_PREFIX, '[sendContinue] ✅ 已有 queued 消息 → 直接 Enter 触发队列（不重复入队）');
-				bumpAcStat('sendMsg');
-				// 等 Windsurf 处理一下队列
-				await new Promise(r => setTimeout(r, 1500));
-				return true;
-			}
-		}
-
-		if (!await setInputText(text)) return false;
-		_lastContinueTs = Date.now();
-		markActionClick();
-		// 等 Lexical 状态稳定后尝试发送
-		await new Promise(r => setTimeout(r, 400));
-		const method = trySendMessage();
-		console.log(LOG_PREFIX, '[sendContinue] 尝试发送:', method);
-		// 验证：等 1.5s 检查输入框是否被清空（真正发送成功 Windsurf 会自动清空输入框）
-		await new Promise(r => setTimeout(r, 1500));
-		const el = findInputEl();
-		const remaining = (el?.textContent || '').trim();
-		if (remaining.length > 0) {
-			// v6.6.0 Bug C 修复：输入框残留可能是 queued 状态（消息已成功入队），不是真实失败
-			// queued 状态下扩展不应清空输入框，否则会把 Windsurf 入队的消息抹掉
+		_sendingContinue = true;
+		try {
+			// 已 queued：直接 Enter 触发，避免重复入队导致死锁
+			// （Windsurf 自己提示「按回车发送排队消息 (⏎)」，Enter 是官方路径）
 			if (hasQueuedMessage()) {
-				console.log(LOG_PREFIX, '[sendContinue] ✅ 发送成功（消息已入队，不清空残留）');
+				const el = findInputEl();
+				if (!el) return false;
+				dispatchEnterKey(el);
+				await new Promise(r => setTimeout(r, 1500));
+				_lastContinueTs = Date.now();
 				bumpAcStat('sendMsg');
+				console.log(LOG_PREFIX, '[sendContinue] ✅ Enter (queued)');
 				return true;
 			}
-			console.log(LOG_PREFIX, '[sendContinue] ⚠ 发送未生效（输入框仍有"' + remaining.substring(0, 20) + '"），清空残留');
-			try { if (el) { el.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } } catch {}
+
+			// 主路径：写文本 + 触发发送 + 验证
+			if (!await setInputText(text)) return false;
+			markActionClick();
+			await new Promise(r => setTimeout(r, 400));
+			trySendMessage();
+			await new Promise(r => setTimeout(r, 1500));
+
+			const el = findInputEl();
+			const remaining = (el?.textContent || '').trim();
+			// 输入框已清空 或 进入 queued 状态 = 发送成功
+			if (remaining.length === 0 || hasQueuedMessage()) {
+				_lastContinueTs = Date.now();
+				bumpAcStat('sendMsg');
+				console.log(LOG_PREFIX, '[sendContinue] ✅');
+				return true;
+			}
+
+			// 真失败：清残留 + 不进 cooldown（允许立即重试）
+			console.log(LOG_PREFIX, '[sendContinue] ⚠ 未生效，清空残留');
+			if (el) {
+				el.focus();
+				document.execCommand('selectAll', false, null);
+				document.execCommand('delete', false, null);
+			}
 			return false;
+		} finally {
+			_sendingContinue = false;
 		}
-		console.log(LOG_PREFIX, '[sendContinue] ✅ 发送成功（输入框已清空）');
-		bumpAcStat('sendMsg');
-		return true;
 	}
 
 	// v6.6.2 终极修订（第四轮审查）：检测 Windsurf 是否处于 queued 状态
@@ -4081,10 +4100,12 @@
 		if (Date.now() - lastRecoveryTs < _recoveryCooldownMs) return;
 
 		// 1) 按钮存在时跳过（由 autoContinue 模块处理按钮点击，此处只处理文本类截断）
-		const btns = document.querySelectorAll('button, [role="button"]');
-		for (const btn of btns) {
-			const txt = (btn.textContent || '').trim();
-			if (CONTINUE_BUTTON_TEXTS.includes(txt)) return;
+		const chatRoot = findChatRoot();
+		if (chatRoot) {
+			for (const btn of chatRoot.querySelectorAll('button, [role="button"]')) {
+				const txt = (btn.textContent || '').trim();
+				if (CONTINUE_BUTTON_TEXTS.includes(txt)) return;
+			}
 		}
 
 		// 2) 消息文本匹配（工具调用上限等 continuationErrors 模式）
@@ -4204,62 +4225,60 @@
 	}
 
 	let recoveryPollTimer = null;
-	// 启动冷静期：grace period 内不触发恢复，避免页面加载时把历史错误当新错误处理
-	// 另外还要等 bridge 真正就绪（_bridgeReady），否则恢复时无法切号会显示"没连上插件"
+	// 启动冷静期 + bridge 未就绪门控：避免历史错误误触发 / 切号信号无人接收
 	let _recoveryGraceUntil = 0;
 	let _bridgeReady = false;
-	let _recoveryEverStarted = false; // 是否曾经启动过（grace 只在首次启动时计算）
+	let _recoveryEverStarted = false; // grace 仅首次启动重置（防用户切开关误屏蔽）
+	let _bridgeWarnTs = 0;
 	const RECOVERY_GRACE_MS = 8000;
+
+	// bridge 未就绪时主动提醒（避免静默失效）
+	// 启动 45s 后才报：等够 sidebar 懒加载 + bridge relay + _waitBridgeReady（最长 30s）
+	function _maybeWarnBridgeNotReady() {
+		if (settings.autoSwitchEnabled === false) return;
+		const now = Date.now();
+		if (now - _initTs < 45000) return;
+		if (now - _bridgeWarnTs < 120000) return;
+		_bridgeWarnTs = now;
+		console.warn(LOG_PREFIX + '[Recovery] ⚠ bridge 未就绪，请打开 Windsurf 号池侧栏激活');
+		showRecoveryNotification('⚠ 自动切号未激活：请打开 Windsurf 号池侧栏');
+	}
 
 	function startAutoRecovery() {
 		if (recoveryObserver) { recoveryObserver.disconnect(); recoveryObserver = null; }
 		if (recoveryPollTimer) { clearInterval(recoveryPollTimer); recoveryPollTimer = null; }
 		if (!settings.autoRecoveryEnabled) return;
 
-		// 进入启动冷静期：grace period 内只跟踪不触发
-		// 仅首次启动（而非用户开关切换）才重置 grace，避免用户切开关误屏蔽真实错误
+		// v7.5.6 移除了启动 DOM 预标记（[role=alert]/[role=status] 全标 _wsRecoveryHandled='1'），
+		// 该机制在 Windsurf 复用同一 banner DOM（仅更新文本）时会让新错误被永久屏蔽。
+		// 现仅靠：grace(8s) + cooldown(15s) + fingerprint(60s) 三重防护防 stale。
 		if (!_recoveryEverStarted) {
 			_recoveryGraceUntil = Date.now() + RECOVERY_GRACE_MS;
-			// 仅预标记"独立错误容器"——不动 assistant 消息内部，否则会屏蔽用户当前未处理的真实错误
-			// assistant 内嵌错误依靠 grace period + cooldown + 指纹去重三重防护即可
-			try {
-				const scanRoot = getScanRoot();
-				scanRoot.querySelectorAll('[role="alert"], [role="status"]').forEach(el => {
-					if (el.closest(ASSISTANT_MSG_SEL)) return; // 跳过 assistant 内部
-					try { if (el.dataset) el.dataset._wsRecoveryHandled = '1'; } catch {}
-				});
-				console.log(LOG_PREFIX + '[Recovery] 启动冷静期预标记完成，' + RECOVERY_GRACE_MS + 'ms 内忽略所有错误');
-			} catch (e) {
-				console.warn(LOG_PREFIX + '[Recovery] 预标记失败:', e);
-			}
 			_recoveryEverStarted = true;
 		}
 
-		// MutationObserver 驱动错误检测
+		// 公共触发逻辑：grace 后 + bridge 就绪 → 全方位扫描
+		function tick() {
+			if (Date.now() < _recoveryGraceUntil) return;
+			if (!_bridgeReady) { _maybeWarnBridgeNotReady(); return; }
+			checkForErrors();
+			checkForContinuePrompts();
+			checkForPermissionApproval();
+			checkForPoolResult();
+		}
+
+		// MutationObserver：DOM 变化驱动检测（500ms debounce）
 		let debounceTimer = null;
 		recoveryObserver = new MutationObserver(() => {
 			if (debounceTimer) clearTimeout(debounceTimer);
-			debounceTimer = setTimeout(() => {
-				// 启动冷静期内或 bridge 未就绪时，只做跟踪，不触发恢复
-				if (Date.now() < _recoveryGraceUntil || !_bridgeReady) {
-					trackLastUserMessage();
-					return;
-				}
-				trackLastUserMessage();
-				checkForErrors();
-				checkForContinuePrompts();
-				checkForPermissionApproval();
-				checkForPoolResult();
-			}, 500);
+			debounceTimer = setTimeout(() => { trackLastUserMessage(); tick(); }, 500);
 		});
 		recoveryObserver.observe(document.body, { childList: true, subtree: true });
 
-		// 定时轮询 pool result（兜底）
-		recoveryPollTimer = setInterval(() => {
-			if (settings.autoRecoveryEnabled) checkForPoolResult();
-		}, 3000);
+		// 3s 兜底：grace 期已存在但之后 DOM 不变的错误，observer 永远不会再触发
+		recoveryPollTimer = setInterval(tick, 3000);
 
-		console.log(LOG_PREFIX + '[Recovery] ✅自动恢复已启用（' + RECOVERY_GRACE_MS + 'ms 启动冷静期）');
+		console.log(LOG_PREFIX + '[Recovery] ✅自动恢复已启用（grace=' + RECOVERY_GRACE_MS + 'ms, poll=3s）');
 	}
 
 	// ========== 完成提醒 ==========
@@ -4400,8 +4419,8 @@
 
 	function isAIGenerating() {
 		const chatRoot = document.querySelector('.chat-client-root') || document;
-		// 信号1: 输入框旁的按钮图标 = lucide-circle-stop → 生成中
-		if (chatRoot.querySelector('svg.lucide-circle-stop')) return true;
+		// 信号1: 输入框旁的停止按钮 → 生成中
+		if (chatRoot.querySelector('svg.lucide-circle-stop, button[aria-label="Stop"] svg, button[aria-label="停止"] svg, button[aria-label="Cancel"] svg')) return true;
 		// 信号2: 操作栏（👍👎📋）数量检测
 		// 每条 AI 回复完成后才渲染 lucide-thumbs-up，生成中没有
 		const thumbs = chatRoot.querySelectorAll('svg.lucide-thumbs-up');
@@ -4653,6 +4672,18 @@
 		// 初始计数
 		_lastAssistantCount = getScanRoot().querySelectorAll(ASSISTANT_MSG_SEL).length;
 		_wasGenerating = false;
+		// 初始化文本长度为当前值，避免启动时 curLen >> 0 导致误检测为"正在生成"
+		try {
+			const scanRoot = getScanRoot();
+			let msgs = scanRoot.querySelectorAll(ASSISTANT_MSG_SEL);
+			if (msgs.length > 0) {
+				_notifyLastTextLen = (msgs[msgs.length - 1].textContent || '').length;
+			} else {
+				_notifyLastTextLen = (scanRoot.textContent || '').length;
+			}
+		} catch(e) { _notifyLastTextLen = 0; }
+		_notifyTextStableCount = 0;
+		_notifyTextGrowing = false;
 
 		// ── 方法 A：拦截 Windsurf 原生 Notification API（最可靠） ──
 		if (!window._wsNotifyHooked) {
@@ -4695,27 +4726,39 @@
 	let _lastTriggerTs = 0;
 	function triggerNotifySound() {
 		if (!settings.notifyEnabled) return;
-		// 防抖：8s 内不重复触发（避免多检测方法重复播放）
-		if (Date.now() - _lastTriggerTs < 8000) return;
+		// 防抖：3s 内不重复触发（避免多检测方法重复播放）
+		if (Date.now() - _lastTriggerTs < 3000) return;
 		_lastTriggerTs = Date.now();
 
 		const shouldNotify = shouldTriggerNotify();
 		if (!shouldNotify) return;
 
-		console.log(LOG_PREFIX + '[Notify] 触发提醒（sound=' + !!settings.notifySound + '）');
-		// 仅走 HTTP 桥 → 扩展后端播放系统声音（唯一路径，避免重复）
+		console.log(LOG_PREFIX + '[Notify] 🔔 触发提醒（sound=' + !!settings.notifySound + ', desktop=' + !!settings.notifyDesktop + '）');
+
+		// 路径 A：直接在 workbench 中播放 Web Audio（主路径，不依赖 bridge/PowerShell）
+		if (settings.notifySound) {
+			try {
+				playNotifySound();
+			} catch(e) {
+				console.warn(LOG_PREFIX + '[Notify] Web Audio 播放失败:', e);
+			}
+		}
+
+		// 路径 B：通过 bridge 请求扩展后端播放系统声音 + 桌面通知
 		try {
 			if (typeof bridgePostResult === 'function' && typeof getBridgeUrl === 'function' && getBridgeUrl()) {
 				bridgePostResult({
 					type: 'notify-sound',
 					ts: Date.now(),
-					sound: !!settings.notifySound,
-					desktop: false,
+					sound: false,
+					desktop: !!settings.notifyDesktop,
 					tone: settings.notifyTone || 'funk',
 					repeat: settings.notifyRepeat || 1,
 					customTone: settings.customTone || '',
 					audioFile: settings.audioFile || '',
 				});
+			} else {
+				console.warn(LOG_PREFIX + '[Notify] bridge 未连接，桌面通知跳过');
 			}
 		} catch(e) {
 			console.warn(LOG_PREFIX + '[Notify] bridge 发送失败:', e);
@@ -5235,7 +5278,10 @@
 		// 响应完成提醒开关变化
 		if (old.notifyEnabled !== settings.notifyEnabled) {
 			if (settings.notifyEnabled) startNotifyObserver();
-			else if (notifyObserver) { notifyObserver.disconnect(); notifyObserver = null; }
+			else {
+				if (notifyObserver) { notifyObserver.disconnect(); notifyObserver = null; }
+				if (window._notifyPollTimer) { clearInterval(window._notifyPollTimer); window._notifyPollTimer = null; }
+			}
 		}
 		// 响应无脑模式参数变化（模式切换已在上方处理）
 		const oldLt = old.longTask || {};

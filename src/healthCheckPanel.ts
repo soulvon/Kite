@@ -11,6 +11,7 @@ import { UsageTracker } from './usageTracker';
 import { getPoolRoot, ensureDir } from './utils';
 import { injectSession, getLastInjectFailure } from './sessionInjector';
 import { acquireLock, releaseLock } from './accountLock';
+import * as usageDiskCache from './usageDiskCache';
 
 let _panel: vscode.WebviewPanel | undefined;
 let _abortController: AbortController | undefined;
@@ -287,13 +288,19 @@ export function openHealthCheckPanel(
 async function pushAccounts(ctx: vscode.ExtensionContext) {
   if (!_panel) return;
   const accounts = await accountStore.readAccounts(ctx);
-  const list = accounts.map(a => ({
-    email: a.email,
-    disabled: !!a.disabled,
-    tag: a.tag || '',
-    tags: a.tags || (a.tag ? [a.tag] : []),
-    cached: _resultCache.get(a.email) || null,
-  }));
+  const usageEntries = usageDiskCache.loadAll();
+  const list = accounts.map(a => {
+    const ue = usageEntries.get(a.email);
+    const plan = ue?.snapshot?.planName || '';
+    return {
+      email: a.email,
+      disabled: !!a.disabled,
+      tag: a.tag || '',
+      tags: a.tags || (a.tag ? [a.tag] : []),
+      plan,
+      cached: _resultCache.get(a.email) || null,
+    };
+  });
   _panel.webview.postMessage({ type: 'accounts', list });
   _panel.webview.postMessage({ type: 'tagColors', colors: _tagColors });
 }
@@ -727,6 +734,27 @@ function buildHtml(cssUri: string, jsUri: string, version: string): string {
   <!-- 筛选栏 -->
   <div class="hc-filter-bar" id="hcFilterBar">
     <input type="text" class="hc-search-input" id="hcSearchInput" placeholder="搜索账号..." />
+    <!-- 多维筛选下拉 -->
+    <div class="hc-filter-wrap" id="hcFilterWrap">
+      <button class="hc-filter-trigger" id="hcFilterTrigger" title="多维筛选">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        <span id="hcFilterLabel">筛选</span>
+        <span class="hc-filter-count" id="hcFilterCount"></span>
+      </button>
+      <div class="hc-filter-dropdown" id="hcFilterDropdown" hidden>
+        <div class="hc-filter-section" id="hcFilterPlanSection">
+          <div class="hc-filter-section-title">套餐</div>
+          <div class="hc-filter-options" id="hcFilterPlanList"></div>
+        </div>
+        <div class="hc-filter-section" id="hcFilterTagSection">
+          <div class="hc-filter-section-title">标签</div>
+          <div class="hc-filter-options" id="hcFilterTagList"></div>
+        </div>
+        <div class="hc-filter-actions">
+          <button class="hc-btn hc-btn-sm" id="hcFilterClearBtn">清空筛选</button>
+        </div>
+      </div>
+    </div>
     <div class="hc-status-tabs" id="hcStatusTabs">
       <span class="hc-status-tab active" data-status="all">全部</span>
       <span class="hc-status-tab" data-status="ok">可用</span>

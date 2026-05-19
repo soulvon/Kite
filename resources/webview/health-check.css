@@ -551,6 +551,72 @@ body.vscode-light .hc-detail-tip {
   transition: border-color 0.2s;
 }
 .hc-search-input:focus { border-color: var(--hc-accent); }
+
+/* ── Filter Dropdown ── */
+.hc-filter-wrap { position: relative; }
+.hc-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--hc-border);
+  border-radius: var(--hc-radius);
+  background: var(--hc-surface);
+  color: var(--hc-fg-dim);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.hc-filter-trigger:hover { color: var(--hc-fg); border-color: var(--hc-accent); }
+.hc-filter-count { font-weight: 700; color: var(--hc-accent); }
+.hc-filter-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--hc-bg);
+  border: 1px solid var(--hc-border);
+  border-radius: var(--hc-radius);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  z-index: 100;
+  padding: 6px 0;
+}
+.hc-filter-section { padding: 4px 10px; }
+.hc-filter-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--hc-fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  padding: 2px 0;
+}
+.hc-filter-options { display: flex; flex-direction: column; gap: 1px; }
+.hc-filter-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--hc-fg-dim);
+  transition: all 0.1s;
+}
+.hc-filter-option:hover { background: color-mix(in srgb, var(--hc-accent) 8%, transparent); color: var(--hc-fg); }
+.hc-filter-option.is-active {
+  background: color-mix(in srgb, var(--hc-accent) 15%, transparent);
+  color: var(--hc-accent);
+  font-weight: 600;
+}
+.hc-filter-option-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hc-filter-option-count { font-size: 10px; opacity: 0.6; margin-left: 6px; }
+.hc-filter-actions { padding: 4px 10px; border-top: 1px solid var(--hc-border); margin-top: 2px; }
+
 .hc-status-tabs {
   display: inline-flex;
   align-items: center;

@@ -9,6 +9,7 @@ export interface StoredAccount {
   tag?: string;
   tags?: string[];
   disabled?: boolean;
+  orgId?: string;
 }
 
 /**
@@ -35,6 +36,7 @@ export interface UsageSnapshot {
   overageBalanceMicros?: number;
   planStart?: string;
   planEnd?: string;
+  orgId?: string;
   _rawPlanStatus: any;
 }
 
@@ -74,6 +76,7 @@ export type WebviewMessageType =
   | 'updateTag'
   | 'getEnhancementStatus'
   | 'toggleEnhancement'
+  | 'togglePreflightCheck'
   | 'playNotifySound'
   | 'browseAudioFile'
   | 'enhLoad'
@@ -142,6 +145,7 @@ export type BackendMessageType =
   | 'showAlert'
   | 'autoSwitchEvent'
   | 'autoSwitchSettingsSync'
+  | 'preflightSettingSync'
   | 'audioFileSelected'
   | 'enhLoaded'
   | 'enhSaved'

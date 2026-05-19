@@ -36,6 +36,8 @@
   let healthCheckBusy = false;
   let switchIssueCache = new Map(); // email → { reason, kind, ts }
   let switchingEmail = '';
+  let pendingForceSwitchEmail = ''; // 显示强制切换确认遮罩的账号 email
+  let preflightEnabled = true; // 切号预检开关（由扩展端推送）
 
   // ── 标签颜色系统 ──
   const TAG_PALETTE = [
@@ -126,6 +128,15 @@
     return 'is-ok';
   }
 
+  function formatOrgId(orgId) {
+    if (!orgId) return '—';
+    // account-3ee0d55800e741ef8af34f81d7bf900b → account-3ee0...900b
+    const m = orgId.match(/^(account|org)-([0-9a-f]{4})[0-9a-f]+([0-9a-f]{4})$/);
+    if (m) return m[1] + '-' + m[2] + '…' + m[3];
+    // 其他格式：显示前 12 字符
+    return orgId.length > 12 ? orgId.slice(0, 12) + '…' : orgId;
+  }
+
   function periodClass(planEnd) {
     const daysLeft = Math.ceil((new Date(planEnd).getTime() - Date.now()) / 86400000);
     if (daysLeft <= 0) return 'period-gray';
@@ -163,6 +174,15 @@
     if (eyeOff) eyeOff.hidden = !privacyMode;
   }
 
+  function updatePreflightUi() {
+    if (!preflightToggleBtn) return;
+    preflightToggleBtn.classList.toggle('is-active', preflightEnabled);
+    preflightToggleBtn.setAttribute('aria-pressed', preflightEnabled ? 'true' : 'false');
+    preflightToggleBtn.title = preflightEnabled
+      ? '切号预检：已开启（切号前调用官方 API 检查限速，多 0.5-2s 延迟，但能拦截当前模型限速的账号）。点击关闭。'
+      : '切号预检：已关闭（切号无延迟但可能切到限速的号）。点击开启。';
+  }
+
   function setExternalEmailText() {
     const emailEl = document.getElementById('externalEmail');
     if (emailEl) emailEl.textContent = displayEmail(externalAccount);
@@ -177,6 +197,7 @@
   const asThresholdEl = $('#asThreshold');
   const refreshAllBtn = $('#refreshAllBtn');
   const privacyModeBtn = $('#privacyModeBtn');
+  const preflightToggleBtn = $('#preflightToggleBtn');
 
   // Windsurf 增强面板元素
   const enhanceToggleBtn = $('#enhanceToggleBtn');
@@ -339,14 +360,17 @@
 
   function getHealthStatus(email) {
     const hc = getHealthEntry(email);
-    if (!hc) return '未检测';
-    if (hc.testing) return '检测中';
-    if (hc.stale) return '待复测';
+    if (!hc) return '待检测';
+    if (hc.testing) return '待检测';
+    if (hc.stale) return '待检测';
     if (hc.ok) return '可用';
     const reason = hc.reason || '';
-    if (/待复测/i.test(reason)) return '待复测';
-    if (/全局限制|长期不可用|限流|限速|rate limit|剩余\s*0|消息已用尽|模型额度|额度.*上限|已达上限|用尽|overall|暂不可用/i.test(reason)) return '限速';
-    return '异常';
+    if (/待复测/i.test(reason)) return '待检测';
+    if (/全局限制|长期不可用|限流|限速|rate limit|剩余\s*0|消息已用尽|模型额度|额度.*上限|已达上限|用尽|overall|暂不可用|quota/i.test(reason)) return '限速';
+    if (/无权限|不支持|NO_ACCESS/i.test(reason)) return '无权限';
+    if (/Key.*失效|401|invalid/i.test(reason)) return 'Key失效';
+    if (/封禁|403|到期|宽限期/i.test(reason)) return '到期/封禁';
+    return '其它异常';
   }
 
   function planTierClass(planName) {
@@ -394,7 +418,6 @@
     const healthList = document.getElementById('filterHealthList');
     if (!planList || !tagList || !statusList || !healthList) return;
 
-    // 统计各维度计数
     const planCounts = {};
     const tagCounts = {};
     const statusCounts = {};
@@ -430,7 +453,6 @@
     renderOptions(statusList, statusCounts, filterStatuses);
     renderOptions(healthList, healthCounts, filterHealth);
 
-    // 更新触发器标签
     updateFilterLabel();
   }
 
@@ -447,8 +469,6 @@
       labelEl.textContent = '筛选中';
       countEl.textContent = '(' + matched + '/' + accounts.length + ')';
     }
-    const quickHealthOkBtn = document.getElementById('quickHealthOkBtn');
-    if (quickHealthOkBtn) quickHealthOkBtn.classList.toggle('is-active', filterHealth.has('可用'));
   }
 
   function getAccountGroup(account) {
@@ -545,11 +565,15 @@
 
     if (selectMode) card.classList.add('is-select-mode');
     if (account.disabled) card.classList.add('is-disabled');
-    if (getAccountIssue(account.email)) card.classList.add('has-switch-issue');
+    const accountIssue = getAccountIssue(account.email);
+    if (accountIssue) card.classList.add('has-switch-issue');
     const lockInfo = !isActive && lockedEmailsMap[account.email];
     if (lockInfo) card.classList.add('is-locked');
+    const healthIssue = !isActive && !lockInfo && !account.disabled && pendingForceSwitchEmail === account.email && accountIssue;
+    if (healthIssue) card.classList.add('has-health-overlay');
     card.innerHTML = `
       ${lockInfo ? `<div class="grid-lock-overlay"><div class="grid-lock-overlay-box"><div class="grid-lock-overlay-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><div class="grid-lock-overlay-text">${escHtml(lockInfo.instanceName)} 使用中</div><button class="grid-force-switch-btn" data-action="forceSwitch" title="强制切换到此账号（将从其他实例抢占）">强制切换</button></div></div>` : ''}
+      ${healthIssue ? `<div class="grid-health-overlay"><div class="grid-health-overlay-box"><div class="grid-health-overlay-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div class="grid-health-overlay-text">${escHtml(summarizeAccountIssue(healthIssue.reason || '暂不可用'))}</div><button class="grid-force-switch-btn" data-action="forceSwitch" title="跳过健康检查，强制切换到此账号">强制切换</button></div></div>` : ''}
       ${selectMode ? `<div class="grid-check-col"><input type="checkbox" class="grid-check-input" data-email="${escHtml(account.email)}" ${selectedEmails.has(account.email) ? 'checked' : ''}></div>` : ''}
       <div class="grid-card-body">
       <div class="grid-card-head">
@@ -581,7 +605,7 @@
         <div class="grid-extra-row"><span>会员期限</span><span class="grid-extra-val ${snap && snap.planEnd ? periodClass(snap.planEnd) : ''}" data-field="period">${snap && snap.planStart && snap.planEnd ? formatPeriodSimple(snap.planStart, snap.planEnd) : '—'}</span></div>
         <div class="grid-extra-row"><span>今日切号</span><span class="grid-extra-val" data-field="switchCount">${perAccountStats[account.email]?.switchToCount || 0} 次</span></div>
       </div>
-      ${buildSwitchIssueRow(account.email)}
+      ${healthIssue ? '' : buildSwitchIssueRow(account.email)}
       <div class="grid-card-actions">
         ${isActive
           ? '<span class="grid-current-label"><span style="color:#3fb950">●</span> 使用中</span>'
@@ -651,6 +675,12 @@
     if (periodEl && snapshot.planStart && snapshot.planEnd) {
       periodEl.textContent = formatPeriodSimple(snapshot.planStart, snapshot.planEnd);
       periodEl.className = 'grid-extra-val ' + periodClass(snapshot.planEnd);
+    }
+
+    const orgIdEl = card.querySelector('[data-field="orgId"]');
+    if (orgIdEl && snapshot.orgId) {
+      orgIdEl.textContent = formatOrgId(snapshot.orgId);
+      orgIdEl.title = snapshot.orgId;
     }
 
     const switchEl = card.querySelector('[data-field="switchCount"]');
@@ -850,11 +880,6 @@
     }
 
     accountGrid.replaceChildren(frag);
-
-    // 下一帧恢复动画（后续真正新增卡片时才有动画）
-    requestAnimationFrame(() => {
-      if (accountGrid) accountGrid.classList.remove('no-card-anim');
-    });
 
     const hasFilter = searchQuery.trim() || activeTagFilters.length > 0 || activeTagFilter || filterPlans.size > 0 || filterTags.size > 0 || filterStatuses.size > 0 || filterHealth.size > 0;
     if (gridCount) gridCount.textContent = hasFilter ? filtered.length + ' / ' + accounts.length + ' 个' : accounts.length + ' 个';
@@ -1063,10 +1088,10 @@
       return resetMatch ? `官方临时限流，${resetMatch[1].trim()} 后再试` : '官方临时限流，稍后再试';
     }
     if (/消息.*额度|消息.*限制|模型额度|额度.*上限|已达上限|用尽|频率|限流|限速|rate limit|quota.*exhaust|usage.*quota|daily.*quota|overall|reset/i.test(text)) {
-      if (minuteMatch) return `消息/频率限制，约 ${minuteMatch[1]} 分钟后恢复`;
+      if (minuteMatch) return `Windsurf 官方频率限制，约 ${minuteMatch[1]} 分钟后恢复`;
       const secondMatch = text.match(/(\d+)\s*s/i) || text.match(/(\d+)\s*秒/);
-      if (secondMatch) return `消息/频率限制，约 ${secondMatch[1]} 秒后恢复`;
-      return '账号消息/频率限制，稍后恢复';
+      if (secondMatch) return `Windsurf 官方频率限制，约 ${secondMatch[1]} 秒后恢复`;
+      return 'Windsurf 官方频率限制，稍后恢复';
     }
     if (/探针失败|probe.*fail|probe.*error|probe:/i.test(text)) return '探针检测异常';
     if (/NO_ACCESS|无权限|不支持|unsupported|not.*support/i.test(text)) return '当前模型无权限';
@@ -1260,6 +1285,17 @@
     try {
       const st = vscode.getState() || {};
       st._filterTags = [...filterTags];
+      vscode.setState(st);
+    } catch {}
+  }
+
+  function persistFilters() {
+    try {
+      const st = vscode.getState() || {};
+      st._filterPlans = [...filterPlans];
+      st._filterTags = [...filterTags];
+      st._filterStatuses = [...filterStatuses];
+      st._filterHealth = [...filterHealth];
       vscode.setState(st);
     } catch {}
   }
@@ -2486,15 +2522,26 @@
     if (!email) return;
 
     switch (action) {
-      case 'switch':
-        switchingEmail = email;
-        renderCards();
-        postMsg('switch', { email });
+      case 'switch': {
+        const issue = getAccountIssue(email);
+        if (issue && pendingForceSwitchEmail !== email) {
+          // 有健康异常 → 显示确认遮罩，不直接切
+          pendingForceSwitchEmail = email;
+          try { renderCards(); } catch (e) { console.error('[renderCards]', e); }
+        } else {
+          // 健康 → 直接切
+          pendingForceSwitchEmail = '';
+          switchingEmail = email;
+          postMsg('switch', { email });
+          try { renderCards(); } catch (e) { console.error('[renderCards]', e); }
+        }
         break;
+      }
       case 'forceSwitch':
+        pendingForceSwitchEmail = '';
         switchingEmail = email;
-        renderCards();
         postMsg('switch', { email, force: true });
+        try { renderCards(); } catch (e) { console.error('[renderCards]', e); }
         break;
       case 'refresh':
         postMsg('fetchUsageFor', { email });
@@ -2695,6 +2742,12 @@
       case 'autoSwitchEvent': {
         if (msg.log) addAutoSwitchLog(msg.log);
         if (msg.status !== undefined) setAutoSwitchMsg(msg.status, msg.statusType);
+        break;
+      }
+
+      case 'preflightSettingSync': {
+        preflightEnabled = msg.enabled !== false;
+        updatePreflightUi();
         break;
       }
 
@@ -4194,6 +4247,14 @@
   function init() {
     // 卡片点击
     if (accountGrid) accountGrid.addEventListener('click', handleCardAction);
+    // 点击页面其他位置时取消"强制切换确认"遮罩
+    document.addEventListener('click', (e) => {
+      if (!pendingForceSwitchEmail) return;
+      if (e.target.closest('.grid-health-overlay-box')) return; // 点遮罩内部不取消
+      if (e.target.closest('.grid-switch-btn')) return; // 点切换按钮交由 handleCardAction 处理
+      pendingForceSwitchEmail = '';
+      try { renderCards(); } catch (err) { console.error('[renderCards]', err); }
+    }, true);
     // 卡片右键：右键标签 chip 时打开"修改标签"模态
     if (accountGrid) accountGrid.addEventListener('contextmenu', (e) => {
       const chip = e.target.closest('.grid-tag-chip');
@@ -4220,7 +4281,6 @@
     const filterTrigger = document.getElementById('filterTrigger');
     const filterDropdown = document.getElementById('filterDropdown');
     const filterClearBtn = document.getElementById('filterClearBtn');
-    const quickHealthOkBtn = document.getElementById('quickHealthOkBtn');
     // 恢复持久化
     try {
       const st = vscode.getState() || {};
@@ -4229,14 +4289,6 @@
       if (st._filterStatuses) filterStatuses = new Set(st._filterStatuses);
       if (st._filterHealth) filterHealth = new Set(st._filterHealth);
     } catch {}
-    function persistFilters() {
-      const st = vscode.getState() || {};
-      st._filterPlans = [...filterPlans];
-      st._filterTags = [...filterTags];
-      st._filterStatuses = [...filterStatuses];
-      st._filterHealth = [...filterHealth];
-      vscode.setState(st);
-    }
     if (filterTrigger && filterDropdown) {
       filterTrigger.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -4279,17 +4331,6 @@
         persistFilters();
         currentPage = 1;
         buildFilterDropdown();
-        renderCards();
-      });
-    }
-    if (quickHealthOkBtn) {
-      quickHealthOkBtn.addEventListener('click', () => {
-        if (filterHealth.has('可用')) filterHealth.delete('可用');
-        else filterHealth.add('可用');
-        persistFilters();
-        currentPage = 1;
-        const dropdown = document.getElementById('filterDropdown');
-        if (dropdown && !dropdown.hidden) buildFilterDropdown();
         renderCards();
       });
     }
@@ -4455,6 +4496,15 @@
         updatePrivacyModeUi();
         setExternalEmailText();
         renderCards();
+      });
+    }
+    if (preflightToggleBtn) {
+      updatePreflightUi();
+      preflightToggleBtn.addEventListener('click', () => {
+        // 乐观更新本地状态，扩展端处理后会推 preflightSettingSync 校准
+        preflightEnabled = !preflightEnabled;
+        updatePreflightUi();
+        postMsg('togglePreflightCheck');
       });
     }
 

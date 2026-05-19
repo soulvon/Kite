@@ -100,20 +100,20 @@ function parseRateLimitBody(body: string): { ok: boolean; reason?: string; remai
     return {
       ok: false,
       reason: reset
-        ? `${isModelLimit ? '当前模型额度/频率限制' : '账号消息额度/频率限制'}，约 ${reset} 后恢复${resetEta}`
+        ? `${isModelLimit ? 'Windsurf 官方模型额度限制' : 'Windsurf 官方消息频率限制'}，约 ${reset} 后恢复${resetEta}`
         : isModelLimit
-          ? `当前模型额度已达上限${upgradeHint ? '，可换模型或等待刷新' : ''}（服务端未返回恢复时间）`
-          : '消息额度/频率限制（服务端未返回恢复时间）',
+          ? `Windsurf 官方模型额度已达上限${upgradeHint ? '，可换模型或等待刷新' : ''}（服务端未返回恢复时间）`
+          : 'Windsurf 官方消息频率限制（服务端未返回恢复时间）',
       remaining: 0,
     };
   }
 
   if (d.hasCapacity === false) {
-    return { ok: false, reason: '消息已用尽', remaining: 0 };
+    return { ok: false, reason: 'Windsurf 官方消息额度已用尽', remaining: 0 };
   }
 
   if (typeof d.messagesRemaining === 'number') {
-    if (d.messagesRemaining === 0) return { ok: false, reason: '剩余 0 条', remaining: 0 };
+    if (d.messagesRemaining === 0) return { ok: false, reason: 'Windsurf 官方消息额度剩余 0 条', remaining: 0 };
     return { ok: true, remaining: d.messagesRemaining };
   }
 
@@ -132,10 +132,10 @@ function formatProbeLimitReason(tag: string, planName: string, probe: {
   const label = kind === 'overall'
     ? (hasReset ? '官方临时限流' : '官方全局限制/长期不可用')
     : kind === 'model'
-      ? '当前模型限流'
+      ? 'Windsurf 官方模型限流'
       : kind === 'message'
-        ? '消息限流'
-        : '频率限制';
+        ? 'Windsurf 官方消息限流'
+        : 'Windsurf 官方频率限制';
   const parts = [`${tag}${label} [${plan}]`];
   if (kind === 'overall') {
     parts.push('overall message rate limit');
@@ -510,6 +510,15 @@ export async function fetchUsage(account: StoredAccount, options: FetchUsageOpti
       ? await fetchPlanPeriod(account)
       : { start: options.previousSnapshot?.planStart, end: options.previousSnapshot?.planEnd };
 
+    // 提取 orgId：优先用 account 上已有的，其次从 teamId 解析
+    let orgId = account.orgId || '';
+    if (!orgId) {
+      const teamId: string = data?.userStatus?.teamId || '';
+      if (teamId.includes('$')) {
+        orgId = teamId.split('$').pop() || '';
+      }
+    }
+
     const snapshot: UsageSnapshot = {
       name: account.name || account.email.split('@')[0],
       email: account.email,
@@ -522,6 +531,7 @@ export async function fetchUsage(account: StoredAccount, options: FetchUsageOpti
       overageBalanceMicros: typeof ps.overageBalanceMicros === 'number' ? ps.overageBalanceMicros : 0,
       planStart: period.start,
       planEnd: period.end,
+      orgId,
       _rawPlanStatus: ps
     };
 

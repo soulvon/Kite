@@ -25,7 +25,9 @@ export interface EnhancementResult {
  * 版本不匹配或共享设置变化时自动更新
  */
 export function ensureEnhancement(): EnhancementResult {
-  const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', true);
+  // 默认值与 package.json 中 windsurfPool.enhancement.enabled 的 default=false 保持一致，
+  // 避免读到的值与用户在设置 UI 中看到的不一致造成误导。
+  const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
   if (!enabled) {
     return { injected: false, needRestart: false };
   }

@@ -1004,29 +1004,50 @@ details > summary::marker { display: none; content: ''; }
 .toolbar-icon-btn:hover { background: var(--hover-bg); border-color: var(--card-border-hover); }
 .toolbar-icon-btn.is-spinning svg { animation: spin 0.8s linear infinite; }
 .toolbar-icon-btn.is-active { color: var(--ac-blue); background: rgba(59, 130, 246, 0.12); border-color: rgba(59, 130, 246, 0.35); }
-.quick-health-filter-btn {
-    height: 24px;
-    padding: 0 10px;
-    border-radius: 999px;
-    border: 1px solid var(--card-border);
-    background: transparent;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-}
-.quick-health-filter-btn:hover {
-    color: var(--vscode-foreground);
-    background: var(--hover-bg);
-    border-color: var(--card-border-hover);
-}
-.quick-health-filter-btn.is-active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-fg);
-}
 
+/* 切号预检 Toggle 按钮 */
+.preflight-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    height: 26px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--vscode-foreground);
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 5px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.preflight-toggle-btn:hover { background: var(--hover-bg); border-color: var(--card-border-hover); }
+.preflight-label { line-height: 1; }
+.preflight-switch {
+    position: relative;
+    display: inline-block;
+    width: 22px;
+    height: 12px;
+    background: rgba(128, 128, 128, 0.35);
+    border-radius: 7px;
+    transition: background 0.2s ease;
+    flex-shrink: 0;
+}
+.preflight-switch-thumb {
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 10px;
+    height: 10px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.preflight-toggle-btn.is-active { color: #10b981; border-color: rgba(16, 185, 129, 0.4); }
+.preflight-toggle-btn.is-active .preflight-switch { background: #10b981; }
+.preflight-toggle-btn.is-active .preflight-switch-thumb { transform: translateX(10px); }
 .group-select-mode-btn {
     padding: 3px 10px;
     font-size: 10px;
@@ -1081,6 +1102,7 @@ details > summary::marker { display: none; content: ''; }
     flex-direction: column;
     gap: 6px;
 }
+.filter-section { margin-bottom: 2px; }
 .filter-section-title {
     font-size: 9px;
     font-weight: 700;
@@ -1114,6 +1136,12 @@ details > summary::marker { display: none; content: ''; }
 .filter-option.is-active::before {
     background: var(--ac-emerald);
     border-color: var(--ac-emerald);
+}
+.filter-option-name { flex: 1; }
+.filter-option-count {
+    font-size: 9px;
+    color: var(--muted);
+    font-family: var(--vscode-editor-font-family, monospace);
 }
 .filter-actions { padding-top: 4px; border-top: 1px solid var(--card-border); }
 .filter-clear-btn {
@@ -3221,6 +3249,50 @@ input[type="number"].v2-sel::-webkit-outer-spin-button { -webkit-appearance: non
     color: #c7d2fe;
     box-shadow: 0 0 12px rgba(99, 102, 241, 0.2);
 }
+/* ── Health issue overlay (same layout as lock overlay, amber tone) ── */
+.grid-card.has-health-overlay { position: relative; }
+.grid-health-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: var(--radius-md);
+    backdrop-filter: blur(3px);
+    pointer-events: none;
+}
+.grid-health-overlay-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 18px;
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(251, 191, 36, 0.2);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    pointer-events: auto;
+}
+.grid-health-overlay-icon {
+    color: rgba(251, 191, 36, 0.75);
+    line-height: 0;
+}
+.grid-health-overlay-text {
+    font-size: 11px;
+    font-weight: 500;
+    color: rgba(253, 224, 71, 0.9);
+    letter-spacing: 0.3px;
+    text-align: center;
+    max-width: 200px;
+    line-height: 1.4;
+}
+body.vscode-light .grid-health-overlay { background: rgba(255, 255, 255, 0.55); backdrop-filter: blur(3px); }
+body.vscode-light .grid-health-overlay-box { background: rgba(255, 255, 255, 0.92); border-color: rgba(245, 158, 11, 0.2); box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1); }
+body.vscode-light .grid-health-overlay-icon { color: rgba(245, 158, 11, 0.7); }
+body.vscode-light .grid-health-overlay-text { color: rgba(146, 64, 14, 0.9); }
+
 .grid-check-col {
     position: absolute;
     top: 10px;
@@ -3386,17 +3458,6 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
 .alert-btn.primary:hover { background: #059669; }
 .alert-btn.secondary { background: transparent; }
 
-/* ═══════ Filter Option Content ═══════ */
-.filter-option-name { flex: 1; }
-.filter-option-count {
-    font-size: 9px;
-    color: var(--muted);
-    font-family: var(--vscode-editor-font-family, monospace);
-}
-
-/* ═══════ Filter Section (container) ═══════ */
-.filter-section { margin-bottom: 2px; }
-
 /* ═══════ Grid: Current Label ═══════ */
 .grid-current-label {
     font-size: 10px;
@@ -3539,3 +3600,38 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
 
 /* ═══════ Pager Total ═══════ */
 .pager-total { font-size: 12px; color: var(--muted); }
+
+/* ═══════ Bubble Preview ═══════ */
+.bubble-preview {
+    margin-top: 8px;
+    padding: 10px;
+    border-radius: var(--radius-md);
+    background: var(--elevated-bg);
+    border: 1px solid var(--border-subtle);
+}
+.bubble-preview-label {
+    font-size: 9px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+.bubble-preview-container {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.bubble-preview-item {
+    padding: 5px 12px;
+    font-size: 11px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #22c55e, #06b6d4, #3b82f6);
+    color: #fff;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.bubble-preview-item:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(16, 185, 129, 0.3);
+}

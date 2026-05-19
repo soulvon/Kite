@@ -216,6 +216,13 @@ async function loginBySessionToken(sessionToken: string): Promise<LoginResult> {
       email = 'session_' + sessionToken.substring(0, 12) + '...';
     }
 
+    // 提取 orgId：优先从 teamId 中提取 account UUID
+    const teamId: string = ud.userStatus.teamId || '';
+    let orgId = '';
+    if (teamId.includes('$')) {
+      orgId = teamId.split('$').pop() || '';
+    }
+
     // 为同一用户的不同 org token 生成唯一 email，避免 upsert 时互相覆盖
     const suffix = extractSessionSuffix(sessionToken);
     if (suffix) {
@@ -228,7 +235,8 @@ async function loginBySessionToken(sessionToken: string): Promise<LoginResult> {
         email,
         apiKey: sessionToken,
         apiServerUrl: 'https://server.self-serve.windsurf.com',
-        name: name || email.split('@')[0]
+        name: name || email.split('@')[0],
+        orgId
       }
     };
   } catch (err) {

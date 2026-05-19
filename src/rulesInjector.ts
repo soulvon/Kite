@@ -160,7 +160,7 @@ export function removeScriptDisciplineRules(): boolean {
  * 启用增强时：确保所有增强相关规则都已注入（缺什么补什么）
  */
 export function ensureAllEnhancementRules(): void {
-  const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', true);
+  const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
   if (!enabled) return;
 
   if (!hasBubbleRules()) {

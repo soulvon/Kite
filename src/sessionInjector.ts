@@ -166,47 +166,64 @@ export function getLastInjectFailure(email?: string): { email: string; reason: s
 export async function injectSession(
   context: vscode.ExtensionContext,
   account: StoredAccount,
-  options?: { silent?: boolean }
+  options?: { silent?: boolean; auto?: boolean; force?: boolean }
 ): Promise<boolean> {
   const silent = options?.silent ?? false;
+  const isAuto = options?.auto ?? false;
   const seqNo = ++_switchSeqNo;
   const t0 = Date.now();
   _lastInjectFailure = null;
   const caller = new Error().stack?.split('\n').slice(2, 5).map(l => l.trim()).join(' <- ') || 'unknown';
-  console.log(`[injectSession][#${seqNo}] ▶ 入口: email=${account.email}, silent=${silent}, caller=${caller}`);
+  console.log(`[injectSession][#${seqNo}] ▶ 入口: email=${account.email}, silent=${silent}, auto=${isAuto}, caller=${caller}`);
 
-  // 频率熔断：上次触发熔断的冷却期内直接拒绝
-  if (t0 < _rejectUntil) {
-    const waitS = Math.ceil((_rejectUntil - t0) / 1000);
-    console.warn(`[injectSession][#${seqNo}] ✗ 频率熔断中（剩 ${waitS}s），拒绝切号 → ${account.email}`);
-    setInjectFailure(account.email, `切号过快，${waitS}s 后再试`, 'blocked');
-    return false;
-  }
+  // 频率熔断仅对自动切号生效，避免 auto-switcher 死循环把所有号都"用坏"。
+  // 手动切号（用户点击/命令面板/测活面板）始终允许，不参与计数也不被拒绝。
+  if (isAuto) {
+    if (t0 < _rejectUntil) {
+      const waitS = Math.ceil((_rejectUntil - t0) / 1000);
+      console.warn(`[injectSession][#${seqNo}] ✗ 自动切号频率熔断中（剩 ${waitS}s），拒绝切号 → ${account.email}`);
+      setInjectFailure(account.email, `自动切号过快，${waitS}s 后再试`, 'blocked');
+      return false;
+    }
 
-  // 频率检测：记录时间戳，检测 60s 内是否超过阈值
-  _switchTimestamps.push(t0);
-  _switchTimestamps = _switchTimestamps.filter(ts => t0 - ts < RATE_LIMIT_WINDOW_MS);
-  if (_switchTimestamps.length > RATE_LIMIT_MAX) {
-    const count = _switchTimestamps.length;
-    _rejectUntil = t0 + RATE_LIMIT_COOLDOWN_MS;
-    // 关键：清空时间戳，避免熔断期过后第一次调用立即又触发（因为 60s 窗口内仍有 8+ 次记录）
-    _switchTimestamps = [];
-    console.warn(`[injectSession][#${seqNo}] ⚠ 60s 内触发 ${count} 次切号 → 触发熔断，${RATE_LIMIT_COOLDOWN_MS / 1000}s 内拒绝新切号`);
-    setInjectFailure(account.email, `切号过快，暂停 ${RATE_LIMIT_COOLDOWN_MS / 1000}s`, 'blocked');
-    return false;
+    _switchTimestamps.push(t0);
+    _switchTimestamps = _switchTimestamps.filter(ts => t0 - ts < RATE_LIMIT_WINDOW_MS);
+    if (_switchTimestamps.length > RATE_LIMIT_MAX) {
+      const count = _switchTimestamps.length;
+      _rejectUntil = t0 + RATE_LIMIT_COOLDOWN_MS;
+      // 关键：清空时间戳，避免熔断期过后第一次调用立即又触发（因为 60s 窗口内仍有 8+ 次记录）
+      _switchTimestamps = [];
+      console.warn(`[injectSession][#${seqNo}] ⚠ 60s 内触发 ${count} 次自动切号 → 触发熔断，${RATE_LIMIT_COOLDOWN_MS / 1000}s 内拒绝新自动切号`);
+      setInjectFailure(account.email, `自动切号过快，暂停 ${RATE_LIMIT_COOLDOWN_MS / 1000}s`, 'blocked');
+      return false;
+    }
+  } else {
+    // 手动切号：清除可能因自动切号触发的熔断，让用户点击立即生效。
+    if (_rejectUntil > t0) {
+      console.log(`[injectSession][#${seqNo}] 手动切号清除自动切号熔断状态`);
+      _rejectUntil = 0;
+      _switchTimestamps = [];
+    }
   }
 
   // 切号前先做一次轻量限速检查：有些账号能注入、配额看起来也有，但当前模型消息额度已被服务端限流。
   // 这类账号切过去后 Windsurf 会表现为“发消息回弹”，所以直接拦截，保留原来的正常账号。
-  const ready = await checkCascadeSendReady(account, DEFAULT_CASCADE_CHECK_MODEL);
-  if (!ready.ok) {
-    const reason = ready.reason || '当前模型不可用';
-    const hardBlock = /消息额度|频率限制|剩余 0|已用尽|Key 已失效|账号无权限|封禁|401|403/.test(reason);
-    console.warn(`[injectSession][#${seqNo}] ✗ 账号发送前检查失败 → ${account.email}: ${reason}`);
-    if (hardBlock) {
-      setInjectFailure(account.email, reason, 'blocked');
-      return false;
+  // 用户可通过 windsurfPool.preflightSwitchCheck 关闭以提升切号速度。force=true 时（用户已确认）也跳过预检。
+  const preflightEnabled = vscode.workspace.getConfiguration('windsurfPool').get<boolean>('preflightSwitchCheck', true);
+  const skipPreflight = options?.force === true;
+  if (preflightEnabled && !skipPreflight) {
+    const ready = await checkCascadeSendReady(account, DEFAULT_CASCADE_CHECK_MODEL);
+    if (!ready.ok) {
+      const reason = ready.reason || '当前模型不可用';
+      const hardBlock = /消息额度|频率限制|剩余 0|已用尽|Key 已失效|账号无权限|封禁|401|403/.test(reason);
+      console.warn(`[injectSession][#${seqNo}] ✗ 账号发送前检查失败 → ${account.email}: ${reason}`);
+      if (hardBlock) {
+        setInjectFailure(account.email, reason, 'blocked');
+        return false;
+      }
     }
+  } else {
+    console.log(`[injectSession][#${seqNo}] 跳过切号预检 (preflightEnabled=${preflightEnabled}, force=${skipPreflight})`);
   }
 
   // 先确认补丁命令是否已注册（等待 Windsurf 内置扩展激活）

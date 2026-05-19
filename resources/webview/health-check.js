@@ -18,8 +18,12 @@
   var currentRoundModel = { label: '', uid: '' }; // 本轮测活的模型信息
 
   let searchQuery = '';
-  let activeTag = ''; // '' = 全部
+  let activeTag = ''; // '' = 全部（兼容旧单选标签）
   let activeStatus = 'all';
+
+  // ── 多维筛选 ──
+  var filterPlans = new Set();
+  var filterTags = new Set();
 
   // ── Elements ──
   const startBtn = document.getElementById('hcStartBtn');
@@ -231,13 +235,122 @@
     });
   }
 
+  // ── 多维筛选下拉逻辑 ──
+  var hcFilterTrigger = document.getElementById('hcFilterTrigger');
+  var hcFilterDropdown = document.getElementById('hcFilterDropdown');
+  var hcFilterClearBtn = document.getElementById('hcFilterClearBtn');
+  var hcFilterLabelEl = document.getElementById('hcFilterLabel');
+  var hcFilterCountEl = document.getElementById('hcFilterCount');
+
+  function buildFilterDropdown() {
+    var planList = document.getElementById('hcFilterPlanList');
+    var tagList = document.getElementById('hcFilterTagList');
+    if (!planList || !tagList) return;
+
+    var planCounts = {};
+    var tagCounts = {};
+    accountList.forEach(function (a) {
+      if (a.disabled) return;
+      var p = a.plan || '未知';
+      planCounts[p] = (planCounts[p] || 0) + 1;
+      var at = (a.tags && a.tags.length > 0) ? a.tags : (a.tag ? [a.tag] : []);
+      if (at.length === 0) {
+        tagCounts['未分类'] = (tagCounts['未分类'] || 0) + 1;
+      } else {
+        at.forEach(function (t) { tagCounts[t] = (tagCounts[t] || 0) + 1; });
+      }
+    });
+
+    function renderOpts(container, counts, activeSet) {
+      container.innerHTML = '';
+      Object.entries(counts).sort(function (a, b) { return b[1] - a[1]; }).forEach(function (pair) {
+        var val = pair[0], cnt = pair[1];
+        var el = document.createElement('div');
+        el.className = 'hc-filter-option' + (activeSet.has(val) ? ' is-active' : '');
+        el.dataset.value = val;
+        el.innerHTML = '<span class="hc-filter-option-name">' + escHtml(val) + '</span><span class="hc-filter-option-count">' + cnt + '</span>';
+        container.appendChild(el);
+      });
+    }
+
+    renderOpts(planList, planCounts, filterPlans);
+    renderOpts(tagList, tagCounts, filterTags);
+    updateFilterLabel();
+  }
+
+  function updateFilterLabel() {
+    if (!hcFilterLabelEl || !hcFilterCountEl) return;
+    var totalFilters = filterPlans.size + filterTags.size;
+    var totalAccounts = accountList.filter(function (a) { return !a.disabled; }).length;
+    var matchedAccounts = filterAccounts(accountList, { ignoreResultStatus: true }).length;
+    if (totalFilters === 0 && activeStatus === 'all' && !activeTag && !searchQuery) {
+      hcFilterLabelEl.textContent = '筛选';
+      hcFilterCountEl.textContent = '';
+    } else {
+      hcFilterLabelEl.textContent = '筛选中';
+      hcFilterCountEl.textContent = '(' + matchedAccounts + '/' + totalAccounts + ')';
+    }
+  }
+
+  if (hcFilterTrigger && hcFilterDropdown) {
+    hcFilterTrigger.addEventListener('click', function (e) {
+      e.stopPropagation();
+      hcFilterDropdown.hidden = !hcFilterDropdown.hidden;
+      if (!hcFilterDropdown.hidden) buildFilterDropdown();
+    });
+    hcFilterDropdown.addEventListener('click', function (e) {
+      var option = e.target.closest ? e.target.closest('.hc-filter-option') : null;
+      if (!option) return;
+      var name = option.dataset.value;
+      var section = option.closest('.hc-filter-section');
+      var sectionId = section ? section.id : '';
+      var targetSet;
+      if (sectionId === 'hcFilterPlanSection') targetSet = filterPlans;
+      else if (sectionId === 'hcFilterTagSection') targetSet = filterTags;
+      else return;
+      if (targetSet.has(name)) targetSet.delete(name); else targetSet.add(name);
+      buildFilterDropdown();
+      renderTable();
+    });
+    document.addEventListener('click', function (e) {
+      if (hcFilterDropdown.hidden) return;
+      if (!hcFilterDropdown.contains(e.target) && !hcFilterTrigger.contains(e.target)) {
+        hcFilterDropdown.hidden = true;
+      }
+    });
+  }
+  if (hcFilterClearBtn) {
+    hcFilterClearBtn.addEventListener('click', function () {
+      filterPlans.clear();
+      filterTags.clear();
+      buildFilterDropdown();
+      renderTable();
+    });
+  }
+
   function filterAccounts(list, options) {
     var ignoreResultStatus = options && options.ignoreResultStatus;
     return list.filter(function (a) {
       if (a.disabled) return false;
-      if (activeTag) {
+      // 多维筛选：套餐
+      if (filterPlans.size > 0) {
+        var plan = a.plan || '未知';
+        if (!filterPlans.has(plan)) return false;
+      }
+      // 多维筛选：标签（多选）
+      if (filterTags.size > 0) {
         var at = (a.tags && a.tags.length > 0) ? a.tags : (a.tag ? [a.tag] : []);
-        if (at.indexOf(activeTag) === -1) return false;
+        if (at.length === 0) {
+          if (!filterTags.has('未分类')) return false;
+        } else {
+          var matched = at.some(function (t) { return filterTags.has(t); });
+          if (!matched) return false;
+        }
+      }
+      // 兼容旧单选标签栏
+      if (activeTag && filterTags.size === 0) {
+        var at2 = (a.tags && a.tags.length > 0) ? a.tags : (a.tag ? [a.tag] : []);
+        if (at2.indexOf(activeTag) === -1) return false;
       }
       if (searchQuery && a.email.toLowerCase().indexOf(searchQuery) === -1) return false;
       if (!ignoreResultStatus && activeStatus !== 'all') {
@@ -621,6 +734,7 @@
   // ── Render Table ──
   function renderTable() {
     if (!tableBody) return;
+    updateFilterLabel();
     var active = filterAccounts(accountList);
 
     if (active.length === 0 && results.size === 0) {
