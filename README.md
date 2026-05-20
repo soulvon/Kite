@@ -6,7 +6,7 @@
 
 无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-7.7.1-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-7.7.2-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -130,6 +130,11 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
+
+### v7.7.2
+- **💰 余额号保护**：配额耗尽但有付费余额时，不再触发自动切号，而是自动发送"继续"让 AI 接着用余额工作。
+  - 扩展端检测到当前账号有 `overageBalanceMicros > 0` 时，跳过切号逻辑
+  - 通知 workbench 端自动发继续，用户无感知继续工作
 
 ### v7.7.1
 - **🎯 精简恢复策略**：借鉴 wf-dialog-mcp 的简洁设计，大部分错误直接发"继续"即可恢复，只有真正配额耗尽才切号。

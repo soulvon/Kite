@@ -759,6 +759,22 @@ export class AutoSwitcher implements vscode.Disposable {
       console.log('[autoSwitch][trigger] forceSwitch skip: disabled');
       return null;
     }
+
+    // v7.7.2: 余额号保护 — 配额耗尽但有付费余额时，不切号（继续用余额）
+    // 测试按钮 force=true 时绕过此检查
+    // 返回特殊标记 __balance_skip__，让调用方知道是因为余额跳过，可 fallback 到发继续
+    if (!force) {
+      const curEmail = this._ctx.globalState.get<string>('lastEmail');
+      if (curEmail) {
+        const curEntry = this._cache.get(curEmail);
+        const curHasBalance = (curEntry?.snapshot?.overageBalanceMicros || 0) > 0;
+        if (curHasBalance) {
+          console.log(`[autoSwitch][trigger] forceSwitch skip: 当前账号 ${curEmail} 有付费余额，不切号`);
+          return { email: '__balance_skip__' };
+        }
+      }
+    }
+
     // 如果定时器正在切号，等最多 5s（避免信号被白白丢弃）
     if (this._switching) {
       for (let i = 0; i < 10; i++) {

@@ -3091,6 +3091,19 @@
 						recordRecoveryLog({ category: 'B', error: '', action: 'switch-cancel', result: 'user-cancelled' });
 					},
 				});
+			} else if (result.type === 'balance-available') {
+				// v7.7.2: 余额号保护 — 有付费余额时不切号，自动发继续
+				console.log(LOG_PREFIX + '[Recovery] 当前账号有付费余额，跳过切号，自动发继续');
+				showRecoveryNotification('当前账号有付费余额，继续使用');
+				_recoveryCooldownMs = 10000;
+				recordRecoveryLog({ category: 'B', error: '', action: 'balance-skip', result: 'send-continue' });
+				localStorage.removeItem('ws-pool-result');
+				localStorage.removeItem('ws-pool-signal');
+				// 自动发继续
+				setTimeout(() => {
+					if (!settings.autoRecoveryEnabled) return;
+					handleSendContinueAction('余额号跳过切号', Date.now(), 'quotaErrors');
+				}, 1000);
 			} else if (result.type === 'switch-failed') {
 				console.log(LOG_PREFIX + '[Recovery] 切号失败: ' + (result.error || ''));
 				showRecoveryNotification(result.error || '切换失败，所有账号可能均无额度');

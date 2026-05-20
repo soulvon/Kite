@@ -19,7 +19,8 @@ export interface PoolSignal {
 export interface PoolResult {
   type: 'switched'
       | 'switch-failed'
-      | 'retrying';
+      | 'retrying'
+      | 'balance-available';  // v7.7.2: 有付费余额时不切号，通知 workbench 发继续
   ts: number;
   email?: string;
   error?: string;
@@ -121,6 +122,15 @@ export async function handlePoolSignal(
     const switched = await autoSwitcher.forceSwitch(signal.type, { force: !!signal.force });
     const elapsed = Date.now() - t0;
     if (switched) {
+      // v7.7.2: 余额号保护 — 有余额时不切号，通知 workbench 发继续
+      if (switched.email === '__balance_skip__') {
+        console.log(`[signalBridge] 跳过切号: 当前账号有付费余额 (${elapsed}ms)`);
+        respond({
+          type: 'balance-available',
+          ts: Date.now(),
+        });
+        return;
+      }
       console.log(`[signalBridge] 切号成功 → ${switched.email} (${elapsed}ms)`);
       respond({
         type: 'switched',
