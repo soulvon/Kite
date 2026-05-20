@@ -2763,6 +2763,9 @@
 	let _lastErrorFingerprint = '';
 	let _lastSwitchFingerprint = '';  // 上次触发切号的错误指纹
 	let _lastSwitchTs = 0;
+	// v7.7.4: 防死循环计数器 — 连续 balance-skip 后强制切号
+	let _balanceSkipCount = 0;
+	let _lastBalanceSkipTs = 0;
 	let _recoveryCooldownMs = 10000;  // 默认 10s，切号后临时拉长到 30s
 
 	// 生成错误指纹（去除时间戳/数字，仅保留语义）
@@ -3092,8 +3095,29 @@
 					},
 				});
 			} else if (result.type === 'balance-available') {
-				// v7.7.2: 余额号保护 — 有付费余额时不切号，自动发继续
-				console.log(LOG_PREFIX + '[Recovery] 当前账号有付费余额，跳过切号，自动发继续');
+				// v7.7.4: 余额号保护 — 有付费余额时不切号，自动发继续
+				// 防死循环：60s 内连续 3 次 balance-skip → 强制切号（缓存可能不准）
+				const now = Date.now();
+				if (now - _lastBalanceSkipTs < 60000) {
+					_balanceSkipCount++;
+				} else {
+					_balanceSkipCount = 1;
+				}
+				_lastBalanceSkipTs = now;
+
+				if (_balanceSkipCount >= 3) {
+					console.log(LOG_PREFIX + '[Recovery] 连续 3 次 balance-skip，疑似缓存不准，强制切号');
+					showRecoveryNotification('余额保护触发过频，强制切号...');
+					_balanceSkipCount = 0;
+					recordRecoveryLog({ category: 'B', error: '', action: 'balance-skip', result: 'force-switch' });
+					localStorage.removeItem('ws-pool-result');
+					localStorage.removeItem('ws-pool-signal');
+					// 发 force=true 强制切号（绕过余额保护）
+					sendPoolSignal('quota-exhausted', { force: true });
+					return;
+				}
+
+				console.log(LOG_PREFIX + '[Recovery] 当前账号有付费余额，跳过切号，自动发继续 (' + _balanceSkipCount + '/3)');
 				showRecoveryNotification('当前账号有付费余额，继续使用');
 				_recoveryCooldownMs = 10000;
 				recordRecoveryLog({ category: 'B', error: '', action: 'balance-skip', result: 'send-continue' });

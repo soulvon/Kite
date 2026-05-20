@@ -441,6 +441,14 @@ export class AutoSwitcher implements vscode.Disposable {
     }
   }
 
+  // ── 内部：余额是否足够（统一判断）──
+  // v7.7.4: 所有"是否有可用余额"判断都走此方法，确保策略一致
+  private _hasUsableBalance(snap: UsageSnapshot | null | undefined): boolean {
+    const balance = snap?.overageBalanceMicros || 0;
+    const minBalance = this.settings.minBalanceToSkipSwitch ?? 100000; // 默认 $0.10
+    return balance >= minBalance;
+  }
+
   // ── 内部：跳过判断 ──
 
   private _shouldSkip(email: string): boolean {
@@ -512,7 +520,7 @@ export class AutoSwitcher implements vscode.Disposable {
 
       const vd = clamp(freshEntry.snapshot.dailyRemainingPercent);
       const vw = clamp(freshEntry.snapshot.weeklyRemainingPercent);
-      const vHasBalance = (freshEntry.snapshot.overageBalanceMicros || 0) > 0;
+      const vHasBalance = this._hasUsableBalance(freshEntry.snapshot);
       const minQ = s.minQuota ?? 10;
 
       if ((vd <= 1 || vw <= 1 || Math.min(vd, vw) <= minQ) && !vHasBalance) {
@@ -571,8 +579,8 @@ export class AutoSwitcher implements vscode.Disposable {
       const minPct = Math.min(dPct, wPct);
       const minQ = s.minQuota ?? 10;
 
-      // 余额号：有付费余额时，配额耗尽仍视为可用
-      const hasOverageBalance = (snap.overageBalanceMicros || 0) > 0;
+      // 余额号：有付费余额（≥阈值）时，配额耗尽仍视为可用
+      const hasOverageBalance = this._hasUsableBalance(snap);
 
       // 硬约束：若任一维度低于 minQuota，视为当前号不可用，强制触发切号
       // 但如果有付费余额，则不视为耗尽（继续用余额）
@@ -637,7 +645,7 @@ export class AutoSwitcher implements vscode.Disposable {
           if (pEntry?.snapshot) {
             const pd = clamp(pEntry.snapshot.dailyRemainingPercent);
             const pw = clamp(pEntry.snapshot.weeklyRemainingPercent);
-            const pHasBalance = (pEntry.snapshot.overageBalanceMicros || 0) > 0;
+            const pHasBalance = this._hasUsableBalance(pEntry.snapshot);
             const pScore = calcScore(pd, pw, s.scoreMode);
             // 预热账号仍满足条件
             if ((pd > 1 && pw > 1 && Math.min(pd, pw) > minQ) || pHasBalance) {
@@ -675,8 +683,8 @@ export class AutoSwitcher implements vscode.Disposable {
 
         const vd = clamp(freshEntry.snapshot.dailyRemainingPercent);
         const vw = clamp(freshEntry.snapshot.weeklyRemainingPercent);
-        const vHasBalance = (freshEntry.snapshot.overageBalanceMicros || 0) > 0;
-        // 有余额的号即使配额低也视为可用
+        const vHasBalance = this._hasUsableBalance(freshEntry.snapshot);
+        // 有余额（≥阈值）的号即使配额低也视为可用
         if ((vd <= 1 || vw <= 1 || Math.min(vd, vw) <= minQ) && !vHasBalance) {
           console.log(`[autoSwitch][verify] #${i + 1} ${cand.email} 验证失败: d=${Math.round(vd)}% w=${Math.round(vw)}% (耗尽且无余额)`);
           continue;
@@ -762,17 +770,23 @@ export class AutoSwitcher implements vscode.Disposable {
       return null;
     }
 
-    // v7.7.2: 余额号保护 — 配额耗尽但有付费余额时，不切号（继续用余额）
+    // v7.7.4: 余额号保护 — 配额耗尽但有付费余额（≥阈值）时，不切号（继续用余额）
     // 测试按钮 force=true 时绕过此检查
     // 返回特殊标记 __balance_skip__，让调用方知道是因为余额跳过，可 fallback 到发继续
+    // ⚠️ 防死循环：缓存超过 30s 时先刷新，避免余额已扣完但缓存过期导致误判
     if (!force) {
       const curEmail = this._ctx.globalState.get<string>('lastEmail');
       if (curEmail) {
-        const curEntry = this._cache.get(curEmail);
-        const curBalance = curEntry?.snapshot?.overageBalanceMicros || 0;
-        const minBalance = this.settings.minBalanceToSkipSwitch ?? 100000; // 默认 $0.10
-        if (curBalance >= minBalance) {
-          console.log(`[autoSwitch][trigger] forceSwitch skip: 当前账号 ${curEmail} 有付费余额 $${(curBalance / 1_000_000).toFixed(2)}，不切号`);
+        let curEntry = this._cache.get(curEmail);
+        // 缓存过期则先刷新（最多增加 2-3s 延迟，换取数据准确性）
+        if (!curEntry || Date.now() - curEntry.ts > 30000) {
+          console.log(`[autoSwitch][trigger] forceSwitch 余额检查: 缓存过期，刷新 ${curEmail}...`);
+          await this.refreshSingle(curEmail, true);
+          curEntry = this._cache.get(curEmail);
+        }
+        if (this._hasUsableBalance(curEntry?.snapshot)) {
+          const balance = curEntry?.snapshot?.overageBalanceMicros || 0;
+          console.log(`[autoSwitch][trigger] forceSwitch skip: 当前账号 ${curEmail} 有付费余额 $${(balance / 1_000_000).toFixed(2)}，不切号`);
           return { email: '__balance_skip__' };
         }
       }
@@ -918,11 +932,11 @@ export class AutoSwitcher implements vscode.Disposable {
 
       const dPct = clamp(entry.snapshot.dailyRemainingPercent);
       const wPct = clamp(entry.snapshot.weeklyRemainingPercent);
-      const candHasBalance = (entry.snapshot.overageBalanceMicros || 0) > 0;
+      const candHasBalance = this._hasUsableBalance(entry.snapshot);
 
       // 硬约束 1：任一维度 ≤1% 视为耗尽，绝对不选（不受 minQ 配置影响）
       // 典型场景：周 0% 日 100% 的账号实际不可用
-      // 但有付费余额的号即使配额耗尽也视为可用
+      // 但有付费余额（≥阈值）的号即使配额耗尽也视为可用
       if ((dPct <= 1 || wPct <= 1) && !candHasBalance) { rejectedDueToMinQ++; continue; }
 
       // 硬约束 2：两个维度取 min，低于 minQ 配置值也不选

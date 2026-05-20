@@ -6,7 +6,7 @@
 
 无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-7.7.3-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-7.7.4-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -130,6 +130,13 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
+
+### v7.7.4
+- **🔄 余额号保护健壮性加固**：修复多个边界场景，防止死循环和判断不一致。
+  - **统一判断**：抽取 `_hasUsableBalance()` 方法，所有 6 处余额检查使用统一阈值
+  - **防缓存延迟**：`forceSwitch` 余额检查前先刷新缓存（超 30s 时），避免余额已扣完但缓存过期
+  - **防死循环**：60s 内连续 3 次 balance-skip 后强制切号，不再相信缓存
+  - 定时器路径和信号路径现在使用完全一致的判断标准
 
 ### v7.7.3
 - **💰 余额号保护配置化**：新增「余额保护」设置项（自动切号 → 高级设置），可配置跳过切号的最小余额阈值。
