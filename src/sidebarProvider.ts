@@ -2107,6 +2107,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               </div>
               <div class="v2-hint" style="margin-top:4px" id="asThresholdHint">废号下限：日/周任一配额低于此值的号不会被选中。</div>
 
+              <!-- 余额号保护 -->
+              <div class="v2-param-grid" style="margin-top:8px">
+                <div class="v2-param-cell">
+                  <span class="v2-param-label">💰 余额保护</span>
+                  <div><input type="number" class="v2-param-val" id="asMinBalanceToSkip" value="0.10" min="0" max="100" step="0.01"><span class="v2-param-unit">$</span></div>
+                </div>
+              </div>
+              <div class="v2-hint" style="margin-top:4px">余额 ≥ 此值时，配额耗尽不切号，自动发继续（0 = 禁用保护）。</div>
+
             </div>
           </details>
 

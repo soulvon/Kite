@@ -15,6 +15,7 @@
   let autoSwitchStrategy = 'highestFirst';
   let autoSwitchMinQuota = 10;
   let autoSwitchPreferUsedThreshold = 50;
+  let autoSwitchMinBalanceToSkip = 100000; // 微单位，$0.10
   let autoSwitchPoolScope = 'all';
   let autoSwitchPoolTags = [];
   let autoSwitchPoolTagsDirty = false; // 本地已修改但未被后端确认
@@ -2855,6 +2856,7 @@
         autoSwitchStrategy = msg.switchStrategy || 'highestFirst';
         autoSwitchMinQuota = msg.minQuota ?? 10;
         autoSwitchPreferUsedThreshold = msg.preferUsedThreshold ?? 50;
+        autoSwitchMinBalanceToSkip = msg.minBalanceToSkipSwitch ?? 100000;
         autoSwitchPoolScope = msg.poolScope || 'all';
         // 仅在本地未修改时才接受后端的 poolTags（避免后端旧值覆盖本地新选择）
         if (!autoSwitchPoolTagsDirty) {
@@ -4881,6 +4883,7 @@
         switchStrategy: autoSwitchStrategy,
         minQuota: autoSwitchMinQuota,
         preferUsedThreshold: autoSwitchPreferUsedThreshold,
+        minBalanceToSkipSwitch: autoSwitchMinBalanceToSkip,
         poolScope: autoSwitchPoolScope,
         poolTags: autoSwitchPoolTags,
       });
@@ -4997,8 +5000,10 @@
       if (sel) sel.value = autoSwitchStrategy;
       const minQuotaEl = document.getElementById('asMinQuota');
       const prefUsedEl = document.getElementById('asPreferUsedThreshold');
+      const minBalanceEl = document.getElementById('asMinBalanceToSkip');
       if (minQuotaEl) minQuotaEl.value = autoSwitchMinQuota;
       if (prefUsedEl) prefUsedEl.value = autoSwitchPreferUsedThreshold;
+      if (minBalanceEl) minBalanceEl.value = (autoSwitchMinBalanceToSkip / 1_000_000).toFixed(2);
       updateStrategyHint();
     }
     const strategySelect = document.getElementById('asSwitchStrategy');
@@ -5020,6 +5025,14 @@
     if (asPreferUsedEl) {
       asPreferUsedEl.addEventListener('change', () => {
         autoSwitchPreferUsedThreshold = parseInt(asPreferUsedEl.value) || 50;
+        sendAutoSwitchSettings();
+      });
+    }
+    const asMinBalanceEl = document.getElementById('asMinBalanceToSkip');
+    if (asMinBalanceEl) {
+      asMinBalanceEl.addEventListener('change', () => {
+        // 用户输入美元，转换为微单位
+        autoSwitchMinBalanceToSkip = Math.round((parseFloat(asMinBalanceEl.value) || 0) * 1_000_000);
         sendAutoSwitchSettings();
       });
     }

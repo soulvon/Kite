@@ -6,7 +6,7 @@
 
 无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-7.7.2-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-7.7.3-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -130,6 +130,12 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
+
+### v7.7.3
+- **💰 余额号保护配置化**：新增「余额保护」设置项（自动切号 → 高级设置），可配置跳过切号的最小余额阈值。
+  - 默认 $0.10：余额 ≥ $0.10 时，配额耗尽不切号，自动发继续
+  - 设为 $0 可禁用保护，恢复原有切号逻辑
+  - 避免余额只剩几分钱时仍跳过切号的尴尬情况
 
 ### v7.7.2
 - **💰 余额号保护**：配额耗尽但有付费余额时，不再触发自动切号，而是自动发送"继续"让 AI 接着用余额工作。

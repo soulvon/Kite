@@ -44,6 +44,7 @@ export interface AutoSwitchSettings {
   preferUsedThreshold: number;  // ≤此值视为“已经在用”，先消耗完它
   poolScope: PoolScope;         // 切号范围
   poolTags?: string[];           // poolScope='tag' 时指定标签（可多选）
+  minBalanceToSkipSwitch?: number; // 余额号保护阈值（微单位），低于此值仍触发切号，默认 100000 ($0.10)
 }
 
 type UsageUpdateCb = (email: string, snapshot: UsageSnapshot | null, error?: string) => void;
@@ -69,6 +70,7 @@ const DEFAULTS: AutoSwitchSettings = {
   preferUsedThreshold: 50,
   poolScope: 'all' as PoolScope,
   poolTags: [],
+  minBalanceToSkipSwitch: 100000, // $0.10
 };
 
 const THROTTLE_MS = 2000;
@@ -767,9 +769,10 @@ export class AutoSwitcher implements vscode.Disposable {
       const curEmail = this._ctx.globalState.get<string>('lastEmail');
       if (curEmail) {
         const curEntry = this._cache.get(curEmail);
-        const curHasBalance = (curEntry?.snapshot?.overageBalanceMicros || 0) > 0;
-        if (curHasBalance) {
-          console.log(`[autoSwitch][trigger] forceSwitch skip: 当前账号 ${curEmail} 有付费余额，不切号`);
+        const curBalance = curEntry?.snapshot?.overageBalanceMicros || 0;
+        const minBalance = this.settings.minBalanceToSkipSwitch ?? 100000; // 默认 $0.10
+        if (curBalance >= minBalance) {
+          console.log(`[autoSwitch][trigger] forceSwitch skip: 当前账号 ${curEmail} 有付费余额 $${(curBalance / 1_000_000).toFixed(2)}，不切号`);
           return { email: '__balance_skip__' };
         }
       }
