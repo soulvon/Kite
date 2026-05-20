@@ -190,13 +190,15 @@ export class StatusBarManager implements vscode.Disposable {
 
     // ── emoji 分级指示（按 min(日剩余, 周剩余)）──
     // 仅靠 emoji 着色，不改文字色/背景色，避免整条变色干扰其他状态栏内容
-    // 仅在 < 10% 极低额度时启用红色警示背景，强提醒用户
+    // 仅在 < 10% 极低额度且无余额时启用红色警示背景
     let dot = '';
     if (snap) {
       const min = Math.min(snap.dailyRemainingPercent, snap.weeklyRemainingPercent);
+      const hasBalance = typeof snap.overageBalanceMicros === 'number' && snap.overageBalanceMicros > 0;
       if (min < 10) {
-        dot = '🔴';
-        this._left.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+        dot = hasBalance ? '💰' : '🔴';
+        // 有余额时不显示红色警示背景
+        this._left.backgroundColor = hasBalance ? undefined : new vscode.ThemeColor('statusBarItem.errorBackground');
       } else if (min < 30) {
         dot = '🟡';
         this._left.backgroundColor = undefined;
@@ -354,7 +356,9 @@ export class StatusBarManager implements vscode.Disposable {
       if (s.planName && s.planName.toLowerCase().includes('free')) continue;
       if (entry.skipUntil && Date.now() < entry.skipUntil) continue;
       const min = Math.min(s.dailyRemainingPercent, s.weeklyRemainingPercent);
-      if (min > minQ) available++;
+      const hasBalance = (s.overageBalanceMicros || 0) > 0;
+      // 有余额的号即使配额低也视为可用
+      if (min > minQ || hasBalance) available++;
     }
     return { available, total };
   }

@@ -499,10 +499,24 @@ details > summary::marker { display: none; content: ''; }
     margin-bottom: 4px;
     font-size: 10px;
 }
+.qh-card-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
 .qh-card-time {
     font-family: var(--vscode-editor-font-family, monospace);
     color: var(--vscode-descriptionForeground, rgba(255,255,255,0.5));
     font-size: 10px;
+}
+.qh-card-balance {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground, rgba(255,255,255,0.45));
+}
+.qh-card-balance.is-balance {
+    color: #f59e0b;
+    font-weight: 600;
 }
 .qh-card-email {
     font-size: 9px;
@@ -555,6 +569,14 @@ details > summary::marker { display: none; content: ''; }
 /* 变化量 */
 .qh-delta-neg { color: #f14c4c; font-size: 9px; font-weight: 600; margin-left: 1px; }
 .qh-delta-pos { color: #3fb950; font-size: 9px; font-weight: 600; margin-left: 1px; }
+
+/* 配额变动卡片：余额变化容器（紧贴主余额数字之后） */
+.qh-balance-delta {
+    margin-left: 4px;
+    font-size: 0.85em;
+    font-weight: 500;
+    opacity: 0.85;
+}
 
 /* 底部：重置时间 */
 .qh-card-footer {
@@ -1509,6 +1531,18 @@ details > summary::marker { display: none; content: ''; }
     background: linear-gradient(90deg, var(--gh-blue-light) 0%, var(--gh-blue-soft) 100%);
     box-shadow: 0 0 6px rgba(88, 166, 255, 0.5);
 }
+/* 余额号特殊样式 - 金色/琥珀色 */
+.grid-quota-val.is-balance { color: #f59e0b; }
+.quota-bar-fill.is-balance {
+    background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+}
+.grid-extra-val.is-balance { color: #f59e0b; font-weight: 600; }
+.status-badge.is-balance {
+    background: rgba(245, 158, 11, 0.12);
+    color: #f59e0b;
+    border-color: rgba(245, 158, 11, 0.35);
+}
 
 /* Extra info */
 .grid-card-extra {
@@ -1830,6 +1864,29 @@ details > summary::marker { display: none; content: ''; }
     font-size: 10px;
     color: var(--muted);
     margin-top: 2px;
+}
+.usage-stats-balance-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    margin: 4px 0;
+    background: rgba(245, 158, 11, 0.10);
+    border: 1px solid rgba(245, 158, 11, 0.30);
+    border-radius: 4px;
+    font-size: 11px;
+    color: #f59e0b;
+    cursor: default;
+}
+.usage-stats-balance-icon {
+    font-size: 12px;
+}
+.usage-stats-balance-text {
+    font-weight: 500;
+}
+.usage-stats-balance-text #statBalanceCount {
+    font-weight: 700;
+    margin: 0 2px;
 }
 .usage-stats-bar-section {
     display: flex;

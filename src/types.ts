@@ -10,6 +10,8 @@ export interface StoredAccount {
   tags?: string[];
   disabled?: boolean;
   orgId?: string;
+  /** Devin Auth1 原始 token（用于 Devin Automations 一键领$200 接口） */
+  devinAuth1Token?: string;
 }
 
 /**

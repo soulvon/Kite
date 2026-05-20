@@ -1,0 +1,235 @@
+{
+  "name": "wf-dialog-mcp",
+  "displayName": "切号器",
+  "description": "Windsurf 多账号管理与自动切换工具",
+  "version": "5.9.61",
+  "publisher": "wf-dialog",
+  "repository": {
+    "type": "git",
+    "url": "https://gitee.com/zhczhczhc/wf-dialog-mcp.git"
+  },
+  "bugs": {
+    "url": "https://gitee.com/zhczhczhc/wf-dialog-mcp/issues"
+  },
+  "homepage": "https://gitee.com/zhczhczhc/wf-dialog-mcp#readme",
+  "baseContentUrl": "https://gitee.com/zhczhczhc/wf-dialog-mcp/raw/master/",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "AI"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "wfDialog.show",
+        "title": "切号器: 打开控制面板"
+      },
+      {
+        "command": "wfDialog.refreshAllBalances",
+        "title": "切号器: 刷新所有余额",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "wfDialog.importAccounts",
+        "title": "切号器: 导入账号",
+        "icon": "$(add)"
+      },
+      {
+        "command": "wfDialog.quickSwitchAccount",
+        "title": "切号器: 快速切换账号",
+        "icon": "$(account)"
+      },
+      {
+        "command": "wfDialog.switchNext",
+        "title": "切号器: 切换到下一个账号"
+      },
+      {
+        "command": "wfDialog.exportAccounts",
+        "title": "切号器: 导出账号"
+      },
+      {
+        "command": "wfDialog.clearAccounts",
+        "title": "切号器: 清空所有账号"
+      },
+      {
+        "command": "wfDialog.applyPatch",
+        "title": "切号器: 应用补丁",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "wfDialog.restorePatch",
+        "title": "切号器: 恢复补丁"
+      },
+      {
+        "command": "wfDialog.resetMachineId",
+        "title": "切号器: 重置机器码"
+      },
+      {
+        "command": "wfDialog.checkUpdate",
+        "title": "切号器: 检查更新"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "wfDialog.show",
+        "key": "ctrl+shift+w",
+        "mac": "cmd+shift+w"
+      },
+      {
+        "command": "wfDialog.quickSwitchAccount",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "!terminalFocus"
+      },
+      {
+        "command": "wfDialog.switchNext",
+        "key": "ctrl+shift+n",
+        "mac": "cmd+shift+n",
+        "when": "!terminalFocus"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "wfDialog.clearAccounts",
+          "when": "view == wfSwitcher.panel"
+        },
+        {
+          "command": "wfDialog.applyPatch",
+          "when": "view == wfSwitcher.panel"
+        },
+        {
+          "command": "wfDialog.restorePatch",
+          "when": "view == wfSwitcher.panel"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "wf-switcher",
+          "title": "切号器",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "wf-switcher": [
+        {
+          "type": "webview",
+          "id": "wfSwitcher.panel",
+          "name": "切号器",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "切号器",
+      "properties": {
+        "wfDialog.freeAccountMonitorEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "配额耗尽自动切换"
+        },
+        "wfDialog.freeAutoSwitchSilent": {
+          "type": "boolean",
+          "default": false,
+          "description": "静默切换（不弹确认框）"
+        },
+        "wfDialog.freeAutoSwitchPreheatThreshold": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "有效额度切换阈值（取日配额与周配额较小值，%）"
+        },
+        "wfDialog.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "显示底部状态栏"
+        },
+        "wfDialog.activeAccountBalanceDisplayEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "当前账号余额自动刷新"
+        },
+        "wfDialog.activeAccountBalanceRefreshIntervalSeconds": {
+          "type": "number",
+          "default": 10,
+          "minimum": 10,
+          "maximum": 600,
+          "description": "当前账号余额刷新间隔（秒）"
+        },
+        "wfDialog.balanceLogs": {
+          "type": "boolean",
+          "default": true,
+          "description": "余额查询日志输出到面板"
+        },
+        "wfDialog.manualProxyPort": {
+          "type": "string",
+          "default": "",
+          "description": "手动代理端口（仅 127.0.0.1，如 7890）。留空时回退到环境变量/VS Code/系统注册表代理。"
+        },
+        "wfDialog.disableProxy": {
+          "type": "boolean",
+          "default": false,
+          "description": "直连模式（跳过代理检测）。适用于软路由/网关透明代理的用户，开启后插件不再弹出\"未检测到代理\"警告，也不会把环境变量/注册表里的代理注入 axios。"
+        },
+        "wfDialog.externalTokenImportConcurrency": {
+          "type": "number",
+          "default": 16,
+          "minimum": 1,
+          "maximum": 32,
+          "description": "外部 Token 账号导入并发数"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run webpack",
+    "compile": "tsc -p ./",
+    "webpack": "webpack --mode production",
+    "webpack-dev": "webpack --mode development",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package --baseContentUrl https://gitee.com/zhczhczhc/wf-dialog-mcp/raw/master/"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.10.2",
+    "@connectrpc/connect": "^2.1.1",
+    "@connectrpc/connect-node": "^2.1.1",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@types/uuid": "^10.0.0",
+    "axios": "^1.13.2",
+    "express": "^4.21.0",
+    "node-notifier": "^10.0.1",
+    "sql.js": "^1.13.0",
+    "tunnel": "^0.0.6",
+    "uuid": "^13.0.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22",
+    "@types/node-notifier": "^8.0.5",
+    "@types/sql.js": "^1.4.9",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "javascript-obfuscator": "^5.1.0",
+    "terser-webpack-plugin": "^5.3.16",
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.6.0",
+    "webpack": "^5.103.0",
+    "webpack-cli": "^6.0.1",
+    "webpack-obfuscator": "^3.6.0"
+  }
+}

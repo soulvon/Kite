@@ -80,7 +80,8 @@ async function loginAuth1(email: string, password: string): Promise<LoginResult>
       email,
       apiKey: sessionToken,
       apiServerUrl: 'https://server.self-serve.windsurf.com',
-      name: email.split('@')[0]
+      name: email.split('@')[0],
+      devinAuth1Token: auth1Token,
     }
   };
 }
@@ -319,7 +320,8 @@ export async function loginByAuth1Token(auth1Token: string): Promise<LoginResult
         email,
         apiKey: sessionToken,
         apiServerUrl: 'https://server.self-serve.windsurf.com',
-        name: name || email.split('@')[0]
+        name: name || email.split('@')[0],
+        devinAuth1Token: auth1Token,
       }
     };
   } catch (err) {

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+	<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
+		<Metadata>
+			<Identity Language="en-US" Id="wf-dialog-mcp" Version="5.9.61" Publisher="wf-dialog" />
+			<DisplayName>切号器</DisplayName>
+			<Description xml:space="preserve">Windsurf 多账号管理与自动切换工具</Description>
+			<Tags>keybindings</Tags>
+			<Categories>Other,AI</Categories>
+			<GalleryFlags>Public</GalleryFlags>
+			
+			<Properties>
+				<Property Id="Microsoft.VisualStudio.Code.Engine" Value="^1.85.0" />
+				<Property Id="Microsoft.VisualStudio.Code.ExtensionDependencies" Value="" />
+				<Property Id="Microsoft.VisualStudio.Code.ExtensionPack" Value="" />
+				<Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="ui" />
+				<Property Id="Microsoft.VisualStudio.Code.LocalizedLanguages" Value="" />
+				<Property Id="Microsoft.VisualStudio.Code.EnabledApiProposals" Value="" />
+				
+				<Property Id="Microsoft.VisualStudio.Code.ExecutesCode" Value="true" />
+				
+				<Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="https://gitee.com/zhczhczhc/wf-dialog-mcp.git" />
+				<Property Id="Microsoft.VisualStudio.Services.Links.Getstarted" Value="https://gitee.com/zhczhczhc/wf-dialog-mcp.git" />
+				<Property Id="Microsoft.VisualStudio.Services.Links.Repository" Value="https://gitee.com/zhczhczhc/wf-dialog-mcp.git" />
+				<Property Id="Microsoft.VisualStudio.Services.Links.Support" Value="https://gitee.com/zhczhczhc/wf-dialog-mcp/issues" />
+				<Property Id="Microsoft.VisualStudio.Services.Links.Learn" Value="https://gitee.com/zhczhczhc/wf-dialog-mcp#readme" />
+				
+				
+				<Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true" />
+				<Property Id="Microsoft.VisualStudio.Services.Content.Pricing" Value="Free"/>
+
+				
+				
+			</Properties>
+			
+			
+		</Metadata>
+		<Installation>
+			<InstallationTarget Id="Microsoft.VisualStudio.Code"/>
+		</Installation>
+		<Dependencies/>
+		<Assets>
+			<Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
+			<Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
+		</Assets>
+	</PackageManifest>

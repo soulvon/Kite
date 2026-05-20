@@ -100,15 +100,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // 定时器自动切号成功后 → 通知 bridge（windsurf-better.js 显示通知 + 重试消息）
     this._autoSwitcher.onAutoSwitchDone = (newEmail, reason) => {
       // 推送 pool-result 到 bridge，让 windsurf-better.js 处理（显示通知 + 重试）
+      // v7.6.20 修订（#7）：失败时显式 warn 而非静默吞，避免"自动继续完全无反应"调试困难
+      let bridgeOk = true;
       try {
         enqueueCommand({
           id: Date.now(),
           action: 'pool-result',
           payload: { type: 'switched', ts: Date.now(), email: newEmail }
         });
-      } catch {}
+      } catch (e) {
+        bridgeOk = false;
+        console.warn('[sidebar] enqueueCommand pool-result 失败，自动继续将不会触发：', e);
+        this.log(`[bridge ✗] pool-result 推送失败: ${(e as Error)?.message || e}`);
+      }
       // 弹 VS Code 通知（面板关着也能看到）
-      vscode.window.showInformationMessage(`额度不足，已自动切换至 ${newEmail}`);
+      if (bridgeOk) {
+        vscode.window.showInformationMessage(`额度不足，已自动切换至 ${newEmail}`);
+      } else {
+        vscode.window.showWarningMessage(`已切换至 ${newEmail}，但桥接通信失败，自动继续可能不生效，请手动发送`);
+      }
     };
 
     // 监听 bridge 的 /result：
@@ -780,12 +790,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const result = await login(email, password, authMethod || 'auto');
           if (result.ok && result.value) {
             if (tag) { result.value.tag = tag; result.value.tags = [tag]; }
-            await accountStore.upsertAccount(this._context, result.value);
+            const stored = await accountStore.upsertAccount(this._context, result.value);
+            const finalEmail = stored.email;
+            const aliased = finalEmail !== email;
             if (batch) {
-              this.postMessage({ type: 'batchResult', ok: true, email });
+              this.postMessage({ type: 'batchResult', ok: true, email: finalEmail });
               this.refresh();
             } else {
-              this.showAlert('登录成功', '已登录并保存：' + email, 'info');
+              const tip = aliased
+                ? `已另存为新条目（保护旧账号 Devin token）：${finalEmail}`
+                : '已登录并保存：' + finalEmail;
+              this.showAlert('登录成功', tip, 'info');
               this.refresh();
             }
           } else {
@@ -1088,7 +1103,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         const result = await login(email, password, authMethod || 'auto');
         if (result.ok && result.value) {
-          await accountStore.upsertAccount(this._context, result.value);
+          const stored = await accountStore.upsertAccount(this._context, result.value);
+          result.value.email = stored.email; // 下游代码可能还会读它
           this.postMessage({
             type: 'batchResult',
             ok: true,
@@ -1111,8 +1127,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const tokenResult = await loginByAuth1Token(token);
         if (tokenResult.ok && tokenResult.value) {
           if (message.tag) { tokenResult.value.tag = message.tag; tokenResult.value.tags = [message.tag]; }
-          await accountStore.upsertAccount(this._context, tokenResult.value);
-          this.postMessage({ type: 'batchResult', ok: true, email: tokenResult.value.email });
+          const stored = await accountStore.upsertAccount(this._context, tokenResult.value);
+          this.postMessage({ type: 'batchResult', ok: true, email: stored.email });
           this.refresh();
         } else {
           this.postMessage({ type: 'batchResult', ok: false, email: token.substring(0, 20) + '...', error: tokenResult.error });
@@ -1129,7 +1145,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this.postMessage({ type: 'batchResult', ok: false, email: email || '账号配置', error: '缺少 email 或 apiKey' });
           return;
         }
-        await accountStore.upsertAccount(this._context, {
+        const storedAcct = await accountStore.upsertAccount(this._context, {
           email,
           apiKey,
           apiServerUrl,
@@ -1138,7 +1154,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           tags: raw.tags || (raw.tag ? [raw.tag] : undefined),
           disabled: raw.disabled === true ? true : undefined,
         });
-        this.postMessage({ type: 'batchResult', ok: true, email });
+        this.postMessage({ type: 'batchResult', ok: true, email: storedAcct.email });
         this.refresh();
         break;
       }
@@ -1174,8 +1190,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const account = await loginByWindsurfOAuth();
           const oauthTag = (message as any).tag;
           if (oauthTag) { account.tag = oauthTag; account.tags = [oauthTag]; }
-          await accountStore.upsertAccount(this._context, account);
-          this.postMessage({ type: 'oauthStatus', ok: true, email: account.email, message: `OAuth 导入成功：${account.email}` } as any);
+          const originalEmail = account.email;
+          const stored = await accountStore.upsertAccount(this._context, account);
+          const finalEmail = stored.email;
+          const aliased = finalEmail !== originalEmail;
+          const okMsg = aliased
+            ? `OAuth 已另存为新条目（保护旧账号 Devin token）：${finalEmail}`
+            : `OAuth 导入成功：${finalEmail}`;
+          this.postMessage({ type: 'oauthStatus', ok: true, email: finalEmail, message: okMsg } as any);
           this.refresh();
         } catch (err: any) {
           this.postMessage({ type: 'oauthStatus', ok: false, message: err?.message || String(err) } as any);
@@ -1532,10 +1554,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       name: accountLabel || ''
     };
 
-    await accountStore.upsertAccount(this._context, account);
+    const stored = await accountStore.upsertAccount(this._context, account);
+    const finalEmail = stored.email;
+    const aliased = finalEmail !== email; // upsert 智能策略可能把它另存为 email#oauth
     // 加入后设为当前账户（因为这就是 Windsurf 实际登录的号）
-    await accountStore.setCurrentAccount(this._context, email);
-    this.showAlert('添加成功', (dup ? '已更新并设为当前：' : '已添加并设为当前：') + email, 'info');
+    await accountStore.setCurrentAccount(this._context, finalEmail);
+    const tip = aliased
+      ? `已另存为新条目（保留旧账号 Devin token）：${finalEmail}`
+      : (dup ? '已更新并设为当前：' : '已添加并设为当前：') + finalEmail;
+    this.showAlert('添加成功', tip, 'info');
     this.refresh();
   }
 
@@ -2671,6 +2698,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 <div class="usage-stat-label">平均日用量</div>
               </div>
             </div>
+            <div class="usage-stats-balance-row" id="statBalanceRow" style="display:none" title="账号配额耗尽时仍可继续用付费余额，自动切号会跳过这些号">
+              <span class="usage-stats-balance-icon">💰</span>
+              <span class="usage-stats-balance-text">有 <span id="statBalanceCount">0</span> 个账号余额可用</span>
+            </div>
             <div class="usage-stats-bar-section">
               <div class="usage-stats-bar-row">
                 <span class="usage-stats-bar-label">日总用量</span>
@@ -2751,6 +2782,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <option value="min">综合配额</option>
           <option value="daily">日配额</option>
           <option value="weekly">周配额</option>
+          <option value="balance">💰 余额</option>
           <option value="planEnd">到期日</option>
           <option value="email">邮箱 A-Z</option>
           <option value="created">添加时间</option>
@@ -2850,11 +2882,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <button class="add-tab" data-tab="current">已登录账户</button>
         </div>
 
+        <!-- 标签设置区（共享组件） -->
+        <div class="add-account-tag-section" style="margin-top:12px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border,#333)">
+          <label class="batch-mode-label" style="font-weight:bold;margin-bottom:6px;display:block">导入标签（可选）</label>
+          <div id="addAccountSelectedTags" class="tag-edit-selected" style="display:flex;flex-wrap:wrap;gap:4px;min-height:28px;margin-bottom:8px;padding:4px 0"></div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" id="addAccountTagInput" placeholder="输入标签名称，回车添加" style="flex:1 1 auto;min-width:0;width:100%;box-sizing:border-box">
+            <button id="addAccountTagAddBtn" style="flex:0 0 auto;padding:5px 14px;font-size:12px;white-space:nowrap;border-radius:6px;border:1px solid var(--accent,#10b981);background:var(--accent,#10b981);color:#fff;cursor:pointer">添加</button>
+          </div>
+          <div style="margin-top:8px">
+            <label style="font-size:11px;opacity:0.7">已有标签（点击添加/移除）</label>
+            <div id="addAccountExistingTags" class="tag-edit-existing" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;max-height:80px;overflow-y:auto"></div>
+          </div>
+        </div>
+
         <!-- OAuth 授权 -->
         <div id="oauthLoginArea" hidden>
           <p class="footnote">打开 Windsurf 官方授权页，完成后自动保存到号池。</p>
-          <label>标签（可选）</label>
-          <input type="text" id="oauthTag" placeholder="如：OAuth、主力号">
           <button class="primary" data-action="oauthLogin" style="margin-top:10px">开始 OAuth 授权</button>
           <div id="oauthMsg" class="batch-msg" hidden></div>
         </div>
@@ -2865,17 +2909,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <input type="email" id="email" placeholder="your@email.com">
           <label>密码</label>
           <input type="password" id="loginPassword" placeholder="密码">
-          <label>标签（可选）</label>
-          <input type="text" id="loginTag" placeholder="如：工作号、测试号">
           <button class="primary" data-action="loginSave" style="margin-top:10px">登录并保存</button>
         </div>
 
         <!-- 批量导入 -->
         <div id="batchImportArea">
-          <div class="batch-section">
-            <label class="batch-mode-label">导入标签</label>
-            <input type="text" id="batchTag" class="batch-tag-input" placeholder="为本批导入的账号设置标签（可选）">
-          </div>
           <div class="batch-section">
             <label class="batch-mode-label">导入格式</label>
             <div class="batch-radio-group">

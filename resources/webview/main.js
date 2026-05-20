@@ -338,6 +338,7 @@
   let tagEditEmail = null; // 正在编辑标签的账号邮箱
   let tagEditBatchEmails = null; // 批量模式下要打标签的账号列表
   let tagEditPendingTags = []; // 编辑弹窗中的临时标签列表
+  let addAccountPendingTags = []; // 添加账号弹窗中的临时标签列表
 
   // 获取账号标签数组（兼容旧 tag 字段）
   function getAccTags(a) {
@@ -347,6 +348,23 @@
   }
 
   // ========== 过滤器辅助 ==========
+  // 统一状态常量：避免不同函数返回不一致的字符串（如带/不带 emoji）导致过滤器匹配失败
+  const STATUS_BALANCE = '余额可用';
+
+  // 余额变化阈值：1000 micros = $0.001，低于此值视为无变化（避免显示无意义的微小波动）
+  const BALANCE_DELTA_MIN_MICROS = 1000;
+  /** 格式化 micros 为美元变化字符串（带正负号），传入值应已通过阈值检查 */
+  function fmtBalanceDelta(micros) {
+    const sign = micros > 0 ? '+' : '-';
+    return sign + '$' + Math.abs(micros / 1_000_000).toFixed(2);
+  }
+
+  /** 判断账号是否有付费余额（overageBalanceMicros > 0） */
+  function accountHasBalance(email) {
+    const snap = usageCache.get(email)?.snapshot;
+    return !!(snap && (snap.overageBalanceMicros || 0) > 0);
+  }
+
   function getAccountStatus(account) {
     const cached = usageCache.get(account.email);
     const snap = cached?.snapshot;
@@ -354,8 +372,9 @@
     if (err) return '异常';
     if (!snap) return '未加载';
     if (snap.planEnd && new Date(snap.planEnd).getTime() < Date.now()) return '已到期';
-    if ((snap.weeklyRemainingPercent || 0) <= 0) return '周额度耗尽';
-    if ((snap.dailyRemainingPercent || 0) <= 0) return '日额度耗尽';
+    const hasBalance = (snap.overageBalanceMicros || 0) > 0;
+    if ((snap.weeklyRemainingPercent || 0) <= 0) return hasBalance ? STATUS_BALANCE : '周额度耗尽';
+    if ((snap.dailyRemainingPercent || 0) <= 0) return hasBalance ? STATUS_BALANCE : '日额度耗尽';
     return '正常';
   }
 
@@ -367,7 +386,10 @@
     if (hc.ok) return '可用';
     const reason = hc.reason || '';
     if (/待复测/i.test(reason)) return '待检测';
-    if (/全局限制|长期不可用|限流|限速|rate limit|剩余\s*0|消息已用尽|模型额度|额度.*上限|已达上限|用尽|overall|暂不可用|quota/i.test(reason)) return '限速';
+    // 限速但有余额 → 实际可用（继续消耗付费余额）
+    if (/全局限制|长期不可用|限流|限速|rate limit|剩余\s*0|消息已用尽|模型额度|额度.*上限|已达上限|用尽|overall|暂不可用|quota/i.test(reason)) {
+      return accountHasBalance(email) ? STATUS_BALANCE : '限速';
+    }
     if (/无权限|不支持|NO_ACCESS/i.test(reason)) return '无权限';
     if (/Key.*失效|401|invalid/i.test(reason)) return 'Key失效';
     if (/封禁|403|到期|宽限期/i.test(reason)) return '到期/封禁';
@@ -487,8 +509,9 @@
         if (err) return '异常';
         if (!snap) return '未加载';
         if (snap.planEnd && new Date(snap.planEnd).getTime() < Date.now()) return '已到期';
-        if ((snap.weeklyRemainingPercent || 0) <= 0) return '周额度耗尽';
-        if ((snap.dailyRemainingPercent || 0) <= 0) return '日额度耗尽';
+        const hasBalance = (snap.overageBalanceMicros || 0) > 0;
+        if ((snap.weeklyRemainingPercent || 0) <= 0) return hasBalance ? STATUS_BALANCE : '周额度耗尽';
+        if ((snap.dailyRemainingPercent || 0) <= 0) return hasBalance ? STATUS_BALANCE : '日额度耗尽';
         const minPct = Math.min(snap.dailyRemainingPercent || 0, snap.weeklyRemainingPercent || 0);
         if (minPct < 10) return '额度不足';
         return '正常';
@@ -504,11 +527,13 @@
         return '❓ 其他';
       }
       case 'usage': {
-        // 按用量水平
+        // 按用量水平（此分组所有选项都带 emoji，余额可用也加 💰 保持视觉一致）
+        // 注：分组面板的字符串不参与过滤器匹配（过滤器走 getAccountStatus 纯文本），可独立装饰
         if (err) return '❌ 失效';
         if (!snap) return '⏳ 未加载';
         const minPct = Math.min(snap.dailyRemainingPercent || 0, snap.weeklyRemainingPercent || 0);
-        if (minPct <= 0) return '🔴 已用尽 (0%)';
+        const hasBalance = (snap.overageBalanceMicros || 0) > 0;
+        if (minPct <= 0) return hasBalance ? '💰 ' + STATUS_BALANCE : '🔴 已用尽 (0%)';
         if (minPct <= 10) return '🟠 即将耗尽 (≤10%)';
         if (minPct <= 30) return '🟡 用量较高 (≤30%)';
         if (minPct <= 60) return '🟢 用量适中 (≤60%)';
@@ -607,7 +632,7 @@
         </div>
       </div>
       <div class="grid-card-extra">
-        <div class="grid-extra-row"><span>额外用量余额</span><span class="grid-extra-val" data-field="flexCredits">${snap && snap.overageBalanceMicros !== undefined ? '$' + (snap.overageBalanceMicros / 1000000).toFixed(2) : '—'}</span></div>
+        <div class="grid-extra-row"><span>额外用量余额</span><span class="grid-extra-val ${snap && (snap.overageBalanceMicros || 0) > 0 ? 'is-balance' : ''}" data-field="flexCredits">${snap && snap.overageBalanceMicros !== undefined ? '$' + (snap.overageBalanceMicros / 1000000).toFixed(2) : '—'}</span></div>
         <div class="grid-extra-row"><span>会员期限</span><span class="grid-extra-val ${snap && snap.planEnd ? periodClass(snap.planEnd) : ''}" data-field="period">${snap && snap.planStart && snap.planEnd ? formatPeriodSimple(snap.planStart, snap.planEnd) : '—'}</span></div>
         <div class="grid-extra-row"><span>今日切号</span><span class="grid-extra-val" data-field="switchCount">${perAccountStats[account.email]?.switchToCount || 0} 次</span></div>
       </div>
@@ -675,6 +700,7 @@
       const micros = snapshot.overageBalanceMicros || 0;
       const dollars = micros / 1000000;
       flexEl.textContent = '$' + dollars.toFixed(2);
+      flexEl.className = 'grid-extra-val' + (micros > 0 ? ' is-balance' : '');
     }
 
     const periodEl = card.querySelector('[data-field="period"]');
@@ -723,7 +749,7 @@
     }, 400);
   }
 
-  // 排序模式：recommend | min | daily | weekly | planEnd | email | created | default
+  // 排序模式：recommend | min | daily | weekly | balance | planEnd | email | created | default
   let sortMode = 'recommend';
 
   function getSnap(email) { return usageCache.get(email)?.snapshot; }
@@ -734,7 +760,7 @@
     const dir = (sortDirection === 'asc') ? -1 : 1;
     switch (mode) {
       case 'recommend': {
-        // 智能推荐：综合配额余量 + 计划未过期 + 无错误优先
+        // 智能推荐：综合配额余量 + 余额 + 计划未过期 + 无错误优先
         const ea = usageCache.get(a.email)?.error, eb = usageCache.get(b.email)?.error;
         // 失效账号排最后
         if (ea && !eb) return 1;
@@ -748,9 +774,13 @@
         const bNow = sb.planEnd ? new Date(sb.planEnd).getTime() > Date.now() : true;
         if (aNow && !bNow) return -1;
         if (!aNow && bNow) return 1;
-        // 按综合配额余量降序
+        // 按综合配额余量降序（有余额的号视为可用，给予加分）
         const va = Math.min(sa.dailyRemainingPercent||0, sa.weeklyRemainingPercent||0);
         const vb = Math.min(sb.dailyRemainingPercent||0, sb.weeklyRemainingPercent||0);
+        const balA = (sa.overageBalanceMicros || 0) > 0 ? 1 : 0;
+        const balB = (sb.overageBalanceMicros || 0) > 0 ? 1 : 0;
+        // 配额耗尽时，有余额的排前面
+        if (va <= 0 && vb <= 0) return (balB - balA) * dir || 0;
         return (vb - va) * dir;
       }
       case 'min': {
@@ -766,6 +796,12 @@
       case 'weekly': {
         const va = sa ? (sa.weeklyRemainingPercent||0) : -1;
         const vb = sb ? (sb.weeklyRemainingPercent||0) : -1;
+        return (vb - va) * dir;
+      }
+      case 'balance': {
+        // 余额排序：默认降序（余额多的在前），未加载/失效账号排最后
+        const va = sa ? (sa.overageBalanceMicros || 0) : -1;
+        const vb = sb ? (sb.overageBalanceMicros || 0) : -1;
         return (vb - va) * dir;
       }
       case 'planEnd': {
@@ -1122,10 +1158,13 @@
     const hc = getHealthEntry(email);
     if (hc && !hc.testing && !hc.ok) {
       const reason = hc.reason || '测活异常';
+      const isRateLimit = /全局限制|长期不可用|限流|限速|rate limit|message limit|quota.*exhaust|usage.*quota|daily.*quota|消息|模型额度|额度.*上限|已达上限|用尽|overall|reset|暂不可用/i.test(reason);
+      // 限速但有余额 → 不视为 issue（账号通过余额实际可用）
+      if (isRateLimit && accountHasBalance(email)) return null;
       return {
         reason,
         summary: hc.stale ? '测活：待复测确认' : '测活：' + summarizeAccountIssue(reason),
-        kind: /全局限制|长期不可用|限流|限速|rate limit|message limit|quota.*exhaust|usage.*quota|daily.*quota|消息|模型额度|额度.*上限|已达上限|用尽|overall|reset|暂不可用/i.test(reason) ? 'blocked' : 'error',
+        kind: isRateLimit ? 'blocked' : 'error',
         ts: hc.ts,
         source: 'health',
       };
@@ -1257,6 +1296,13 @@
     setNum('statSwitches', stats.totalSwitches || 0);
     setNum('statRefreshes', stats.totalRefreshes || 0);
     setNum('statAvgDailyUsed', (stats.avgDailyUsedPct || 0) + '%');
+
+    // 余额可用账号提示行
+    const balRow = document.getElementById('statBalanceRow');
+    const balCnt = document.getElementById('statBalanceCount');
+    const balN = stats.accountsWithBalance || 0;
+    if (balRow) balRow.style.display = balN > 0 ? '' : 'none';
+    if (balCnt) balCnt.textContent = String(balN);
 
     // 总用量条形图
     const acctCount = stats.accountCount || 1;
@@ -1933,17 +1979,13 @@
     }
   }
 
-  // 过滤已存在账号，返回 { fresh, skipped }
+  // v7.6.23+: 前端不再预过滤已存在账号，全部送到后端 upsertAccount 智能去重：
+  //   - 新的有 auth1 → 覆盖修复（补上旧账号缺 token）
+  //   - 新的没 token 但旧的有 → 自动另存为 email#oauth 新条目
+  //   - 都没 token → 覆盖
+  // 这样既能修复缺 token 旧账号，又能保护宝贵的 auth1，不再"跳过重复 N 个"
   function filterExistingAccounts(accts) {
-    const existing = new Set(accounts.map(a => a.email.toLowerCase()));
-    const fresh = [];
-    const skipped = [];
-    for (const a of accts) {
-      if (a.token) { fresh.push(a); continue; } // token 导入无法预判重复，始终放行
-      if (existing.has(a.email.toLowerCase())) skipped.push(a.email);
-      else fresh.push(a);
-    }
-    return { fresh, skipped };
+    return { fresh: accts, skipped: [] };
   }
 
   async function doBatchImportText() {
@@ -1966,16 +2008,17 @@
     const authMethod = authMethodEl ? authMethodEl.value : 'auto';
     const lines = text.value.trim().split('\n').filter(l => l.trim());
     const accts = [];
-    const errors = [];
+    const errors = [];     // 格式无法识别 / 缺字段
+    const dupInBatch = []; // batch 内重复记录
     const seen = new Set();
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i].trim().replace(/\\$/, ''); // 去掉行末反斜杠
       if (!raw || raw.startsWith('#')) continue;
 
-      // ── 优先级1：整行就是 token ──────────────────────────────────
+      // ── 优先级1：整行就是 token ────────────────────────────
       if (/^auth1_[A-Za-z0-9_]+$/.test(raw) || /^devin-session-token\$/.test(raw)) {
         const tokenKey = raw.trim();
-        if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
+        if (seen.has(tokenKey)) { dupInBatch.push(`第 ${i+1} 行 token 与同批重复`); continue; }
         seen.add(tokenKey);
         accts.push({ token: raw });
         continue;
@@ -1988,20 +2031,20 @@
       if (tokenMatch) {
         const tok = tokenMatch[1];
         const tokenKey = tok.trim();
-        if (seen.has(tokenKey)) { errors.push(`第 ${i+1} 行 token 重复`); continue; }
+        if (seen.has(tokenKey)) { dupInBatch.push(`第 ${i+1} 行 token 与同批重复`); continue; }
         seen.add(tokenKey);
         accts.push({ token: tok });
         continue;
       }
 
-      // ── 优先级3：行内找邮箱，剩余作为密码 ──────────────────────
+      // ── 优先级3：行内找邮箱，剩余作为密码 ────────────────────
       const emailMatch = raw.match(/([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/);
       if (emailMatch) {
         const email = emailMatch[1];
         // 把邮箱从原串里去掉，剩余部分去掉分隔符得到密码
         const rest = raw.replace(email, '').replace(/^[\s\-,|:：]+|[\s\-,|:：]+$/g, '').trim();
         if (!rest) { errors.push(`第 ${i+1} 行缺少密码: ${raw.substring(0,40)}`); continue; }
-        if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复: ${email}`); continue; }
+        if (seen.has(email.toLowerCase())) { dupInBatch.push(`第 ${i+1} 行邮箱与同批重复: ${email}`); continue; }
         seen.add(email.toLowerCase());
         accts.push({ email, password: rest, authMethod });
         continue;
@@ -2014,7 +2057,7 @@
         const cnPwd = raw.match(/(?:密码|[Pp]assword)[：:]\s*(\S+)/);
         if (cnPwd) {
           const password = cnPwd[1].trim();
-          if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复`); continue; }
+          if (seen.has(email.toLowerCase())) { dupInBatch.push(`第 ${i+1} 行邮箱与同批重复`); continue; }
           seen.add(email.toLowerCase());
           accts.push({ email, password, authMethod });
           continue;
@@ -2025,7 +2068,7 @@
           const pwdMatch = nextLine.match(/(?:密码|[Pp]assword)[：:]\s*(\S+)/);
           if (pwdMatch) {
             const password = pwdMatch[1].trim();
-            if (seen.has(email.toLowerCase())) { errors.push(`第 ${i+1} 行邮箱重复`); i++; continue; }
+            if (seen.has(email.toLowerCase())) { dupInBatch.push(`第 ${i+1} 行邮箱与同批重复`); i++; continue; }
             seen.add(email.toLowerCase());
             accts.push({ email, password, authMethod });
             i++; continue;
@@ -2035,20 +2078,25 @@
 
       errors.push(`第 ${i+1} 行格式无法识别: ${raw.substring(0, 40)}`);
     }
-    const batchTagEl = document.getElementById('batchTag');
-    const batchTag = batchTagEl ? batchTagEl.value.trim() : '';
-    if (batchTag) accts.forEach(a => { a.tag = batchTag; a.tags = [batchTag]; });
+    // batch 内重复不计作解析失败，单独计数（以 skipped 字段返回）
+    if (addAccountPendingTags.length > 0) {
+      accts.forEach(a => {
+        a.tag = addAccountPendingTags[0];
+        a.tags = [...addAccountPendingTags];
+      });
+    }
     const { fresh, skipped } = filterExistingAccounts(accts);
     if (fresh.length === 0) {
-      const msg = skipped.length ? `所有 ${skipped.length} 个账号已存在，跳过导入` : (errors.length ? errors.join('\n') : '未解析到有效账号');
+      const totalSkip = skipped.length + dupInBatch.length;
+      const msg = totalSkip ? `跳过重复 ${totalSkip} 个账号` : (errors.length ? errors.join('\n') : '未解析到有效账号');
       setBatchMsg(msg, true);
       showBatchModal('批量导入');
-      finalizeBatchModal('批量导入', [], { skipped: skipped.length, parseFail: errors.length });
+      finalizeBatchModal('批量导入', [], { skipped: totalSkip, parseFail: errors.length });
       return;
     }
     setBatchBusy(true, '[data-action="batchImportText"]');
     try {
-      await sendBatchAccounts(fresh, { skipped: skipped.length, parseFail: errors.length });
+      await sendBatchAccounts(fresh, { skipped: skipped.length + dupInBatch.length, parseFail: errors.length });
     } finally {
       setBatchBusy(false, '[data-action="batchImportText"]');
     }
@@ -2082,7 +2130,7 @@
       const em = String(item.email).trim().toLowerCase();
       if (seen.has(em)) { errors.push(`第 ${i+1} 项邮箱重复: ${item.email}`); continue; }
       seen.add(em);
-      const itemTags = Array.isArray(item.tags) ? item.tags.map(t => String(t).trim()).filter(Boolean) : (item.tag ? [String(item.tag).trim()] : undefined);
+      const itemTags = Array.isArray(item.tags) ? item.tags.map(t => String(t).trim()).filter(Boolean) : (item.tag ? [String(item.tag).trim()] : (addAccountPendingTags.length > 0 ? [...addAccountPendingTags] : undefined));
       if (item.apiKey) {
         accts.push({
           email: String(item.email).trim(),
@@ -2096,7 +2144,12 @@
       } else if (item.token) {
         accts.push({ token: String(item.token).trim(), tag: itemTags ? itemTags[0] : undefined, tags: itemTags });
       } else {
-        accts.push({ email: String(item.email).trim(), password: String(item.password).trim() });
+        accts.push({ 
+          email: String(item.email).trim(), 
+          password: String(item.password).trim(), 
+          tag: itemTags ? itemTags[0] : undefined,
+          tags: itemTags 
+        });
       }
     }
     const { fresh, skipped } = filterExistingAccounts(accts);
@@ -2148,9 +2201,12 @@
       seen.add(tokenKey);
       accts.push({ token: line });
     }
-    const batchTagEl = document.getElementById('batchTag');
-    const batchTag = batchTagEl ? batchTagEl.value.trim() : '';
-    if (batchTag) accts.forEach(a => { a.tag = batchTag; a.tags = [batchTag]; });
+    if (addAccountPendingTags.length > 0) {
+      accts.forEach(a => {
+        a.tag = addAccountPendingTags[0];
+        a.tags = [...addAccountPendingTags];
+      });
+    }
     const { fresh, skipped } = filterExistingAccounts(accts);
     if (fresh.length === 0) {
       const msg = skipped.length ? `所有 ${skipped.length} 个 token 已存在` : (errors.length ? errors.join('\n') : '未解析到有效 token');
@@ -2275,10 +2331,22 @@
         const dateStr = String(d.getMonth()+1) + '/' + String(d.getDate());
         const shortEmail = e.email.length > 24 ? e.email.slice(0, 10) + '…' + e.email.slice(-10) : e.email;
 
-        // 头部：时间 + 账号
+        // 头部：时间 + 余额（含变化）+ 账号
         const header = document.createElement('div');
         header.className = 'qh-card-header';
-        header.innerHTML = '<span class="qh-card-time">' + dateStr + ' ' + timeStr + '</span>'
+        const bDeltaMicros = typeof e.bDelta === 'number' ? e.bDelta : 0;
+        const bDeltaStr = Math.abs(bDeltaMicros) >= BALANCE_DELTA_MIN_MICROS
+          ? ('<span class="qh-balance-delta ' + (bDeltaMicros < 0 ? 'qh-delta-neg' : 'qh-delta-pos') + '">'
+              + fmtBalanceDelta(bDeltaMicros)
+            + '</span>')
+          : '';
+        const balanceStr = (e.balance !== undefined && e.balance !== null)
+          ? ('<span class="qh-card-balance' + (e.balance > 0 ? ' is-balance' : '') + '" title="额外用量余额">$' + (e.balance / 1000000).toFixed(2) + '</span>' + bDeltaStr)
+          : '';
+        header.innerHTML = '<div class="qh-card-header-left">'
+          + '<span class="qh-card-time">' + dateStr + ' ' + timeStr + '</span>'
+          + balanceStr
+          + '</div>'
           + (_qhFilterEmail ? '' : '<span class="qh-card-email" title="' + e.email.replace(/"/g, '&quot;') + '">' + shortEmail + '</span>');
         card.appendChild(header);
 
@@ -2609,8 +2677,9 @@
     if (!email || !password) return;
     const amEl = document.querySelector('input[name="batchAuthMethod"]:checked');
     const authMethod = amEl ? amEl.value : 'auto';
-    const tag = $('#loginTag')?.value?.trim() || '';
-    postMsg('loginSave', { email, password, authMethod, tag });
+    const tag = addAccountPendingTags[0] || '';
+    const tags = [...addAccountPendingTags];
+    postMsg('loginSave', { email, password, authMethod, tag, tags });
   }
 
   // ==================== 消息监听 ====================
@@ -2632,6 +2701,7 @@
     renderCards();
     // 账号数据到达后重新渲染标签选择器（修复时序问题：settingsSync 先到，accounts 后到时标签列表为空）
     renderTagPicker();
+    updateExistingTagsList();
     // 更新外部账户提示条
     const banner = document.getElementById('externalBanner');
     if (banner) {
@@ -4094,6 +4164,93 @@
     return [...tags].sort();
   }
 
+  function renderAddAccountTagUI() {
+    const selectedEl = document.getElementById('addAccountSelectedTags');
+    const existingEl = document.getElementById('addAccountExistingTags');
+    if (!selectedEl || !existingEl) return;
+
+    // 已选标签 chips（带颜色圆点 + × 移除）
+    if (addAccountPendingTags.length === 0) {
+      selectedEl.innerHTML = '<span style="color:var(--muted);font-size:11px">暂无标签</span>';
+    } else {
+      selectedEl.innerHTML = addAccountPendingTags.map(t => {
+        const tc = getTagColor(t);
+        return `<span class="tag-edit-chip" style="background:${tc}18;border:1px solid ${tc}60;color:${tc};padding:2px 10px;border-radius:10px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px" data-tag="${escHtml(t)}"><span class="tag-edit-color-dot" data-tag="${escHtml(t)}" style="width:10px;height:10px;border-radius:50%;background:${tc};cursor:pointer;flex-shrink:0;border:2px solid #fff;box-shadow:0 0 0 1px ${tc}" title="点击换色"></span>${escHtml(t)} <span style="opacity:0.5;font-size:13px;margin-left:2px" class="tag-edit-remove">×</span></span>`;
+      }).join('');
+    }
+
+    // 点击已选标签的 × → 移除；点击颜色圆点 → 改色
+    selectedEl.querySelectorAll('.tag-edit-chip').forEach(chip => {
+      const removeBtn = chip.querySelector('.tag-edit-remove');
+      if (removeBtn) {
+        removeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const t = chip.dataset.tag;
+          addAccountPendingTags = addAccountPendingTags.filter(x => x !== t);
+          renderAddAccountTagUI();
+        });
+      }
+      const colorDot = chip.querySelector('.tag-edit-color-dot');
+      if (colorDot) {
+        colorDot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openTagColorPicker(colorDot.dataset.tag, colorDot);
+        });
+      }
+    });
+
+    // 已有标签列表（带颜色圆点，可点击改色 / 点标签名 toggle 选中）
+    const allTags = getTagList();
+    const pending = new Set(addAccountPendingTags);
+    existingEl.innerHTML = allTags
+      .map(t => {
+        const tc = getTagColor(t);
+        const selected = pending.has(t);
+        return `<span class="tag-edit-opt" style="padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border:1px solid ${tc}60;background:${selected ? tc : tc + '20'};color:${selected ? '#fff' : tc}" data-tag="${escHtml(t)}"><span class="tag-edit-color-dot" data-tag="${escHtml(t)}" style="width:10px;height:10px;border-radius:50%;background:${selected ? '#fff' : tc};cursor:pointer;flex-shrink:0;border:1px solid ${selected ? '#fff8' : tc + '80'};box-shadow:0 0 0 1px ${tc}40" title="点击换色"></span>${escHtml(t)}</span>`;
+      }).join('') || '<span style="color:var(--muted);font-size:11px">暂无标签</span>';
+
+    // 点击已有标签 → toggle；点击颜色圆点 → 改色
+    existingEl.querySelectorAll('.tag-edit-opt').forEach(opt => {
+      const colorDot = opt.querySelector('.tag-edit-color-dot');
+      if (colorDot) {
+        colorDot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openTagColorPicker(colorDot.dataset.tag, colorDot);
+        });
+      }
+      opt.addEventListener('click', () => {
+        const t = opt.dataset.tag;
+        if (addAccountPendingTags.includes(t)) {
+          addAccountPendingTags = addAccountPendingTags.filter(x => x !== t);
+        } else {
+          addAccountPendingTags.push(t);
+        }
+        renderAddAccountTagUI();
+      });
+    });
+  }
+
+  function addAccountTagFromInput() {
+    const input = document.getElementById('addAccountTagInput');
+    if (!input) return;
+    const newTag = input.value.trim();
+    if (!newTag) return;
+    if (!addAccountPendingTags.includes(newTag)) {
+      // 新标签首次出现时随机分配颜色
+      if (!tagColors[newTag] && !getTagList().includes(newTag)) {
+        tagColors[newTag] = TAG_PALETTE[Math.floor(Math.random() * TAG_PALETTE.length)];
+        saveTagColors();
+      }
+      addAccountPendingTags.push(newTag);
+      renderAddAccountTagUI();
+    }
+    input.value = '';
+  }
+
+  function updateExistingTagsList() {
+    renderAddAccountTagUI();
+  }
+
   function populateTagSelect(selectEl, currentTag) {
     if (!selectEl) return;
     const tags = getTagList();
@@ -4557,14 +4714,16 @@
     if (batchDevinBtn) batchDevinBtn.addEventListener('click', () => { doBatchImportDevin(); closeAddAccountModal(); });
     const oauthLoginBtn = $('[data-action="oauthLogin"]');
     if (oauthLoginBtn) oauthLoginBtn.addEventListener('click', () => {
-      const tagEl = document.getElementById('oauthTag');
       const msgEl = document.getElementById('oauthMsg');
       if (msgEl) {
         msgEl.hidden = false;
         msgEl.textContent = '正在打开授权页…';
         msgEl.className = 'batch-msg is-ok';
       }
-      postMsg('oauthLogin', { tag: tagEl ? tagEl.value.trim() : '' });
+      postMsg('oauthLogin', { 
+        tag: addAccountPendingTags[0] || '', 
+        tags: [...addAccountPendingTags] 
+      });
     });
 
     // 从当前账户添加
@@ -4580,10 +4739,32 @@
     const addAccountOverlay = document.getElementById('addAccountOverlay');
     const addAccountClose = document.getElementById('addAccountClose');
     if (addAccountBtn && addAccountOverlay) {
-      addAccountBtn.addEventListener('click', () => { addAccountOverlay.hidden = false; });
+      addAccountBtn.addEventListener('click', () => {
+        addAccountPendingTags = [];
+        updateExistingTagsList();
+        addAccountOverlay.hidden = false;
+      });
     }
     if (addAccountClose && addAccountOverlay) {
       addAccountClose.addEventListener('click', () => { addAccountOverlay.hidden = true; });
+    }
+
+    // 挂载添加账号弹窗的标签管理事件
+    const addAccountTagInput = document.getElementById('addAccountTagInput');
+    if (addAccountTagInput) {
+      addAccountTagInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          addAccountTagFromInput();
+        }
+      });
+    }
+    const addAccountTagAddBtn = document.getElementById('addAccountTagAddBtn');
+    if (addAccountTagAddBtn) {
+      addAccountTagAddBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        addAccountTagFromInput();
+      });
     }
 
     // 批量导入模态框关闭按钮

@@ -390,13 +390,22 @@ async function runHealthCheck(
 
       const cached = _resultCache.get(account.email);
       const modelUid = model?.uid || '';
-      if (
-        cached
+      // 余额号豁免限速冷却：账号有付费余额时即使被报"限速"也实际可用，应正常复测
+      const diskEntry = usageDiskCache.readEntry(account.email);
+      const hasOverageBalance = ((diskEntry?.snapshot?.overageBalanceMicros) || 0) > 0;
+      // 缓存命中且在限速冷却内（统一判断，避免日志判断与跳过判断条件不同步）
+      const cachedIsRateLimit = !!(cached
         && cached.modelUid === modelUid
         && !cached.ok
         && /全局限制|长期不可用|限流|限速|rate limit|quota.*exhaust|usage.*quota|daily.*quota|消息已用尽|剩余 0|暂不可用/i.test(cached.reason || '')
-        && Date.now() - cached.ts < RATE_LIMIT_COOLDOWN_MS
-      ) {
+        && Date.now() - cached.ts < RATE_LIMIT_COOLDOWN_MS);
+      // 有余额且本应被冷却跳过时，输出日志便于排查"为什么这个限速号又测了一次"
+      if (cachedIsRateLimit && hasOverageBalance) {
+        const balanceUsd = ((diskEntry?.snapshot?.overageBalanceMicros) || 0) / 1_000_000;
+        console.log(`[healthCheck] ${account.email} 余额可用 ($${balanceUsd.toFixed(2)})，跳过限速冷却，正常复测`);
+      }
+      // 仅在限速冷却内且无余额时跳过本轮探测
+      if (cachedIsRateLimit && !hasOverageBalance && cached) {
         completed++;
         _panel?.webview.postMessage({
           type: 'checkResult',

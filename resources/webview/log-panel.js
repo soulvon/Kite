@@ -26,6 +26,14 @@
   let privacyMode = false;
   let refreshCooldown = 0;
 
+  // 余额变化阈值：1000 micros = $0.001，低于此值视为无变化（避免无意义的微小波动显示）
+  const BALANCE_DELTA_MIN_MICROS = 1000;
+  /** 格式化 micros 为美元变化字符串（带正负号），传入值应已通过阈值检查 */
+  function fmtBalanceDelta(micros) {
+    const sign = micros > 0 ? '+' : '-';
+    return sign + '$' + Math.abs(micros / 1_000_000).toFixed(2);
+  }
+
   // ── 隐私模式 ──
   const privacyBtn = document.getElementById('lpPrivacy');
   privacyBtn.querySelector('svg').style.opacity = '0.6'; // 初始同步
@@ -346,6 +354,10 @@
     const PAD = 4;
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
 
+    // 默认先隐藏余额图例（仅在单账号 + 有余额数据的分支末尾才会重新启用）
+    const legendBalEarly = document.getElementById('lpLegendBalance');
+    if (legendBalEarly) legendBalEarly.style.display = 'none';
+
     // 获取主题色
     var cs = getComputedStyle(document.body);
     var gridColor = cs.getPropertyValue('--lp-chart-grid').trim() || 'rgba(128,128,128,0.1)';
@@ -414,6 +426,29 @@
     const tsToX = (ts) => PAD + (ts - minTs) / tsSpan * (W - PAD * 2);
     const pctToY = (p) => PAD + (100 - p) / 100 * (H - PAD * 2);
 
+    // 余额双 Y 轴：仅在单账号且有余额数据时绘制
+    let balMinMicros = Infinity, balMaxMicros = -Infinity;
+    let hasBalanceData = false;
+    if (emails.length === 1) {
+      for (let i = 0; i < entries.length; i++) {
+        const b = entries[i].balance;
+        if (typeof b === 'number' && b > 0) {
+          hasBalanceData = true;
+          if (b < balMinMicros) balMinMicros = b;
+          if (b > balMaxMicros) balMaxMicros = b;
+        }
+      }
+    }
+    // 单值情况：上下各扩 5% 让线居中且不贴边
+    if (hasBalanceData && balMinMicros === balMaxMicros) {
+      const pad = Math.max(balMinMicros * 0.05, 100_000);
+      balMinMicros -= pad;
+      balMaxMicros += pad;
+    }
+    const balSpan = Math.max(balMaxMicros - balMinMicros, 1);
+    // 余额值 → Y 坐标（顶部=最大，底部=最小，与百分比同向）
+    const balToY = (b) => PAD + (1 - (b - balMinMicros) / balSpan) * (H - PAD * 2);
+
     // 单账号路径生成（检测重置事件断线）
     // 配额"重置"特征：相邻两点中后者比前者大 +20pt 以上，视为重置，断开折线
     function buildPath(arr, key) {
@@ -442,6 +477,32 @@
       const weeklyPath = buildPath(arr, 'weekly');
       body += '<path d="' + dailyPath + '" fill="none" stroke="#5b9aff" stroke-width="2" stroke-linejoin="round" />'
             + '<path d="' + weeklyPath + '" fill="none" stroke="#ff9a5b" stroke-width="2" stroke-linejoin="round" />';
+
+      // 余额线（金色实线，右 Y 轴）：跳过无余额节点形成断段
+      if (hasBalanceData) {
+        let balPath = '';
+        let bStarted = false;
+        for (let i = 0; i < arr.length; i++) {
+          const p = arr[i];
+          if (typeof p.balance !== 'number' || p.balance <= 0) {
+            bStarted = false;
+            continue;
+          }
+          const bx = tsToX(p.ts);
+          const by = balToY(p.balance);
+          balPath += (bStarted ? 'L ' : 'M ') + bx + ',' + by + ' ';
+          bStarted = true;
+        }
+        if (balPath) {
+          body += '<path d="' + balPath + '" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linejoin="round" opacity="0.9"><title>付费余额变化（右轴）</title></path>';
+          // 右侧标注余额范围
+          const balMinUsd = (balMinMicros / 1_000_000).toFixed(2);
+          const balMaxUsd = (balMaxMicros / 1_000_000).toFixed(2);
+          body += '<text x="' + (W - 4) + '" y="12" text-anchor="end" fill="#f59e0b" font-size="10" font-weight="600" opacity="0.9">$' + balMaxUsd + '</text>';
+          body += '<text x="' + (W - 4) + '" y="' + (H - 6) + '" text-anchor="end" fill="#f59e0b" font-size="10" font-weight="600" opacity="0.9">$' + balMinUsd + '</text>';
+        }
+      }
+
       // 重置事件标记（小三角）
       for (let i = 1; i < arr.length; i++) {
         if (arr[i].daily - arr[i - 1].daily >= 20) {
@@ -461,6 +522,22 @@
         const weeklyPath = buildPath(arr, 'weekly');
         body += '<path d="' + dailyPath + '" fill="none" stroke="' + dColor + '" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"><title>' + emails[ei] + ' · 日</title></path>'
               + '<path d="' + weeklyPath + '" fill="none" stroke="' + wColor + '" stroke-width="1.5" stroke-linejoin="round" stroke-dasharray="4,3" opacity="0.7"><title>' + emails[ei] + ' · 周</title></path>';
+      }
+    }
+
+    // 控制余额图例显示（仅单账号且有余额数据时显示）
+    const legendBal = document.getElementById('lpLegendBalance');
+    if (legendBal) {
+      legendBal.style.display = (emails.length === 1 && hasBalanceData) ? '' : 'none';
+      const rangeEl = document.getElementById('lpLegendBalanceRange');
+      if (rangeEl) {
+        if (emails.length === 1 && hasBalanceData) {
+          const lo = (balMinMicros / 1_000_000).toFixed(2);
+          const hi = (balMaxMicros / 1_000_000).toFixed(2);
+          rangeEl.textContent = '($' + lo + ' ~ $' + hi + ')';
+        } else {
+          rangeEl.textContent = '';
+        }
       }
     }
 
@@ -500,18 +577,31 @@
       const resetStr = e.resetAt > 0 ? fmtTime(e.resetAt * 1000) : '—';
       const crossIcon = isCrossWindow ? '<span class="lp-delta-cross-icon" title="跨窗口对比">↗</span>' : '';
 
+      // 余额显示（单位：微美元 → 美元）+ 金额变化
+      const balVal = typeof e.balance === 'number' ? e.balance : 0;
+      const bDeltaVal = typeof e.bDelta === 'number' ? e.bDelta : 0;
+      const bDeltaStr = Math.abs(bDeltaVal) >= BALANCE_DELTA_MIN_MICROS
+        ? '<span class="lp-balance-delta ' + (bDeltaVal < 0 ? 'lp-c-red' : 'lp-c-green') + '">'
+            + fmtBalanceDelta(bDeltaVal)
+          + '</span>'
+        : '';
+      const balStr = balVal > 0
+        ? '<span class="lp-balance">$' + (balVal / 1000000).toFixed(2) + '</span>' + bDeltaStr
+        : '—';
+
       html += '<tr>'
         + '<td>' + fmtTime(e.ts) + '</td>'
         + '<td class="lp-email-cell" title="' + esc(maskEmail(e.email)) + '">' + maskEmailShort(e.email) + '</td>'
         + '<td class="' + dCls + '"><div class="lp-pct-cell"><div class="lp-mini-bar"><div class="lp-mini-fill' + (e.daily <= 10 ? ' lp-fill-danger' : e.daily <= 30 ? ' lp-fill-warn' : ' lp-fill-ok') + '" style="width:' + Math.max(1, e.daily) + '%"></div></div>' + e.daily + '%</div></td>'
         + '<td class="' + wCls + '"><div class="lp-pct-cell"><div class="lp-mini-bar"><div class="lp-mini-fill' + (e.weekly <= 10 ? ' lp-fill-danger' : e.weekly <= 30 ? ' lp-fill-warn' : ' lp-fill-ok') + '" style="width:' + Math.max(1, e.weekly) + '%"></div></div>' + e.weekly + '%</div></td>'
+        + '<td>' + balStr + '</td>'
         + '<td class="' + ddCls + '"' + crossTitle + '>' + ddStr + crossIcon + '</td>'
         + '<td class="' + wdCls + '"' + crossTitle + '>' + wdStr + '</td>'
         + '<td>' + resetStr + '</td>'
         + '<td>' + fmtCountdown(e.resetAt) + '</td>'
         + '</tr>';
     }
-    tbody.innerHTML = html || '<tr><td colspan="8" class="lp-empty">暂无数据</td></tr>';
+    tbody.innerHTML = html || '<tr><td colspan="9" class="lp-empty">暂无数据</td></tr>';
 
     // 分页
     const pag = document.getElementById('lpQuotaPagination');

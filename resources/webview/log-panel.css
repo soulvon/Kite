@@ -258,6 +258,15 @@ body {
 }
 .lp-line-warn { border-color: rgba(255,200,50,0.5); }
 .lp-line-danger { border-color: rgba(255,80,80,0.5); }
+.lp-line-balance {
+  border-top-style: solid;
+  border-color: #f59e0b;
+}
+.lp-legend-balance-range {
+  margin-left: 4px;
+  font-size: 9px;
+  opacity: 0.75;
+}
 
 /* ─── Section Header ─── */
 .lp-section-header {
@@ -367,6 +376,13 @@ body {
 .lp-c-red { color: #f14c4c; font-weight: 600; }
 .lp-c-yellow { color: #e5a445; }
 .lp-c-green { color: #3fb950; }
+.lp-balance { color: #f59e0b; font-weight: 600; }
+.lp-balance-delta {
+  margin-left: 4px;
+  font-size: 0.85em;
+  font-weight: 500;
+  opacity: 0.85;
+}
 
 /* 跨窗口 delta（相对于时间范围外的记录算出，视觉弱化）*/
 .lp-delta-dim {

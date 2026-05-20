@@ -1,0 +1,17 @@
+[
+  {
+    "github_user": "your_github_username_1",
+    "github_pass": "your_github_password_1"
+  },
+  {
+    "github_user": "your_github_username_2", 
+    "github_pass": "your_github_password_2"
+  },
+  {
+    "email": "your_email@example.com",
+    "password": "your_devin_password"
+  },
+  {
+    "cookie": "session=xxx; other_cookie=yyy"
+  }
+]

@@ -273,6 +273,7 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
       <div class="lp-chart-legend">
         <span class="lp-legend"><span class="lp-legend-dot" style="background:#5b9aff"></span>日配额</span>
         <span class="lp-legend"><span class="lp-legend-dot" style="background:#ff9a5b"></span>周配额</span>
+        <span class="lp-legend" id="lpLegendBalance" style="display:none" title="付费余额随时间变化（右 Y 轴：美元）"><span class="lp-legend-line lp-line-balance"></span>余额 <span class="lp-legend-balance-range" id="lpLegendBalanceRange"></span></span>
         <span class="lp-legend" title="剩余 30% 警戒线"><span class="lp-legend-line lp-line-warn"></span>30% 警戒</span>
         <span class="lp-legend" title="剩余 10% 危险线"><span class="lp-legend-line lp-line-danger"></span>10% 危险</span>
       </div>
@@ -288,6 +289,7 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
           <th>账号</th>
           <th>日剩余</th>
           <th>周剩余</th>
+          <th title="付费余额（overageBalanceMicros）">余额</th>
           <th title="百分点变化（与该账号上一次记录相比）">日变化 <span class="lp-th-unit">pt</span></th>
           <th title="百分点变化（与该账号上一次记录相比）">周变化 <span class="lp-th-unit">pt</span></th>
           <th>重置时间</th>

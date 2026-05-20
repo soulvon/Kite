@@ -422,7 +422,7 @@ export class AutoSwitcher implements vscode.Disposable {
       this._didUpdate.fire();
       // 记录用量统计（含 resetAt 用于配额变动历史）
       if (snapshot) {
-        this._tracker.recordUsage(acct.email, snapshot.dailyRemainingPercent, snapshot.weeklyRemainingPercent, snapshot.dailyResetAtUnix, snapshot.weeklyResetAtUnix);
+        this._tracker.recordUsage(acct.email, snapshot.dailyRemainingPercent, snapshot.weeklyRemainingPercent, snapshot.dailyResetAtUnix, snapshot.weeklyResetAtUnix, snapshot.overageBalanceMicros);
       }
       this._tracker.recordRefresh();
     } finally {
@@ -498,9 +498,12 @@ export class AutoSwitcher implements vscode.Disposable {
       const minPct = Math.min(dPct, wPct);
       const minQ = s.minQuota ?? 10;
 
+      // 余额号：有付费余额时，配额耗尽仍视为可用
+      const hasOverageBalance = (snap.overageBalanceMicros || 0) > 0;
+
       // 硬约束：若任一维度低于 minQuota，视为当前号不可用，强制触发切号
-      // 这避免了 scoreMode='daily' 时日限充足但周限耗尽却不切号的陷阱
-      const hardExhausted = minPct <= minQ;
+      // 但如果有付费余额，则不视为耗尽（继续用余额）
+      const hardExhausted = minPct <= minQ && !hasOverageBalance;
 
       if (!hardExhausted && curScore > s.threshold) {
         // 当前号额度充足，无需切换
@@ -524,6 +527,8 @@ export class AutoSwitcher implements vscode.Disposable {
       } else {
         reason = `周配额 ${Math.round(wPct)}%`;
       }
+      // hardExhausted 必然意味着无余额（有余额时不会进此分支），日志标注便于用户理解
+      if (hardExhausted) reason += '（无余额）';
 
       // ── 惰性验证策略：按缓存分数排序候选，逐个验证后切号 ──
       // hardExhausted 时放宽阈值（当前号某个维度已耗尽，候选只需比 0 好即可）
@@ -565,8 +570,10 @@ export class AutoSwitcher implements vscode.Disposable {
 
         const vd = clamp(freshEntry.snapshot.dailyRemainingPercent);
         const vw = clamp(freshEntry.snapshot.weeklyRemainingPercent);
-        if (vd <= 1 || vw <= 1 || Math.min(vd, vw) <= minQ) {
-          console.log(`[autoSwitch][verify] #${i + 1} ${cand.email} 验证失败: d=${Math.round(vd)}% w=${Math.round(vw)}% (耗尽)`);
+        const vHasBalance = (freshEntry.snapshot.overageBalanceMicros || 0) > 0;
+        // 有余额的号即使配额低也视为可用
+        if ((vd <= 1 || vw <= 1 || Math.min(vd, vw) <= minQ) && !vHasBalance) {
+          console.log(`[autoSwitch][verify] #${i + 1} ${cand.email} 验证失败: d=${Math.round(vd)}% w=${Math.round(vw)}% (耗尽且无余额)`);
           continue;
         }
         const vScore = calcScore(vd, vw, s.scoreMode);
@@ -739,7 +746,7 @@ export class AutoSwitcher implements vscode.Disposable {
     const minQ = s.minQuota ?? 10;
     const prefUsed = s.preferUsedThreshold ?? 50;
 
-    interface Cand { email: string; score: number; }
+    interface Cand { email: string; score: number; hasBalance: boolean; }
     const candidates: Cand[] = [];
 
     // 读取账号列表，用于检查 disabled 状态和标签
@@ -785,17 +792,21 @@ export class AutoSwitcher implements vscode.Disposable {
 
       const dPct = clamp(entry.snapshot.dailyRemainingPercent);
       const wPct = clamp(entry.snapshot.weeklyRemainingPercent);
+      const candHasBalance = (entry.snapshot.overageBalanceMicros || 0) > 0;
 
       // 硬约束 1：任一维度 ≤1% 视为耗尽，绝对不选（不受 minQ 配置影响）
       // 典型场景：周 0% 日 100% 的账号实际不可用
-      if (dPct <= 1 || wPct <= 1) { rejectedDueToMinQ++; continue; }
+      // 但有付费余额的号即使配额耗尽也视为可用
+      if ((dPct <= 1 || wPct <= 1) && !candHasBalance) { rejectedDueToMinQ++; continue; }
 
       // 硬约束 2：两个维度取 min，低于 minQ 配置值也不选
+      // 但有付费余额的号例外
       const minViable = Math.min(dPct, wPct);
-      if (minViable <= minQ) { rejectedDueToMinQ++; continue; }
+      if (minViable <= minQ && !candHasBalance) { rejectedDueToMinQ++; continue; }
 
       const score = calcScore(dPct, wPct, mode);
-      if (score > effectiveThreshold) candidates.push({ email, score });
+      // 有余额的号即使 score 低于阈值也纳入候选（配额耗尽但余额可用）
+      if (score > effectiveThreshold || candHasBalance) candidates.push({ email, score, hasBalance: candHasBalance });
       else rejectedDueToThreshold++;
     }
 
@@ -804,22 +815,32 @@ export class AutoSwitcher implements vscode.Disposable {
       return [];
     }
 
+    // 余额号始终下沉到最后：用户付费后通常期望"先用完免费配额，再消耗付费余额"
+    // 余额号 score≈0% 在 highestFirst 下会自然垫底；但 lowestNonZero 会优先选 score 低的，
+    // 余额号本质上是"配额=0 但实际可用"，不应混入 used 组（否则永远先消耗付费余额）
+    const freeQuotaCands = candidates.filter(c => !c.hasBalance);
+    const balanceCands = candidates.filter(c => c.hasBalance);
+
     // 按策略排序
     if (strategy === 'lowestNonZero') {
-      // 分两组：已用号（score ≤ prefUsed）和满额号（score > prefUsed）
-      const used = candidates.filter(c => c.score <= prefUsed);
-      const fresh = candidates.filter(c => c.score > prefUsed);
-      // 优先选已用号中额度最低的（消耗完再换新号），然后是满额号
+      // 分两组：已用号（score ≤ prefUsed）和满额号（score > prefUsed）—— 仅在非余额号内部分组
+      const used = freeQuotaCands.filter(c => c.score <= prefUsed);
+      const fresh = freeQuotaCands.filter(c => c.score > prefUsed);
+      // 优先选已用号中额度最低的（消耗完再换新号），然后是满额号，最后才是余额号
       used.sort((a, b) => a.score - b.score);
       fresh.sort((a, b) => a.score - b.score);
-      const result = [...used, ...fresh];
-      console.log(`[autoSwitch] findAllCandidates: strategy=lowestNonZero, ${result.length} candidates, top3: ${result.slice(0, 3).map(c => `${c.email.substring(0, 15)}..=${Math.round(c.score)}%`).join(', ')}`);
+      // 余额号之间按 score 升序（已耗尽的余额号优先于尚有少量配额的余额号，反正都已付费）
+      balanceCands.sort((a, b) => a.score - b.score);
+      const result = [...used, ...fresh, ...balanceCands];
+      console.log(`[autoSwitch] findAllCandidates: strategy=lowestNonZero, ${result.length} candidates (free=${freeQuotaCands.length} balance=${balanceCands.length}), top3: ${result.slice(0, 3).map(c => `${c.email.substring(0, 15)}..=${Math.round(c.score)}%${c.hasBalance ? '💰' : ''}`).join(', ')}`);
       return result;
     } else {
-      // highestFirst：选额度最高的
-      candidates.sort((a, b) => b.score - a.score);
-      console.log(`[autoSwitch] findAllCandidates: strategy=highestFirst, ${candidates.length} candidates, top3: ${candidates.slice(0, 3).map(c => `${c.email.substring(0, 15)}..=${Math.round(c.score)}%`).join(', ')}`);
-      return candidates;
+      // highestFirst：选额度最高的；余额号始终垫底
+      freeQuotaCands.sort((a, b) => b.score - a.score);
+      balanceCands.sort((a, b) => b.score - a.score);
+      const result = [...freeQuotaCands, ...balanceCands];
+      console.log(`[autoSwitch] findAllCandidates: strategy=highestFirst, ${result.length} candidates (free=${freeQuotaCands.length} balance=${balanceCands.length}), top3: ${result.slice(0, 3).map(c => `${c.email.substring(0, 15)}..=${Math.round(c.score)}%${c.hasBalance ? '💰' : ''}`).join(', ')}`);
+      return result;
     }
   }
 

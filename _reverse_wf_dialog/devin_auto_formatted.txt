@@ -1,0 +1,349 @@
+start@ 253345
+DevinAutomationService'](),this['patchService']=new _0x5bf025['WindsurfPatchService'](_0x20d886),this['machineIdManager']=new _0x5bf025['MachineIdManager'](_0x20d886,this['patchService']),this['autoLoginService']=new _0x5bf025['WindsurfAutoLoginService'](_0x20d886,this['patchService']),this['licenseService']=new _0x10e3f3['LicenseService'](_0x20d886,_0x36259e),this['accountsChangeDisposable']=this['accountManager']['onDidChange'](()=>{
+this['scheduleAccountsListRefresh']();
+
+}
+),this['extensionContext']['subscriptions']['push'](this['accountsChangeDisposable']));
+const _0xb67036=_0xe61eac['workspace']['getConfiguration']('wfDialog');
+this['freeAccountMonitorEnabled']=_0xb67036['get']('freeAccountMonitorEnabled',!0x1),this['freeAutoSwitchSilent']=_0xb67036['get']('freeAutoSwitchSilent',!0x1),this['activeAccountBalanceDisplayEnabled']=_0xb67036['get']('activeAccountBalanceDisplayEnabled',!0x0),this['activeAccountBalanceRefreshIntervalSeconds']=_0xb67036['get']('activeAccountBalanceRefreshIntervalSeconds',0xa);
+
+}
+['handleActiveAccountBalanceConfigChanged'](){
+this['startActiveAccountBalanceMonitor']();
+
+}
+['handleFreeAccountMonitorConfigChanged'](){
+const _0x1d3c85=_0xe61eac['workspace']['getConfiguration']('wfDialog');
+this['freeAccountMonitorEnabled']=_0x1d3c85['get']('freeAccountMonitorEnabled',!0x1),this['freeAccountMonitorEnabled']?this['ensureProtectedRuntimes']('閰嶇疆鍙樻洿'):this['stopFreeAccountMonitor'](),this['sendFreeMonitorStatus']();
+
+}
+['handleFreeSilentConfigChanged'](){
+const _0x3dc1ea=_0xe61eac['workspace']['getConfiguration']('wfDialog');
+this['freeAutoSwitchSilent']=_0x3dc1ea['get']('freeAutoSwitchSilent',!0x1),this['_view']?.['webview']['postMessage']({
+'type':'freeSilentStatus','enabled':this['freeAutoSwitchSilent']
+}
+);
+
+}
+async['handleRemoveWebviewPatchScheme'](_0x4a4f2d){
+if(!this['patchService'])return void _0xe61eac['window']['showErrorMessage']('琛ヤ竵鏈嶅姟鏈垵濮嬪寲');
+const _0x4acbb5={
+'E':'鏂规E锛歐ebview鏋氫妇淇敼\x20(MAX_INVOCATIONS=999999)','F':'鏂规F锛歐ebview寮圭獥绂佺敤\x20(useMemo鈫抐alse)','G':'鏂规G锛氶€氱煡绱㈠紩鎷︽埅\x20(indicesToShow鈫抂])'
+}
+;
+await _0xe61eac['window']['withProgress']({
+'location':_0xe61eac['ProgressLocation']['Notification'],'title':'姝ｅ湪绉婚櫎\x20'+_0x4acbb5[_0x4a4f2d]+'...','cancellable':!0x1
+}
+,async()=>{
+const _0x595940=await this['patchService']['removeWebviewPatchScheme'](_0x4a4f2d);
+_0x595940['success']?_0x595940['error']?_0xe61eac['window']['showInformationMessage']('鉁匼x20'+_0x595940['error']):_0x595940['needsRestart']?'绔嬪嵆閲嶅惎'===await _0xe61eac['window']['showWarningMessage']('鉁匼x20'+_0x4acbb5[_0x4a4f2d]+'\x20宸茬Щ闄わ紒\x0a闇€瑕侀噸鍚痋x20Windsurf\x20鐢熸晥銆?,'绔嬪嵆閲嶅惎','绋嶅悗閲嶅惎')&&await _0xe61eac['commands']['executeCommand']('workbench.action.reloadWindow'):_0xe61eac['window']['showInformationMessage']('鉁匼x20'+_0x4acbb5[_0x4a4f2d]+'\x20宸茬Щ闄?):_0xe61eac['window']['showErrorMessage']('鉂孿x20绉婚櫎澶辫触:\x20'+_0x595940['error']),this['sendAutoContinuePatchStatus']();
+
+}
+);
+
+}
+async['handleRemoveAutoContinuePatchScheme'](_0x45f142){
+if(!this['patchService'])return void _0xe61eac['window']['showErrorMessage']('琛ヤ竵鏈嶅姟鏈垵濮嬪寲');
+const _0x4e668b={
+'A':'鏂规A锛氭敞鍏ユ瀬澶у€糪x20(maxGeneratorInvocations=999999)','B':'鏂规B锛氫慨鏀瑰垵濮嬪€糪x20(proceededWithAutoContinue=true)','C':'鏂规C锛氫慨鏀规灇涓惧€糪x20(MAX_INVOCATIONS=999999)','D':'鏂规D锛氭嫤鎴搷搴擻x20(terminationReason=3鈫?)','H':'鏂规H锛氳繃婊ength\x20(finishReasons杩囨护)','I':'鏂规I锛歋topReason鏋氫妇\x20(MAX_TOKENS鈫?99999999)','J':'鏂规J锛欻2杩囨护澶氭潵婧怽x20(length/max_tokens/MAX_TOKENS)'
+}
+;
+await _0xe61eac['window']['withProgress']({
+'location':_0xe61eac['ProgressLocation']['Notification'],'title':'姝ｅ湪绉婚櫎\x20'+_0x4e668b[_0x45f142]+'...','cancellable':!0x1
+}
+,async()=>{
+const _0x14da7f='I'===_0x45f142?await this['patchService']['removeSchemeIFromChatClient']():await this['patchService']['removeAutoContinuePatchScheme'](_0x45f142);
+_0x14da7f['success']?_0x14da7f['error']?_0xe61eac['window']['showInformationMessage']('鈩癸笍\x20'+_0x14da7f['error']):_0x14da7f['needsRestart']?'绔嬪嵆閲嶅惎'===await _0xe61eac['window']['showWarningMessage']('鉁匼x20'+_0x4e668b[_0x45f142]+'\x20宸茬Щ闄わ紒\x0a闇€瑕侀噸鍚痋x20Windsurf\x20鐢熸晥銆?,'绔嬪嵆閲嶅惎','绋嶅悗閲嶅惎')&&await _0xe61eac['commands']['executeCommand']('workbench.action.reloadWindow'):_0xe61eac['window']['showInformationMessage']('鉁匼x20'+_0x4e668b[_0x45f142]+'\x20宸茬Щ闄?):_0xe61eac['window']['showErrorMessage']('鉂孿x20绉婚櫎澶辫触:\x20'+_0x14da7f['error']),this['sendAutoContinuePatchStatus']();
+
+}
+);
+
+}
+async['handleSaveWindsurfBaseline'](){
+this['patchService']?await _0xe61eac['window']['withProgress']({
+'location':_0xe61eac['ProgressLocation']['Notification'],'title':'姝ｅ湪淇濆瓨\x20Windsurf\x20JS\x20淇濆簳...','cancellable':!0x1
+}
+,async()=>{
+const _0x1be9f9=await this['patchService']['saveWindsurfBaseline']();
+_0x1be9f9['success']?_0x1be9f9['error']?_0xe61eac['window']['showInformationMessage']('鉁匼x20'+_0x1be9f9['error']):_0xe61eac['window']['showInformationMessage']('鉁匼x20宸蹭繚瀛樹繚搴?):_0xe61eac['window']['showErrorMessage']('鉂孿x20淇濆瓨澶辫触:\x20'+_0x1be9f9['error']);
+
+}
+):_0xe61eac['window']['showErrorMessage']('琛ヤ竵鏈嶅姟鏈垵濮嬪寲');
+
+}
+async['handleRestoreWindsurfBaseline'](){
+this['patchService']?await _0xe61eac['window']['withProgress']({
+'location':_0xe61eac['ProgressLocation']['Notification'],'title':'姝ｅ湪浠庝繚搴曟仮澶峔x20Windsurf\x20JS...','cancellable':!0x1
+}
+,async()=>{
+const _0x4c1d58=await this['patchService']['restoreWindsurfBaseline']();
+_0x4c1d58['success']?_0x4c1d58['error']?'绔嬪嵆閲嶅惎'===await _0xe61eac['window']['showWarningMessage']('鉁匼x20'+_0x4c1d58['error']+'\x0a闇€瑕侀噸鍚痋x20Windsurf\x20鐢熸晥銆?,'绔嬪嵆閲嶅惎','绋嶅悗閲嶅惎')&&await _0xe61eac['commands']['executeCommand']('workbench.action.reloadWindow'):_0xe61eac['window']['showInformationMessage']('鉁匼x20宸蹭粠淇濆簳鎭㈠'):_0xe61eac['window']['showErrorMessage']('鉂孿x20鎭㈠澶辫触:\x20'+_0x4c1d58['error']),this['sendAutoContinuePatchStatus']();
+
+}
+):_0xe61eac['window']['showErrorMessage']('琛ヤ竵鏈嶅姟鏈垵濮嬪寲');
+
+}
+async['sendQuotaAutoContinuePatchStatus'](){
+if(!this['patchService'])return void this['_view']?.['webview']['postMessage']({
+'type':'quotaAutoContinuePatchStatus','applied':!0x1,'error':'琛ヤ竵鏈嶅姟鏈垵濮嬪寲'
+}
+);
+const _0x3dd65e=await this['patchService']['isQuotaAutoContinuePatched']();
+this['_view']?.['webview']['postMessage']({
+'type':'quotaAutoContinuePatchStatus','applied':_0x3dd65e
+}
+);
+
+}
+async['handleApplyQuotaAutoContinuePatch'](){
+this['patchService']?await _0xe61eac['window']['withProgress']({
+'location':_0xe61eac['ProgressLocation']['Notification'],'title':'姝ｅ湪鍚敤鑰楀敖缁窇...','cancellable':!0x1
+}
+,async()=>{
+const _0x3f89a1=await this['patchService']['applyQuotaAutoContinuePatch']();
+_0x3f89a1['success']?_0x3f89a1['error']?_0xe61eac['window']['showInformationMessage']('鉁匼x20'+_0x3f89a1['error']):_0x3f89a1['needsRestart']?'绔嬪嵆閲嶅惎'===await _0xe61eac['window']['showWarningMessage']('鉁匼x20鑰楀敖缁窇宸插惎鐢紒闇€瑕侀噸鍚痋x20Windsurf\x20鐢熸晥銆?,'绔嬪嵆閲嶅惎','绋嶅悗閲嶅惎')&&await _0xe61eac['commands']['executeCommand']('workbench.action.reloadWindow'):_0xe61eac['window']['showInformationMessage']('鉁匼x20鑰楀敖缁窇宸插惎鐢?):_0xe61eac['window']['showErrorMessage']('鉂孿x20鍚敤澶辫触:\x20'+_0x3f89a1['error']),this['sendQuotaAutoContinuePatchStatus']();
+
+}
+):_0xe61eac['window']['showErrorMessage']('琛ヤ竵鏈嶅姟鏈垵濮嬪寲');
+
+}
+async['handleRemoveQuotaAutoContinuePatch'](){
+this['patchService']?await _0xe61eac['window']['withProgress']({
+'location':_0xe61eac['ProgressLocation']['Notification'],'title':'姝ｅ湪鍏抽棴鑰楀敖缁窇...','cancellable':!0x1
+}
+,async()=>{
+const _0x12b823=await this['patchService']['removeQuotaAutoContinuePatch']();
+_0x12b823['success']?_0x12b823['error']?_0xe61eac['window']['showInformationMessage']('鈩癸笍\x20'+_0x12b823['error']):_0x12b823['needsRestart']?'绔嬪嵆閲嶅惎'===await _0xe61eac['window']['showWarningMessage']('鉁匼x20鑰楀敖缁窇宸插叧闂紒闇€瑕侀噸鍚痋x20Windsurf\x20鐢熸晥銆?,'绔嬪嵆閲嶅惎','绋嶅悗閲嶅惎')&&await _0xe61eac['commands']['executeCommand']('workbench.action.reloadWindow'):_0xe61eac['window']['showInformationMessage']('鉁匼x20鑰楀敖缁窇宸插叧闂?):_0xe61eac['window']['showErrorMessage']('鉂孿x20鍏抽棴澶辫触:\x20'+_0x12b823['error']),this['sendQuotaAutoContinuePatchStatus']();
+
+}
+):_0xe61eac['window']['showErrorMessage']('琛ヤ竵鏈嶅姟鏈垵濮嬪寲');
+
+}
+['handleFreeThresholdConfigChanged'](){
+this['sendFreeMonitorStatus']();
+
+}
+['startBackgroundRuntime'](){
+this['backgroundRuntimeStarted']?(0x0,_0x46e08f['log'])('[鍒囧彿鍣╙\x20鍚庡彴杩愯鏃跺凡鍚姩锛岃烦杩囬噸澶嶅惎鍔?):(this['backgroundRuntimeStarted']=!0x0,(0x0,_0x46e08f['log'])('[鍒囧彿鍣╙\x20鍚庡彴杩愯鏃跺紑濮嬪惎鍔細鑷姩鍒囨崲='+(this['freeAccountMonitorEnabled']?'寮€':'鍏?)+'锛屽綋鍓嶈处鍙蜂綑棰濆埛鏂?'+(this['activeAccountBalanceDisplayEnabled']?'寮€':'鍏?)+'锛屽埛鏂伴棿闅?'+this['activeAccountBalanceRefreshIntervalSeconds']+'绉?),this['startLicenseCloudSync'](),this['sendAccountsList'](),this['acquireLockForActiveAccount'](),this['isCloneInstance']()&&((0x0,_0x46e08f['log'])('[鍒囧彿鍣╙\x20鍚庡彴杩愯鏃舵娴嬪埌鍒嗚韩瀹炰緥锛屽惎鐢ㄨ处鍙烽攣瑙勯伩骞剁户缁惎鍔ㄤ綑棰濈洃鎺?),this['_view']?.['webview']['postMessage']({
+'type':'cloneMode','enabled':!0x0
+}
+),this['backgroundStartupTimers']['push'](setTimeout(()=>this['cloneAutoSwitch'](),0x5dc))),this['startSessionChangeWatcher'](),this['backgroundStartupTimers']['push'](setTimeout(async()=>{
+await this['syncActiveAccountWithWindsurf'](),this['freeAccountMonitorEnabled']&&await this['checkFreeAccountsBalance']('鍚姩鍒濆鍖?);
+
+}
+,0x1f4)),this['backgroundStartupTimers']['push'](setTimeout(()=>{
+this['startActiveAccountBalanceMonitor']();
+
+}
+,0x3e8)),this['backgroundStartupTimers']['push'](setTimeout(()=>{
+this['bulkRefreshAllAccounts'](),this['ensureProtectedRuntimes']('鍚姩鍒濆鍖?);
+
+}
+,0x7d0)),this['backgroundStartupTimers']['push'](setTimeout(()=>{
+this['ensureProtectedRuntimes']('鍚姩琛ュ伩');
+
+}
+,0x1388)),this['backgroundRuntimeHealthTimer']=setInterval(()=>{
+this['ensureProtectedRuntimes']('鍚庡彴鑷');
+
+}
+,0x2710),(0x0,_0x46e08f['log'])('[鍒囧彿鍣╙\x20鍚庡彴杩愯鏃跺畾鏃朵换鍔″凡娉ㄥ唽'));
+
+}
+['dispose'](){
+this['stopProtectedRuntimes']();
+for(const _0x52e090 of this['backgroundStartupTimers'])clearTimeout(_0x52e090);
+if(this['backgroundStartupTimers']=[],this['backgroundRuntimeHealthTimer']&&(clearInterval(this['backgroundRuntimeHealthTimer']),this['backgroundRuntimeHealthTimer']=null),this['accountsSyncDebounceTimer']&&(clearTimeout(this['accountsSyncDebounceTimer']),this['accountsSyncDebounceTimer']=null),this['accountsChangeDisposable']){
+try{
+this['accountsChangeDisposable']['dispose']();
+
+}
+catch{
+
+}
+this['accountsChangeDisposable']=null;
+
+}
+if(this['sessionChangeDisposable']){
+try{
+this['sessionChangeDisposable']['dispose']();
+
+}
+catch{
+
+}
+this['sessionChangeDisposable']=null;
+
+}
+this['releaseInstanceLock']();
+
+}
+['isCloneInstance'](){
+return!!this['instanceManager']&&!this['instanceManager']['isMainInstance']();
+
+}
+['startLicenseCloudSync'](){
+this['licenseService']&&!this['licenseCloudSyncStarted']&&(this['licenseCloudSyncStarted']=!0x0,this['licenseService']['syncFromCloud'](()=>{
+this['sendLicenseStatus'](),this['backgroundRuntimeStarted']&&this['ensureLicenseAccess'](!0x1)&&(this['syncActiveAccountWithWindsurf'](),this['bulkRefreshAllAccounts'](),this['ensureProtectedRuntimes']('鍗″瘑鍚屾'));
+
+}
+));
+
+}
+['ensureProtectedRuntimes'](_0x55eb5d){
+if(!this['backgroundRuntimeStarted'])return;
+const _0x598a3c=_0xe61eac['workspace']['getConfiguration']('wfDialog');
+this['freeAccountMonitorEnabled']=_0x598a3c['get']('freeAccountMonitorEnabled',!0x1),this['activeAccountBalanceDisplayEnabled']=_0x598a3c['get']('activeAccountBalanceDisplayEnabled',!0x0),this['activeAccountBalanceRefreshIntervalSeconds']=_0x598a3c['get']('activeAccountBalanceRefreshIntervalSeconds',0xa),this['ensureLicenseAccess'](!0x1)&&(!this['activeAccountBalanceDisplayEnabled']||this['activeAccountBalanceMonitorTimer']||this['activeAccountBalanceCheckRunning']||((0x0,_0x46e08f['log'])('[ViewProvider]\x20'+_0x55eb5d+':\x20褰撳墠璐﹀彿浣欓鐩戞帶鏈繍琛岋紝鑷姩鍚姩'),this['startActiveAccountBalanceMonitor']()),this['bulkRefreshTimer']||((0x0,_0x46e08f['log'])('[ViewProvider]\x20'+_0x55eb5d+':\x20鍏ㄩ噺浣欓鍒锋柊瀹氭椂鍣ㄦ湭杩愯锛岃嚜鍔ㄥ惎鍔?),this['startBulkRefreshTimer']()),this['freeAccountMonitorEnabled']?this['freeAccountMonitorTimer']||this['freeAccountBalanceCheckRunning']||((0x0,_0x46e08f['log'])('[ViewProvider]\x20'+_0x55eb5d+':\x20閰嶉鑰楀敖鑷姩鍒囨崲宸插紑鍚絾瀹氭椂鍣ㄦ湭杩愯锛岃嚜鍔ㄥ惎鍔?),this['startFreeAccountMonitor']()):this['freeAccountMonitorTimer']&&this['stopFreeAccountMonitor'](),this['sendFreeMonitorStatus']());
+
+}
+['startSessionChangeWatcher'](){
+this['sessionChangeDisposable']||(this['sessionChangeDisposable']=_0xe61eac['authentication']['onDidChangeSessions'](async _0x175d98=>{
+'codeium'===_0x175d98['provider']['id']&&((0x0,_0x46e08f['log'])('[ViewProvider]\x20妫€娴嬪埌\x20codeium\x20浼氳瘽鍙樻洿锛岄噸鏂板悓姝ユ椿璺冭处鍙?..'),await this['syncActiveAccountWithWindsurf'](),await this['checkActiveAccountBalance']('浼氳瘽鍙樻洿'));
+
+}
+),this['extensionContext']['subscriptions']['push'](this['sessionChangeDisposable']));
+
+}
+['isSubmitting']=!0x1;
+['postMessageToWebview'](_0xef0637){
+this['_view']&&this['_view']['webview']['postMessage'](_0xef0637);
+
+}
+async['executeCommand'](_0x15c098,_0x294dbb){
+await this['handleMessage']({
+'type':_0x15c098,'data':_0x294dbb
+}
+);
+
+}
+['ensureLicenseAccess'](_0x58d28c=!0x0){
+if(!this['licenseService'])return!0x0;
+const _0x2d09a1=this['licenseService']['getStatus'](!0x0);
+return!!_0x2d09a1['valid']||(this['stopProtectedRuntimes'](),this['sendLicenseStatus'](),_0x58d28c&&_0xe61eac['window']['showWarningMessage'](_0x2d09a1['message']||'璇峰厛婵€娲诲崱瀵?),!0x1);
+
+}
+['stopProtectedRuntimes'](){
+this['stopFreeAccountMonitor'](),this['stopBulkRefreshTimer'](),this['stopActiveAccountBalanceMonitor']();
+
+}
+['maybeSuggestProxyConfig'](){
+if(_0xe61eac['workspace']['getConfiguration']('wfDialog')['get']('disableProxy',!0x1))return;
+if((0x0,_0x4ae50d['getSystemProxyUrl'])())return;
+const _0x45d7eb=Date['now']();
+_0x45d7eb-this['lastProxySuggestionAt']<0x7530||(this['lastProxySuggestionAt']=_0x45d7eb,(0x0,_0x46e08f['log'])('[ViewProvider]\x20鏈娴嬪埌鏄惧紡浠ｇ悊閰嶇疆锛岀户缁皾璇曟煡璇綑棰?),_0xe61eac['window']['showWarningMessage']('鏈娴嬪埌绯荤粺浠ｇ悊锛岃妫€鏌ヤ唬鐞嗚蒋浠舵槸鍚﹀凡寮€鍚€?));
+
+}
+['getCachedActiveAccount'](){
+if(!this['accountManager'])return null;
+const _0x13b40f=this['accountManager']['getActiveAccount']();
+return _0x13b40f?{
+'email':_0x13b40f['email'],'balance':_0x13b40f['balance'],'subscription':_0x13b40f['subscription'],'billingStrategy':_0x13b40f['billingStrategy'],'quotaUsage':_0x13b40f['quotaUsage'],'expiresAt':_0x13b40f['expiresAt']
+}
+:null;
+
+}
+['getAccountsForQuickPick'](){
+return this['accountManager']&&this['ensureLicenseAccess'](!0x1)?this['accountManager']['getAllAccounts']()['map'](_0x198ce8=>({
+'id':_0x198ce8['id'],'email':_0x198ce8['email'],'isActive':_0x198ce8['isActive'],'balance':_0x198ce8['balance'],'subscription':_0x198ce8['subscription'],'billingStrategy':_0x198ce8['billingStrategy'],'quotaUsage':_0x198ce8['quotaUsage']
+}
+)):[];
+
+}
+async['switchToNextAccount'](){
+if(!this['ensureLicenseAccess'](!0x0))return;
+if(!this['accountManager'])return void _0xe61eac['window']['showWarningMessage']('璐﹀彿鏈嶅姟鏈垵濮嬪寲');
+const _0x19376b=this['accountManager']['getAllAccounts']()['find'](_0x274007=>_0x274007['isActive']);
+if(!_0x19376b)return void _0xe61eac['window']['showWarningMessage']('娌℃湁娲昏穬璐﹀彿');
+const _0x52fb1b=(0x0,_0x32204b['getOtherLockedEmails'])(this['getInstanceId']()),_0x1fec71=await this['getVerifiedNextSwitchAccount'](_0x19376b,0x0,_0x52fb1b);
+_0x1fec71?await this['handleAccountAction']('switch',_0x1fec71['id']):_0xe61eac['window']['showWarningMessage']('娌℃湁鏇村鍙垏鎹㈢殑璐﹀彿');
+
+}
+['resolveWebviewView'](_0x252a9f,_0x4b4bd6,_0x3549e5){
+this['_view']=_0x252a9f,_0x252a9f['onDidDispose'](()=>{
+this['_view']===_0x252a9f&&(this['_view']=void 0x0);
+
+}
+),_0x252a9f['onDidChangeVisibility'](()=>{
+this['_view']?.['visible']&&this['accountsRefreshPending']&&(this['accountsRefreshPending']=!0x1,this['scheduleAccountsListRefresh']());
+
+}
+),_0x252a9f['webview']['options']={
+'enableScripts':!0x0,'localResourceRoots':[_0xe61eac['Uri']['joinPath'](this['extensionUri'],'media'),_0xe61eac['Uri']['joinPath'](this['extensionUri'],'webview')]
+}
+;
+const _0x1f0122=_0xe61eac['extensions']['getExtension']('wf-dialog.wf-dialog-mcp')?.['packageJSON']?.['version']||'?.?.?';
+_0x252a9f['webview']['html']=(0x0,_0x302e0c['getWebviewContent'])(_0x252a9f['webview'],this['extensionUri'],_0x1f0122),_0x252a9f['webview']['onDidReceiveMessage'](_0x2d9c4d=>{
+this['handleMessage'](_0x2d9c4d);
+
+}
+),this['sendAccountsList'](),this['sendLicenseStatus'](),this['_view']?.['webview']['postMessage']({
+'type':'activeAccountBalanceDisplayStatus','enabled':this['activeAccountBalanceDisplayEnabled']
+}
+),this['sendAutoSwitchSettings'](),this['sendQuotaAutoContinuePatchStatus'](),this['startBackgroundRuntime'](),this['ensureProtectedRuntimes']('闈㈡澘鍒濆鍖?);
+
+}
+['startActiveAccountBalanceMonitor'](){
+this['stopActiveAccountBalanceMonitor']();
+const _0x5bb8c7=_0xe61eac['workspace']['getConfiguration']('wfDialog');
+this['activeAccountBalanceDisplayEnabled']=_0x5bb8c7['get']('activeAccountBalanceDisplayEnabled',!0x0),this['activeAccountBalanceRefreshIntervalSeconds']=_0x5bb8c7['get']('activeAccountBalanceRefreshIntervalSeconds',0xa),this['_view']?.['webview']['postMessage']({
+'type':'activeAccountBalanceDisplayStatus','enabled':this['activeAccountBalanceDisplayEnabled']&&this['ensureLicenseAccess'](!0x1)
+}
+),this['activeAccountBalanceDisplayEnabled']&&this['ensureLicenseAccess'](!0x1)&&(this['checkActiveAccountBalance']('鍚姩鍒濆鍖?),this['scheduleNextActiveAccountBalanceCheck']());
+
+}
+['scheduleNextActiveAccountBalanceCheck'](){
+const _0xb037f4=_0xe61eac['workspace']['getConfiguration']('wfDialog')['get']('activeAccountBalanceRefreshIntervalSeconds',0xa),_0x511745=0x3e8*('number'==typeof _0xb037f4&&Number['isFinite'](_0xb037f4)&&_0xb037f4>0x0?_0xb037f4:0xa);
+this['activeAccountBalanceMonitorTimer']=setTimeout(async()=>{
+this['activeAccountBalanceMonitorTimer']=null,_0xe61eac['workspace']['getConfiguration']('wfDialog')['get']('activeAccountBalanceDisplayEnabled',!0x0)?(await this['checkActiveAccountBalance']('瀹氭椂鍣?),this['ensureLicenseAccess'](!0x1)&&(_0xe61eac['workspace']['getConfiguration']('wfDialog')['get']('activeAccountBalanceDisplayEnabled',!0x0)?this['scheduleNextActiveAccountBalanceCheck']():this['stopActiveAccountBalanceMonitor']())):this['stopActiveAccountBalanceMonitor']();
+
+}
+,_0x511745);
+
+}
+['stopActiveAccountBalanceMonitor'](){
+this['activeAccountBalanceMonitorTimer']&&(clearTimeout(this['activeAccountBalanceMonitorTimer']),this['activeAccountBalanceMonitorTimer']=null);
+
+}
+async['checkActiveAccountBalance'](_0x214299='unknown'){
+if(this['activeAccountBalanceCheckRunning'])(0x0,_0x46e08f['log'])('[ViewProvider]\x20娲昏穬璐﹀彿浣欓妫€鏌ユ鍦ㄨ繘琛屼腑锛岃烦杩嘰x20('+_0x214299+')');
+else{
+this['activeAccountBalanceCheckRunning']=!0x0;
+try{
+if(!this['accountManager']||!this['balanceChecker']||!this['ensureLicenseAccess'](!0x1))return;
+const _0x267157=_0xe61eac['workspace']['getConfiguration']('wfDialog')['get']('activeAccountBalanceDisplayEnabled',!0x0);
+if(_0x267157!==this['activeAccountBalanceDisplayEnabled']&&(this['activeAccountBalanceDisplayEnabled']=_0x267157,this['_view']?.['webview']['postMessage']({
+'type':'activeAccountBalanceDisplayStatus','enabled':this['activeAccountBalanceDisplayEnabled']&&this['ensureLicenseAccess'](!0x1)
+}
+)),!_0x267157)return;
+if(this['autoLoginService'])try{
+const _0x4cf543=await _0xe61eac['authentication']['getSession']('codeium',[],{
+'createIfNone':!0x1
+}
+);
+if(_0x4cf543?.['account']?.['label']){
+const _0x15da36=this['accountManager']['getActiveAccount']();
+_0x15da36&&_0x15da36['email']!==_0x4cf543['account']['label']&&((0x0,_0x46e08f['log'])('[ViewProvider]\x20妫€娴嬪埌澶栭儴鍒囧彿:\x20'+_0x15da36['email']+'\x20->\x20'+_0x4cf543['account']['label']),await this['syncActiveAccountWithWindsurf']());
+
+}
+
+}
+catch{
+
+}
+const _0x3393ee=this['accountManager']['getActiveAccount']();
+if(!_0x3393ee)return;
+const _0x53cb7a=await this['balanceChecker']['checkBalance'](_0x3393ee);
+if(!_0x53cb7a['success'])return;
+const _0xfbe6b0=_0x53cb7a['balance']||0x0;
+if(this['lastActiveBalance']=_0xfbe6b0,await this['accountManager']['updateBalance'](_0x3393ee['id'],_0xfbe6b0,_0x53cb7a['subscription'],_0x53cb7a['expiresAt'],_0x53cb7a['billingStrategy'],_0x53cb7a['quotaUsage']),this['_view']&&this['_view']['webview']['postMessage']({
+'type':'accountBalanceUpdate','accountId':_0x3393ee['id'],'balance':_0xfbe6b0,'subscription':_0x53cb7a['subscription'],'expiresAt':_0x53cb7a['expiresAt'],'billingStrategy':_0x53cb7a['billingStrategy'],'quotaUsage':_0x53cb7a['quotaUsage']
+}
+),this['sendAccountsList'](),this['freeAccountMonitorEnabled']){
+const _0x170e98='quota'===_0x53cb7a['billingStrategy']?(0x0,_0x5bf025['getQuotaEffectiveRemainingPercent'])(_0x53cb7a['quotaUsage']):0x64;
+await this['_performSwitchEvaluation'](_0x3393ee,_0x170e98,_0x53cb7a['quotaUsage']);
+
+}
+
+}
+catch(_0x2b33cc){
+(0x0,_0x46e08f['log'])('[ViewProvider]\x20娲昏穬璐﹀彿浣欓妫€鏌ュ紓甯竆x20('+_0x214

@@ -152,3 +152,60 @@ export async function post(url: string, body: any, headers: Record<string, strin
   }
   throw lastErr;
 }
+
+/**
+ * 通用 HTTP 请求（GET / POST / PUT / DELETE 等），带重试，复用直连 agent。
+ */
+function httpRequestOnce(method: string, url: string, body?: any, headers: Record<string, string> = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const hasBody = body !== undefined && body !== null;
+    const data = hasBody ? (typeof body === 'string' ? body : JSON.stringify(body)) : '';
+
+    const finalHeaders: Record<string, string> = { Accept: 'application/json', ...headers };
+    if (hasBody) {
+      if (!finalHeaders['Content-Type'] && !finalHeaders['content-type']) {
+        finalHeaders['Content-Type'] = 'application/json';
+      }
+      finalHeaders['Content-Length'] = String(Buffer.byteLength(data));
+    }
+
+    const options: https.RequestOptions = {
+      hostname: urlObj.hostname,
+      port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+      path: urlObj.pathname + urlObj.search,
+      method: method.toUpperCase(),
+      agent: directAgent,
+      timeout: timeoutMs,
+      headers: finalHeaders,
+    };
+
+    const req = https.request(options, (res) => {
+      let buf = '';
+      res.on('data', (chunk) => buf += chunk);
+      res.on('end', () => resolve({ status: res.statusCode || 0, body: buf }));
+    });
+
+    req.on('timeout', () => req.destroy(new Error('Request timeout')));
+    req.on('error', reject);
+    if (hasBody) req.write(data);
+    req.end();
+  });
+}
+
+export async function httpRequest(method: string, url: string, body?: any, headers: Record<string, string> = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<{ status: number; body: string }> {
+  let lastErr: any;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await httpRequestOnce(method, url, body, headers, timeoutMs);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < MAX_RETRIES && isRetryable(err)) {
+        await delay(RETRY_DELAY_MS * (attempt + 1));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}

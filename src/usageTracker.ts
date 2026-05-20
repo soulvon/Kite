@@ -16,6 +16,7 @@ export interface AccountStats {
   dailyUsedPct: number;
   weeklyUsedPct: number;
   lastCheckTs: number;
+  hasBalance?: boolean;  // 账号当前是否有付费余额（overageBalanceMicros > 0）
 }
 
 export interface QuotaHistoryEntry {
@@ -26,6 +27,8 @@ export interface QuotaHistoryEntry {
   dDelta: number;      // daily change (negative = consumed)
   wDelta: number;      // weekly change
   resetAt: number;     // earlier reset unix timestamp
+  balance?: number;    // overageBalanceMicros (付费余额，单位: 微美元)
+  bDelta?: number;     // balance change (micros, negative = 消耗付费余额)
 }
 
 export type DiagnosticEventSource = 'switch' | 'health';
@@ -62,7 +65,7 @@ export class UsageTracker {
   private _dirty = false;
   private _saveTimer: NodeJS.Timeout | null = null;
   private _quotaHistory: QuotaHistoryEntry[] = [];
-  private _lastQuotaMap: Map<string, { daily: number; weekly: number }> = new Map();
+  private _lastQuotaMap: Map<string, { daily: number; weekly: number; balance?: number }> = new Map();
   private _historyDirty = false;
   private _historySaveTimer: NodeJS.Timeout | null = null;
   private _historyListeners = new Set<() => void>();
@@ -76,11 +79,11 @@ export class UsageTracker {
     this._maybeResetDaily();
     this._quotaHistory = this._ctx.globalState.get<QuotaHistoryEntry[]>(HISTORY_KEY, []);
     this._diagnosticHistory = this._ctx.globalState.get<DiagnosticEvent[]>(DIAGNOSTIC_KEY, []);
-    // 初始化 _lastQuotaMap（从历史末尾恢复每个账号的最后已知配额）
+    // 初始化 _lastQuotaMap（从历史末尾恢复每个账号的最后已知配额 + 余额）
     for (let i = this._quotaHistory.length - 1; i >= 0; i--) {
       const e = this._quotaHistory[i];
       if (!this._lastQuotaMap.has(e.email)) {
-        this._lastQuotaMap.set(e.email, { daily: e.daily, weekly: e.weekly });
+        this._lastQuotaMap.set(e.email, { daily: e.daily, weekly: e.weekly, balance: e.balance });
       }
     }
   }
@@ -162,20 +165,29 @@ export class UsageTracker {
     this._debounceSave();
   }
 
-  recordUsage(email: string, dailyRemaining: number, weeklyRemaining: number, dailyResetAt?: number, weeklyResetAt?: number): void {
+  recordUsage(email: string, dailyRemaining: number, weeklyRemaining: number, dailyResetAt?: number, weeklyResetAt?: number, balance?: number): void {
     this._maybeResetDaily();
     const acct = this._ensureAccount(email);
     acct.dailyUsedPct = Math.max(0, 100 - dailyRemaining);
     acct.weeklyUsedPct = Math.max(0, 100 - weeklyRemaining);
     acct.lastCheckTs = Date.now();
+    acct.hasBalance = (balance || 0) > 0;
 
     // 配额变动历史：仅在数值变化时记录（避免轮询产生大量重复条目）
     const daily = Math.round(dailyRemaining);
     const weekly = Math.round(weeklyRemaining);
     const last = this._lastQuotaMap.get(email);
-    if (!last || last.daily !== daily || last.weekly !== weekly) {
+    // 余额变化检测（兼容老条目没有 balance 字段：仅当上次与本次都存在 balance 才算变化）
+    const balanceChanged = !!last
+      && typeof last.balance === 'number'
+      && typeof balance === 'number'
+      && last.balance !== balance;
+    if (!last || last.daily !== daily || last.weekly !== weekly || balanceChanged) {
       const dDelta = last ? daily - last.daily : 0;
       const wDelta = last ? weekly - last.weekly : 0;
+      const bDelta = (last && typeof last.balance === 'number' && typeof balance === 'number')
+        ? (balance - last.balance)
+        : 0;
       const resetAt = Math.min(
         dailyResetAt || Infinity,
         weeklyResetAt || Infinity
@@ -188,11 +200,13 @@ export class UsageTracker {
         dDelta,
         wDelta,
         resetAt: resetAt === Infinity ? 0 : resetAt,
+        balance,
+        bDelta,
       });
       if (this._quotaHistory.length > MAX_HISTORY) {
         this._quotaHistory.splice(0, this._quotaHistory.length - MAX_HISTORY);
       }
-      this._lastQuotaMap.set(email, { daily, weekly });
+      this._lastQuotaMap.set(email, { daily, weekly, balance });
       this._debounceHistorySave();
       for (const cb of this._historyListeners) { try { cb(); } catch {} }
     }
@@ -214,12 +228,14 @@ export class UsageTracker {
     let totalDailyUsed = 0;
     let totalWeeklyUsed = 0;
     let accountCount = 0;
+    let accountsWithBalance = 0;
 
     for (const acct of Object.values(s.accounts)) {
       if (acct.lastCheckTs > 0) {
         totalDailyUsed += acct.dailyUsedPct;
         totalWeeklyUsed += acct.weeklyUsedPct;
         accountCount++;
+        if (acct.hasBalance) accountsWithBalance++;
       }
     }
 
@@ -232,6 +248,7 @@ export class UsageTracker {
       totalDailyUsed: Math.round(totalDailyUsed),
       totalWeeklyUsed: Math.round(totalWeeklyUsed),
       accountCount,
+      accountsWithBalance,
       sessionStartTs: s.sessionStartTs,
       date: s.lastResetDate,
       perAccount: s.accounts,
@@ -339,6 +356,7 @@ export class UsageTracker {
         dailyUsedPct: 0,
         weeklyUsedPct: 0,
         lastCheckTs: 0,
+        hasBalance: false,
       };
     }
     return this._stats.accounts[email];
@@ -386,6 +404,7 @@ export interface StatsSummary {
   totalDailyUsed: number;
   totalWeeklyUsed: number;
   accountCount: number;
+  accountsWithBalance: number;  // 有付费余额的账号数（overageBalanceMicros > 0）
   sessionStartTs: number;
   date: string;
   perAccount: Record<string, AccountStats>;

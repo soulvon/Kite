@@ -6,7 +6,7 @@
 
 无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-7.6.5-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-7.6.26-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -130,6 +130,121 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
+
+### v7.7.0
+- **🏷️ 添加账号多标签选择器（体验对齐打标签）**：
+  - 重构了「添加账号」弹窗的标签选择逻辑。将各 Tab（OAuth 授权、单个登录、批量导入）的独立标签输入框，合并升级为置顶共享的**高级多标签选择组件**（体验与“为账号打标签”弹窗完全一致）。
+  - 支持**点击一键选择/取消已有标签**、带颜色圆点展示、输入新标签并回车快速新建并自动生成标签颜色。
+  - 批量导入（文本、JSON、Devin Token）和单个/OAuth 登录在导入新账号时，都会全自动且完美地继承上方已选的多个标签。
+
+### v7.6.26
+- **🔇 下线 Devin 一键领奖功能（活动结束）**：Devin onboarding $200 赠送活动官方已结束，打补丁创建 Automation 不会再发放余额。由于该功能已无意义，本版全面下线领奖动作。
+  - 删除 `src/devinPanel.ts`、`src/devinAutomationService.ts`、`resources/webview/devin-panel.js`。
+  - 从侧栏工具栏移除 🪙 金币按钮，从命令面板移除 `windsurfPool.openDevinPanel`。
+  - 进一步清理依赖导入、消息类型、后端处理函数 `handleDevinClaim200`。
+  - **余额相关功能全部保留**：依然可以看到 Extra 余额、按余额排序、余额变动历史、额外余额豁免限速冷却等。
+  - **智能导入去重保留**：v7.6.22 的 `auth1` token 保护机制仍然生效，不影响号池锁、批量导入、OAuth 导入。
+
+### v7.6.24
+- **🔧 修复 Devin 领奖面板 "无法确认 orgId" 的大坑**：实测发现 v7.6.20-23 的 `resolveOrg` 一直走错了路径。
+  - **原 bug**：`/api/users/post-auth` **响应体本身就返回 `org_id` 和 `org_name`**（对新账号还会自动创建 org），但之前的代码完全忽略返回值，反而击中 `/api/users/current-membership` — 该端点对 **auth1** 用户始终返回 `401 "No organizations found for auth1 user"`。
+  - **影响**：领奖面板所有账号都报错「无法确认 orgId」，实际上账号都是可用的（例如本次调试的 5 个号都是 $197-$200 余额、已完成 onboarding）。
+  - **修复**：`post-auth` 响应优先读 `org_id`，current-membership / organizations 仅作为 fallback。错误信息加上三个端点的 status code，方便未来 debug。
+  - **实测验证**：调试脚本 probe_devin_v4.js（8木10日已删）跳过 current-membership 后 5/5 账号都干净拿到 orgId 和余额。
+
+### v7.6.23
+- **🔓 批量导入禁用前端预去重**：v7.6.22 后端已加智能去重策略（覆盖修复 / 自动另存 `#oauth`），但前端 `filterExistingAccounts` 在 send 前就把同 email 账号丢掉了，**导致后端智能策略完全失效**（用户截图：导入 15 个 → 跳过重复 5 → 0 入库）。
+  - 本版**移除前端预过滤**，全部账号一律送到后端 `upsertAccount` 走智能策略。
+  - **效果**：旧账号缺 token 的可以通过重新批量登录被**补全**；OAuth 类导入碰到已有 token 的旧账号会**自动另存**为新条目，不会抹掉旧 token。
+  - 批量进度框的「已跳过重复 N」字段从此为 0（前端不再跳过）；如果你确实想跳过同邮箱，请改用号池过滤后再手动选择删除。
+
+### v7.6.22
+- **🔒 智能导入去重（保护旧账号的 Devin token）**：重构 `upsertAccount` 为智能策略，避免 OAuth / 从已登录账户导入这些路径把旧账号的 `auth1` token 抹掉。
+  - **默认 auto 策略**：
+    - 新的有 `devinAuth1Token` → **覆盖修复**（用于补上旧账号缺 token）
+    - 新的没 token 但旧的有 → **另存为新条目**（email 加 `#oauth` 后缀），不抹掉旧 token
+    - 都没 token → 覆盖（保持历史行为）
+  - **保护机制**：即使显式 `always` 覆盖策略下，也会 `merge` 旧的 `devinAuth1Token` 进新记录，万无一失。
+  - **另存后缀**：例如 `foo@bar.com` 已存（有 token）再 OAuth 登录同邮箱 → 另存为 `foo@bar.com#oauth`，两条同时可用。切号、资源、测活都各自独立。
+  - **注入隔离**：`sessionInjector` 注入到 Windsurf 本体时会剖离号池内部的 `#oauth` 后缀，让 Windsurf 看到的是干净的 `foo@bar.com`。
+  - **全部 6 个 upsert 入口适配**：调用方以返回的最终 email 为准（toast / setCurrent / postMessage 都已同步）。邮箱被另存时会弹提示「已另存为新条目（保护旧账号 Devin token）」。
+
+### v7.6.21
+- **💰 Devin 领奖面板（独立面板）**：从 v7.6.20 的「侧栏一键按钮」升级为**独立面板**（仿测活面板），支持可视化选、多选、全选、仅选可领、独立领。
+  - **打开方式**：侧栏工具栏金币按钮点一下 → 跳转领奖面板；或命令面板搜「打开 Devin 领奖面板」。
+  - **表格列**：复选框、邮箱、标签、套餐、Token、Extra 余额、领奖结果（含余额变化箭头 $0 → $200）、单独「领」按钮。
+  - **状态 Tab**：全部 / 可领 （≤$0 且有 token）/ 已有余额 / 缺 token / 已领成功 / 领奖失败。
+  - **一键选择**：「全选当前」/「仅选可领」/「清除选择」，表头复选框支持三态（未选/部分/全选）。
+  - **实时进度**：表格行按顺序变 黄圈转 → ✅成功 / ⏭跳过 / ❌失败，顶部进度条同步。运行中可随时点「停止」。
+  - **依然零浏览器**：后端逻辑与 v7.6.20 一致，并发 6，单账号 1-3 秒。
+
+### v7.6.20
+- **💰 Devin 一键领 $200（号池工具栏新按钮）**：在「排序/刷新全部」旁边新增一个金币图标按钮，点击后自动给号池里**有原始 auth1 token、且 Devin Extra 余额 ≤ $0**的账号通过 Devin Automations API（`POST /api/{org}/automations`）创建一个每天自动运行的 daily audit，触发 Devin 的 $200 onboarding 奖励。
+  - **完全纯 API 调用**：不开浏览器、不走 GitHub OAuth（直接 `PUT /api/users/info devin_onboarding_git_page=skipped`），单账号 1-3 秒，默认 6 并发。
+  - **智能跳过**：Extra 余额 > $0、`checklist.automations` 已 granted/completed、缺 auth1 token 的号都会自动跳过，不会重复领。
+  - **进度提示**：每个账号结果实时 toast，结束后汇总「✅成功 / ⏭跳过 / ❌失败」并自动刷新一次余额。
+  - **前置要求**：账号必须用「邮箱+密码」或「auth1 token」方式登录入库（OAuth/Firebase 登录拿不到 auth1 原始 token）。本版 `loginAuth1` 与 `loginByAuth1Token` 已经会自动把原始 `auth1_xxx` token 保存到 `StoredAccount.devinAuth1Token` 字段。
+  - **已有账号补救**：旧版入库的 auth1 账号没存原始 token，需要重新执行一次密码登录或 token 导入才能享用本功能。
+
+### v7.6.19
+- **📈 配额历史图表新增余额线**：「配额历史」面板的折线图在单账号查看时新增 💰 金色余额线（右 Y 轴：美元），实时呈现付费余额随时间的消耗/充值曲线，配合左轴的日/周配额折线，可以一眼看出"配额耗尽后是不是在烧余额、烧得有多快"。
+- 多账号查看时仍然保持原本的双线（实线日/虚线周），不显示余额线避免视觉过载。
+- 图例区动态显示余额范围（如 `余额 ($149.91 ~ $169.57)`），帮助快速判断绝对量级。
+
+### v7.6.18
+- **💰 排序新增「余额」选项**：侧栏排序下拉菜单新增 `💰 余额` 选项，按账号付费余额（`overageBalanceMicros`）降序排列，方便快速找出余额最多的号或核对充值情况；未加载/失效账号排最后；支持升降序切换。
+
+### v7.6.17
+- **🎨 第三轮自审修复**：v7.6.15 修正分组字符串时矫枉过正，把「按用量分组」下的余额选项从 `💰 余额可用` 一刀切改成纯文本，破坏了 usage 分组「全 emoji」的视觉一致性（其他选项都是 🔴🟠🟡🟢🔵）。本版恢复 usage 分组下的 💰 emoji 装饰，同时保持过滤器与 status 分组的纯文本，三方各自一致。
+- **核心洞察**：分组面板字符串与过滤器字符串**不必字符串相等**。过滤器走 `getAccountStatus`（纯文本采集），分组面板走 `getAccountGroup`（按维度独立装饰），两者不交叉，可独立选择视觉风格。
+
+### v7.6.16
+- **🔍 第二轮自审修复**：v7.6.15 的「余额豁免冷却日志」实现把同一组判断条件复制了一遍（一次用于日志、一次用于跳过），违反 DRY 原则、未来正则改一边漏一边会导致日志与实际行为不一致。本版抽出 `cachedIsRateLimit` 布尔变量统一两处判断。
+- **📝 视觉变化补充说明**：v7.6.15 移除了 v7.6.7 引入的分组「💰 余额可用」前缀 emoji，统一为纯文本 `余额可用` 与过滤器/状态保持一致；状态栏仍显示 `💰` emoji（空间小、emoji 更直观）。
+
+### v7.6.15
+- **🔧 余额规则代码审查修复**：
+  - 状态字符串统一：分组面板与过滤器现在共用 `余额可用` 常量，去除分组中冗余的 `💰` emoji 前缀，避免过滤器匹配失败
+  - 测活面板余额豁免冷却时输出诊断日志，便于排查"为什么这个限速号又测了一遍"
+  - 自动切号策略修复：余额号始终下沉到候选列表末尾，确保**先用完免费配额再消耗付费余额**（之前 `lowestNonZero` 策略下余额号会被优先选中，与用户期望相反）
+  - 补全 `.qh-balance-delta` CSS 容器样式（之前类名存在但样式未定义）
+  - 抽公共常量 `BALANCE_DELTA_MIN_MICROS` 和工具函数 `fmtBalanceDelta`，消除两处魔法数字
+  - `_ensureAccount` 显式初始化 `hasBalance: false`，避免新账号字段 undefined
+
+### v7.6.14
+- **💰 余额规则全面覆盖**：
+  - 侧栏测活状态：限速但有余额的号显示「💰 余额可用」而非红色「限速」
+  - 卡片 issue 区域：限速但有余额的号不再显示测活异常提示
+  - 测活面板冷却：余额号跳过 30 分钟限速冷却，每次测活正常复测
+  - 仪表盘统计：新增「💰 N 个账号余额可用」金色提示行
+  - 切号日志：配额硬耗尽触发切号时标注「（无余额）」，便于理解切号原因
+
+### v7.6.13
+- **🐛 修复状态栏 emoji 显示乱码**：v7.6.9 引入的状态栏「💰 余额可用 / 🔴 警告」emoji 因编码损坏显示为 `�` 替换字符（黑色方块），现已修复。
+
+### v7.6.12
+- **💰 配额历史显示金额变化**：统计面板表格和侧栏配额变动卡片中，余额栏现在同时显示该次记录相对上一次的金额变化（如 `-$0.28` 红色 / `+$5.00` 绿色），余额变动单独触发新条目（即使日/周配额未变也会记录）。
+
+### v7.6.11
+- **✨ 自动关闭配额警告横幅**：“正在使用付费余额”的黄色横幅现在会自动点击 X 关闭，不再需要手动关闭。
+
+### v7.6.10
+- **💰 侧栏配额历史显示金额**：侧栏配额变动历史卡片中，新增显示该次记录时的付费余额/金额（金色高亮）。
+
+### v7.6.9
+- **💰 余额号状态栏优化**：配额低于 10% 但有余额时，状态栏显示 💰 而非 🔴，且不显示红色警示背景。
+
+### v7.6.8
+- **💰 配额历史余额列**：统计面板配额历史表格新增「余额」列，显示每次记录时的付费余额（金色高亮）。
+
+### v7.6.7
+- **💰 余额号视觉增强**：余额字段金色高亮显示，配额耗尽但有余额时状态显示「余额可用」。
+- **🎯 智能排序优化**：配额都耗尽时，有余额的号排在无余额的号前面。
+- **🎨 分组状态优化**：按状态/用量分组时，余额号单独分组显示「💰 余额可用」。
+
+### v7.6.6
+- **💰 余额号支持**：账号有「额外用量余额」（overageBalanceMicros）时，即使日/周配额耗尽也视为可用，不触发自动切号，继续消耗付费余额。
+- **📊 状态栏/候选统计**：可用账号数统计现在也计入有余额的账号。
 
 ### v7.2.36
 - **✨ 恢复 Banner 视觉重设计**：glassmorphism 毛玻璃背景、顶部渐变装饰条、图标容器、pill 倒计时徽章、渐变按钮带阴影、更粗的发光进度条、底部分隔线，整体更现代精致。

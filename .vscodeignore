@@ -15,6 +15,11 @@ REBUILD_SPEC.md
 # 工具脚本（仅开发用）
 scripts/**
 
+# 逆向分析产物（仅开发用，不发布）
+_reverse_wf_dialog/**
+wf-dialog-mcp-*.vsix
+devin_result.png
+
 # 杂项
 .gitignore
 .gitattributes
@@ -27,6 +32,8 @@ node_modules/**
 
 # 大文件 / 非扩展资源
 *.har
+**/*.har
+resources/webview/*.har
 *.msi
 *.html
 orderProject/**

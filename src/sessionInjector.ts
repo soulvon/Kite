@@ -5,6 +5,7 @@ import { StoredAccount } from './types';
 import { writeFileWithElevation, copyFileWithElevation, ElevationError } from './elevatedFs';
 import { scheduleAcpConnectionRecovery } from './acpRecovery';
 import { checkCascadeSendReady, DEFAULT_CASCADE_CHECK_MODEL } from './usageService';
+import { stripEmailEntrySuffix } from './accountStore';
 
 /**
  * Session 注入器
@@ -312,11 +313,14 @@ export async function injectSession(
   const readyMs = Date.now() - t0;
   console.log(`[injectSession][#${seqNo}] 命令就绪 (${readyMs}ms), 执行切号 → ${account.email}`);
   try {
+    // 注入到 Windsurf 时使用纯邮箱（去掉号池内部的 `#oauth` 等去重后缀），
+    // 否则 Windsurf 内部会显示丑陋的 `foo@bar.com#oauth`。
+    const cleanEmail = stripEmailEntrySuffix(account.email);
     const result: any = await vscode.commands.executeCommand(PATCHED_CMD, {
       apiKey: account.apiKey,
-      name: account.name || account.email.split('@')[0],
+      name: account.name || cleanEmail.split('@')[0],
       apiServerUrl: account.apiServerUrl,
-      email: account.email
+      email: cleanEmail
     });
 
     const totalMs = Date.now() - t0;

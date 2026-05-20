@@ -172,20 +172,109 @@ export async function saveAccounts(context: vscode.ExtensionContext, accounts: S
 }
 
 /**
- * 新增或更新账号
+ * upsertAccount 的去重策略：
+ *  - 'auto'（默认）：
+ *      新的有 devinAuth1Token → 覆盖（修复缺 token 的旧记录）
+ *      新的没 devinAuth1Token 且旧的有 → **另存为新条目**（email 加 `#oauth`/`#alt` 后缀），保护旧 auth1
+ *      其余情况 → 覆盖
+ *  - 'always'：永远按 email 去重覆盖（保留旧版行为）
+ *  - 'never'：永远另存为新条目
  */
-export async function upsertAccount(context: vscode.ExtensionContext, account: StoredAccount): Promise<void> {
+export type UpsertDedupStrategy = 'auto' | 'always' | 'never';
+
+export interface UpsertOptions {
+  dedupStrategy?: UpsertDedupStrategy;
+  /** 另存时 email 加的来源标识（如 'oauth' / 'session'），默认按 account 字段推断 */
+  sourceTag?: string;
+}
+
+/**
+ * 在已有账号列表里找到一个唯一的 alternate email（email 末尾加 `#sourceTag` 或递增数字）
+ */
+function generateAlternateEmail(baseEmail: string, accounts: StoredAccount[], sourceTag: string): string {
+  const tag = sourceTag.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 16) || 'alt';
+  let candidate = `${baseEmail}#${tag}`;
+  if (!accounts.some(a => a.email === candidate)) return candidate;
+  for (let i = 2; i < 100; i++) {
+    const c = `${baseEmail}#${tag}${i}`;
+    if (!accounts.some(a => a.email === c)) return c;
+  }
+  // 兜底：加时间戳
+  return `${baseEmail}#${tag}${Date.now().toString(36)}`;
+}
+
+function inferSourceTag(account: StoredAccount, fallback = 'alt'): string {
+  // 已有 devinAuth1Token → 不应该走到另存分支，但兜底用 'auth1'
+  if ((account as any).devinAuth1Token) return 'auth1';
+  // sessionInjector 系列没 auth1，标记为 oauth/session
+  return fallback === 'alt' ? 'oauth' : fallback;
+}
+
+/**
+ * 新增或更新账号。
+ *
+ * 返回最终被存储的账号（注意：email 可能被改成 `email#oauth` 形式以避免覆盖旧条目）。
+ * 调用方需要用返回值的 email 做后续操作（setCurrentAccount / postMessage 等）。
+ */
+export async function upsertAccount(
+  context: vscode.ExtensionContext,
+  account: StoredAccount,
+  options?: UpsertOptions
+): Promise<StoredAccount> {
   return enqueueWrite(async () => {
     invalidateAccountsCache(); // 强制重读，避免用过期缓存
     const accounts = await readAccounts(context);
     const idx = accounts.findIndex(a => a.email === account.email);
-    if (idx >= 0) {
-      accounts[idx] = account;
-    } else {
+    const strategy = options?.dedupStrategy || 'auto';
+
+    if (idx < 0) {
       accounts.push(account);
+      await saveAccounts(context, accounts);
+      return account;
     }
+
+    // 同 email 已存在 → 按策略决定覆盖 or 另存
+    const old = accounts[idx];
+    let shouldDedup: boolean;
+    if (strategy === 'always') {
+      shouldDedup = true;
+    } else if (strategy === 'never') {
+      shouldDedup = false;
+    } else {
+      // 'auto' 智能策略
+      const newHasAuth1 = !!account.devinAuth1Token;
+      const oldHasAuth1 = !!old.devinAuth1Token;
+      if (newHasAuth1) shouldDedup = true;          // 新的有 auth1 → 覆盖修复
+      else if (oldHasAuth1) shouldDedup = false;    // 新的没 auth1 但旧的有 → 不要抹掉旧 auth1，另存
+      else shouldDedup = true;                       // 都没 auth1 → 覆盖
+    }
+
+    if (shouldDedup) {
+      // 合并保护：永不抹掉旧账号的 devinAuth1Token（即便策略是 always 时也保留）
+      if (!account.devinAuth1Token && old.devinAuth1Token) {
+        account = { ...account, devinAuth1Token: old.devinAuth1Token };
+      }
+      accounts[idx] = account;
+      await saveAccounts(context, accounts);
+      return account;
+    }
+
+    // 另存为新条目
+    const sourceTag = options?.sourceTag || inferSourceTag(account);
+    const altEmail = generateAlternateEmail(account.email, accounts, sourceTag);
+    const altAccount: StoredAccount = { ...account, email: altEmail };
+    accounts.push(altAccount);
     await saveAccounts(context, accounts);
+    return altAccount;
   });
+}
+
+/**
+ * 把 `email#oauth` 形式的内部 key 还原为原始邮箱（用于注入到 Windsurf 等场景）。
+ */
+export function stripEmailEntrySuffix(email: string): string {
+  const i = email.indexOf('#');
+  return i > 0 ? email.slice(0, i) : email;
 }
 
 /**

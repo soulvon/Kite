@@ -2269,6 +2269,34 @@
 		setTimeout(tryD, 2000);
 	}
 
+	// ========== 自动关闭配额警告横幅 ==========
+	// 黄色横幅提示"正在使用付费余额"，自动点击 X 关闭
+	let quotaBannerObserver = null;
+	function startDismissQuotaBanner() {
+		if (quotaBannerObserver) { quotaBannerObserver.disconnect(); quotaBannerObserver = null; }
+		function tryDismiss() {
+			// 选择器：黄色背景横幅，包含 "extra usage" 或 "用量配额" 文本
+			document.querySelectorAll('.bg-yellow-600, .bg-yellow-500, [class*="bg-yellow"]').forEach(banner => {
+				const text = banner.textContent || '';
+				if (text.includes('extra usage') || text.includes('用量配额') || text.includes('quota')) {
+					// 找关闭按钮（X 图标）
+					const closeBtn = banner.querySelector('.lucide-x, [class*="lucide-x"]')?.closest('.cursor-pointer, [role="button"], button');
+					if (closeBtn) {
+						closeBtn.click();
+						logLocalization('✅自动关闭配额警告横幅');
+					}
+				}
+			});
+		}
+		let debounceTimer = null;
+		quotaBannerObserver = new MutationObserver(() => {
+			if (debounceTimer) clearTimeout(debounceTimer);
+			debounceTimer = setTimeout(tryDismiss, 300);
+		});
+		quotaBannerObserver.observe(document.body, { childList: true, subtree: true });
+		setTimeout(tryDismiss, 1000);
+	}
+
 	// ========== 自动恢复（AutoRecovery） ==========
 
 	// ── 错误模式分类表 ──
@@ -3582,30 +3610,58 @@
 	}
 
 	// ── 执行 afterAction（切换后动作） ──
-	function executeAfterAction(afterAction, opts) {
+	// v7.6.20 修订（#1+#4 修复）：
+	// - async 化 + await sendContinueMessage 拿真实结果
+	// - 失败时最多重试 1 次（共 2 次），每次重试前检查 isAIGenerating 避免对生成中的 AI 发送
+	// - 全失败时 toast 提示用户「请手动发送」
+	async function executeAfterAction(afterAction, opts) {
 		opts = opts || {};
 		const action = afterAction || 'auto';
 		if (action === 'none') return;
-		if (action === 'send-continue') {
-			console.log(LOG_PREFIX + '[Recovery] 执行后续动作: 发送继续');
-			sendContinueMessage();
-			return;
-		}
 		if (action === 'retry-message') {
 			console.log(LOG_PREFIX + '[Recovery] 执行后续动作: 重发消息');
 			if (lastUserMessage) sendInputAndClick(lastUserMessage);
 			return;
 		}
-		// auto: 智能判断 — 有 Retry 按钮就点，否则发继续
-		const retryBtn = findRetryButton();
-		if (retryBtn) {
-			console.log(LOG_PREFIX + '[Recovery] auto: 点击重试按钮');
-			markActionClick();
-			retryBtn.click();
-		} else {
-			console.log(LOG_PREFIX + '[Recovery] auto: 发送继续');
-			sendContinueMessage();
+		// auto: 智能判断 — 有 Retry 按钮就点（同步操作），否则发继续（走重试）
+		if (action === 'auto') {
+			const retryBtn = findRetryButton();
+			if (retryBtn) {
+				console.log(LOG_PREFIX + '[Recovery] auto: 点击重试按钮');
+				markActionClick();
+				retryBtn.click();
+				return;
+			}
+			console.log(LOG_PREFIX + '[Recovery] auto: 无重试按钮 → 发送继续');
 		}
+
+		// send-continue 或 auto 降级 → 进入重试循环
+		const maxAttempts = 2;
+		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+			// #4 修复：AI 还在生成 → 等 3s 再尝试（避免对锁定的输入框发送）
+			if (isAIGenerating()) {
+				console.log(LOG_PREFIX + '[Recovery] sendContinue 第 ' + attempt + '/' + maxAttempts + ' 次：AI 仍在生成，等 3s');
+				await new Promise(r => setTimeout(r, 3000));
+				if (isAIGenerating()) {
+					console.log(LOG_PREFIX + '[Recovery] AI 仍生成中，跳过本次尝试');
+					continue;
+				}
+			}
+			console.log(LOG_PREFIX + '[Recovery] sendContinue 第 ' + attempt + '/' + maxAttempts + ' 次');
+			const ok = await sendContinueMessage();
+			if (ok) {
+				console.log(LOG_PREFIX + '[Recovery] ✅ executeAfterAction 第 ' + attempt + ' 次成功');
+				return;
+			}
+			if (attempt < maxAttempts) {
+				console.log(LOG_PREFIX + '[Recovery] sendContinue 失败，3s 后重试');
+				await new Promise(r => setTimeout(r, 3000));
+			}
+		}
+
+		// 全部失败：toast 提示用户介入
+		console.warn(LOG_PREFIX + '[Recovery] ⚠ executeAfterAction 连续 ' + maxAttempts + ' 次失败');
+		try { showRecoveryNotification('自动继续未生效，请手动发送', 'error'); } catch {}
 	}
 
 	// ── 统一错误处理入口 ──
@@ -3964,12 +4020,32 @@
 
 	// ── 统一发送 continue 辅助函数 ──
 	// 注意：test-send-continue 不走这里（直接调 setInputText/trySendMessage 以绕过总开关）
+	// v7.6.20 修订：
+	// - #2 修复：continueMode=off 时显式 toast 提示用户配置矛盾（节流 60s）
+	// - #3 修复：发送验证从单次 1500ms 改为轮询 5×600ms（避免误判 + 双发送）
+	// - #5 修复：queued 路径 Enter 后也轮询验证 hasQueuedMessage 是否真的消失
+	// - #6 修复：setInputText 失败重试 2 次（共 3 次尝试）
 	let _sendingContinue = false;
 	async function sendContinueMessage(customText) {
-		if (settings.continueMode === 'off') return false;
-		if (_sendingContinue) return false;
+		// #2: continueMode=off 配置矛盾 → 弹 toast 提醒（60s 节流防 spam）
+		if (settings.continueMode === 'off') {
+			const now = Date.now();
+			if (now - _continueModeOffWarnedTs > 60000) {
+				_continueModeOffWarnedTs = now;
+				console.warn(LOG_PREFIX + '[sendContinue] continueMode=off，跳过发送（请在自动继续面板开启总开关）');
+				try { showRecoveryNotification('自动继续已禁用 → 请在「自动继续」面板开启总开关', 'error'); } catch {}
+			}
+			return false;
+		}
+		if (_sendingContinue) {
+			console.log(LOG_PREFIX + '[sendContinue] 已有发送在进行中，跳过');
+			return false;
+		}
 		const cooldown = (settings.sendCooldown > 0) ? settings.sendCooldown : 10000;
-		if (Date.now() - _lastContinueTs < cooldown) return false;
+		if (Date.now() - _lastContinueTs < cooldown) {
+			console.log(LOG_PREFIX + '[sendContinue] cooldown 中，剩余 ' + Math.round((cooldown - (Date.now() - _lastContinueTs)) / 1000) + 's');
+			return false;
+		}
 		const text = customText || (settings.continueText && String(settings.continueText).trim()) || 'continue';
 
 		_sendingContinue = true;
@@ -3978,36 +4054,63 @@
 			// （Windsurf 自己提示「按回车发送排队消息 (⏎)」，Enter 是官方路径）
 			if (hasQueuedMessage()) {
 				const el = findInputEl();
-				if (!el) return false;
+				if (!el) {
+					console.warn(LOG_PREFIX + '[sendContinue] queued 路径找不到输入框');
+					return false;
+				}
 				dispatchEnterKey(el);
-				await new Promise(r => setTimeout(r, 1500));
-				_lastContinueTs = Date.now();
-				bumpAcStat('sendMsg');
-				console.log(LOG_PREFIX, '[sendContinue] ✅ Enter (queued)');
-				return true;
+				// #5 修复：轮询验证 queued 是否真的消失（5×600ms = 3s 验证窗口）
+				for (let i = 0; i < 5; i++) {
+					await new Promise(r => setTimeout(r, 600));
+					if (!hasQueuedMessage()) {
+						_lastContinueTs = Date.now();
+						bumpAcStat('sendMsg');
+						console.log(LOG_PREFIX + '[sendContinue] ✅ Enter (queued) - 第 ' + (i + 1) + ' 轮验证通过');
+						return true;
+					}
+				}
+				// 验证失败：queued 仍存在，Enter 没生效。不占 cooldown 允许重试
+				console.warn(LOG_PREFIX + '[sendContinue] ⚠ Enter 触发后 queued 仍存在（dispatchEnterKey 可能失效）');
+				return false;
 			}
 
 			// 主路径：写文本 + 触发发送 + 验证
-			if (!await setInputText(text)) return false;
+			// #6 修复：setInputText 失败重试 2 次（共 3 次尝试，间隔 500ms）
+			let setOk = false;
+			for (let attempt = 0; attempt < 3; attempt++) {
+				if (await setInputText(text)) { setOk = true; break; }
+				console.log(LOG_PREFIX + '[sendContinue] setInputText 失败 #' + (attempt + 1) + '/3');
+				if (attempt < 2) await new Promise(r => setTimeout(r, 500));
+			}
+			if (!setOk) {
+				console.warn(LOG_PREFIX + '[sendContinue] ⚠ setInputText 连续 3 次失败');
+				return false;
+			}
+
 			markActionClick();
 			await new Promise(r => setTimeout(r, 400));
 			trySendMessage();
-			await new Promise(r => setTimeout(r, 1500));
 
-			const el = findInputEl();
-			const remaining = (el?.textContent || '').trim();
-			// 输入框已清空 或 进入 queued 状态 = 发送成功
-			if (remaining.length === 0 || hasQueuedMessage()) {
-				_lastContinueTs = Date.now();
-				bumpAcStat('sendMsg');
-				console.log(LOG_PREFIX, '[sendContinue] ✅');
-				return true;
+			// #3 修复：轮询 5 次每次 600ms = 最多 3s 验证窗口（替代原单次 1500ms）
+			// 避免网络抖动/输入动画导致误判，也避免清空残留时双发送
+			for (let i = 0; i < 5; i++) {
+				await new Promise(r => setTimeout(r, 600));
+				const el = findInputEl();
+				const remaining = (el?.textContent || '').trim();
+				// 输入框已清空 或 进入 queued 状态 = 发送成功
+				if (remaining.length === 0 || hasQueuedMessage()) {
+					_lastContinueTs = Date.now();
+					bumpAcStat('sendMsg');
+					console.log(LOG_PREFIX + '[sendContinue] ✅ 第 ' + (i + 1) + '/5 轮验证通过');
+					return true;
+				}
 			}
 
-			// 真失败：清残留 + 不进 cooldown（允许立即重试）
-			console.log(LOG_PREFIX, '[sendContinue] ⚠ 未生效，清空残留');
-			if (el) {
-				el.focus();
+			// 5 轮验证（3s）仍未生效：真失败，清残留 + 不占 cooldown
+			console.warn(LOG_PREFIX + '[sendContinue] ⚠ 5 轮验证仍未生效，清空残留');
+			const finalEl = findInputEl();
+			if (finalEl) {
+				finalEl.focus();
 				document.execCommand('selectAll', false, null);
 				document.execCommand('delete', false, null);
 			}
@@ -4091,6 +4194,7 @@
 	}
 
 	let _lastContinueTs = 0;
+	let _continueModeOffWarnedTs = 0;  // continueMode=off 配置矛盾通知节流（每 60s 一次）
 	function checkForContinuePrompts() {
 		if (settings.continueMode !== 'smart') return;
 		// 守护面板「突破限制」开关关闭时不自动发送 continue
@@ -5154,6 +5258,7 @@
 		// Settings UI moved to sidebar panel; only inject styles for bubbles
 		injectBubblesStyles();
 		dismissCorruptWarning();
+		startDismissQuotaBanner();
 		startBridgePolling();
 		if (settings.continueMode === 'smart') startAutoContinue();
 		if (settings.autoRecoveryEnabled) startAutoRecovery();
