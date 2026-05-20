@@ -1153,6 +1153,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           tag: raw.tag,
           tags: raw.tags || (raw.tag ? [raw.tag] : undefined),
           disabled: raw.disabled === true ? true : undefined,
+          devinAuth1Token: raw.devinAuth1Token ? String(raw.devinAuth1Token).trim() : undefined,
+          orgId: raw.orgId ? String(raw.orgId).trim() : undefined,
         });
         this.postMessage({ type: 'batchResult', ok: true, email: storedAcct.email });
         this.refresh();

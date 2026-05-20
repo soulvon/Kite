@@ -6,7 +6,7 @@
 
 无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-7.6.26-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-7.6.29-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -136,6 +136,24 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
   - 重构了「添加账号」弹窗的标签选择逻辑。将各 Tab（OAuth 授权、单个登录、批量导入）的独立标签输入框，合并升级为置顶共享的**高级多标签选择组件**（体验与“为账号打标签”弹窗完全一致）。
   - 支持**点击一键选择/取消已有标签**、带颜色圆点展示、输入新标签并回车快速新建并自动生成标签颜色。
   - 批量导入（文本、JSON、Devin Token）和单个/OAuth 登录在导入新账号时，都会全自动且完美地继承上方已选的多个标签。
+
+### v7.6.29
+- **🔥 账号预热机制**：借鉴 wf-dialog-mcp 的实践，在当前账号额度接近阈值时提前验证下一个候选账号。
+  - 新增配置项 `preheatMargin`（默认 10）：当 `curScore <= threshold + preheatMargin` 时触发预热。
+  - 预热成功后缓存账号（有效期 5 分钟），真正切号时优先使用，减少切号延迟。
+  - 预热在后台静默执行，不阻塞主流程。
+
+### v7.6.28
+- **🔄 切号后静默重置机器码**：借鉴 wf-dialog-mcp 的实践，在自动切号（阈值触发 / DOM 检测触发）成功后，自动静默重置设备指纹（machineId / macMachineId / sqmId / devDeviceId / machineid / .installerId）。
+  - 减少不同账号之间的设备关联风控风险。
+  - 静默执行，不弹窗、不备份，不影响用户体验。
+  - 两条切号路径（`_checkAndSwitch` + `forceSwitch`）均已适配。
+
+### v7.6.27
+- **🔒 增强机器码重置完整性**：对比 wf-dialog-mcp 实现，补上两个缺失的指纹重置项，不影响其他软件。
+  - 新增 `telemetry.macMachineId` 字段重置（MAC 地址派生的机器码，之前漏了）。
+  - macOS 新增 `.installerId` 文件重置（`~/Library/Application Support/Windsurf/.installerId`）。
+  - 均为 Windsurf 专属文件，不改系统级 MachineGuid / /etc/machine-id，安全无副作用。
 
 ### v7.6.26
 - **🔇 下线 Devin 一键领奖功能（活动结束）**：Devin onboarding $200 赠送活动官方已结束，打补丁创建 Automation 不会再发放余额。由于该功能已无意义，本版全面下线领奖动作。

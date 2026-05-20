@@ -868,19 +868,25 @@ export async function resetMachineId(): Promise<void> {
     .map(v => path.join(configDir, v, 'machineid'))
     .filter(p => fs.existsSync(p));
 
-  if (storagePaths.length === 0 && machineIdPaths.length === 0) {
+  // macOS 专属：.installerId 文件
+  const installerIdPaths = process.platform === 'darwin'
+    ? versions.map(v => path.join(configDir, v, '.installerId')).filter(p => fs.existsSync(p))
+    : [];
+
+  if (storagePaths.length === 0 && machineIdPaths.length === 0 && installerIdPaths.length === 0) {
     vscode.window.showErrorMessage('未找到 Windsurf 配置文件，请确认 Windsurf 已安装。');
     return;
   }
 
   const confirm = await vscode.window.showWarningMessage(
-    '即将重置 Windsurf 全部设备指纹（machineId / sqmId / devDeviceId / machineid 文件）。\n⚠️ 请先关闭所有 Windsurf 窗口，否则退出时会覆盖回旧值。',
+    '即将重置 Windsurf 全部设备指纹（machineId / macMachineId / sqmId / devDeviceId / machineid / .installerId）。\n⚠️ 请先关闭所有 Windsurf 窗口，否则退出时会覆盖回旧值。',
     { modal: true },
     '重置并备份'
   );
   if (confirm !== '重置并备份') return;
 
   const newMachineId = crypto.randomBytes(32).toString('hex');
+  const newMacMachineId = crypto.randomUUID();  // MAC 地址派生的机器码
   const newSqmId = `{${crypto.randomUUID().toUpperCase()}}`;
   const newDevDeviceId = crypto.randomUUID();
   const newMachineIdFile = crypto.randomUUID(); // machineid 文件用 UUID
@@ -888,7 +894,7 @@ export async function resetMachineId(): Promise<void> {
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   let resetCount = 0;
 
-  // 1. 重置 storage.json 中的 3 个字段
+  // 1. 重置 storage.json 中的 4 个字段
   for (const filePath of storagePaths) {
     try {
       const raw = fs.readFileSync(filePath, 'utf-8');
@@ -896,6 +902,7 @@ export async function resetMachineId(): Promise<void> {
       fs.writeFileSync(filePath + `.backup_${ts}`, raw, 'utf-8');
 
       data['telemetry.machineId'] = newMachineId;
+      data['telemetry.macMachineId'] = newMacMachineId;
       data['telemetry.sqmId'] = newSqmId;
       data['telemetry.devDeviceId'] = newDevDeviceId;
 
@@ -920,6 +927,19 @@ export async function resetMachineId(): Promise<void> {
     }
   }
 
+  // 3. macOS: 重置 .installerId 文件
+  for (const filePath of installerIdPaths) {
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      fs.writeFileSync(filePath + `.backup_${ts}`, raw, 'utf-8');
+      fs.writeFileSync(filePath, crypto.randomUUID(), 'utf-8');
+      resetCount++;
+    } catch (err: any) {
+      const ver = path.basename(path.dirname(filePath));
+      vscode.window.showErrorMessage(`重置 .installerId 失败 (${ver}): ${err.message}`);
+    }
+  }
+
   if (resetCount > 0) {
     _panel?.webview.postMessage({
       type: 'machineIdReset',
@@ -927,7 +947,81 @@ export async function resetMachineId(): Promise<void> {
       devDeviceId: newDevDeviceId,
     });
     vscode.window.showInformationMessage(
-      `已重置 ${resetCount} 个文件的设备指纹（含 machineid），原文件已备份。\n请完全关闭 Windsurf 后重新打开生效。`
+      `已重置 ${resetCount} 个文件的设备指纹（含 macMachineId / machineid${installerIdPaths.length ? ' / .installerId' : ''}），原文件已备份。\n请完全关闭 Windsurf 后重新打开生效。`
     );
   }
+}
+
+/**
+ * 静默重置 Windsurf 设备指纹（切号后自动调用，无弹窗）
+ * 返回 true 表示成功重置了至少一个文件
+ */
+export async function silentResetMachineId(): Promise<boolean> {
+  const configDir = process.platform === 'win32'
+    ? process.env.APPDATA || ''
+    : process.platform === 'darwin'
+      ? path.join(process.env.HOME || '', 'Library', 'Application Support')
+      : path.join(process.env.HOME || '', '.config');
+
+  const versions = ['Windsurf', 'Windsurf - Next'];
+  const storagePaths = versions
+    .map(v => path.join(configDir, v, 'User', 'globalStorage', 'storage.json'))
+    .filter(p => fs.existsSync(p));
+  const machineIdPaths = versions
+    .map(v => path.join(configDir, v, 'machineid'))
+    .filter(p => fs.existsSync(p));
+  const installerIdPaths = process.platform === 'darwin'
+    ? versions.map(v => path.join(configDir, v, '.installerId')).filter(p => fs.existsSync(p))
+    : [];
+
+  if (storagePaths.length === 0 && machineIdPaths.length === 0 && installerIdPaths.length === 0) {
+    console.log('[silentResetMachineId] 未找到 Windsurf 配置文件');
+    return false;
+  }
+
+  const newMachineId = crypto.randomBytes(32).toString('hex');
+  const newMacMachineId = crypto.randomUUID();
+  const newSqmId = `{${crypto.randomUUID().toUpperCase()}}`;
+  const newDevDeviceId = crypto.randomUUID();
+  const newMachineIdFile = crypto.randomUUID();
+
+  let resetCount = 0;
+
+  for (const filePath of storagePaths) {
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const data = JSON.parse(raw);
+      data['telemetry.machineId'] = newMachineId;
+      data['telemetry.macMachineId'] = newMacMachineId;
+      data['telemetry.sqmId'] = newSqmId;
+      data['telemetry.devDeviceId'] = newDevDeviceId;
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 4), 'utf-8');
+      resetCount++;
+    } catch (err) {
+      console.warn('[silentResetMachineId] storage.json 失败:', err);
+    }
+  }
+
+  for (const filePath of machineIdPaths) {
+    try {
+      fs.writeFileSync(filePath, newMachineIdFile, 'utf-8');
+      resetCount++;
+    } catch (err) {
+      console.warn('[silentResetMachineId] machineid 失败:', err);
+    }
+  }
+
+  for (const filePath of installerIdPaths) {
+    try {
+      fs.writeFileSync(filePath, crypto.randomUUID(), 'utf-8');
+      resetCount++;
+    } catch (err) {
+      console.warn('[silentResetMachineId] .installerId 失败:', err);
+    }
+  }
+
+  if (resetCount > 0) {
+    console.log(`[silentResetMachineId] ✓ 已静默重置 ${resetCount} 个设备指纹文件 (machineId=${newMachineId.slice(0, 8)}...)`);
+  }
+  return resetCount > 0;
 }

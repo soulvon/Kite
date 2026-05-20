@@ -2140,6 +2140,8 @@
           tag: itemTags ? itemTags[0] : undefined,
           tags: itemTags,
           disabled: item.disabled === true,
+          devinAuth1Token: item.devinAuth1Token ? String(item.devinAuth1Token).trim() : undefined,
+          orgId: item.orgId ? String(item.orgId).trim() : undefined,
         });
       } else if (item.token) {
         accts.push({ token: String(item.token).trim(), tag: itemTags ? itemTags[0] : undefined, tags: itemTags });

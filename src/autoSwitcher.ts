@@ -6,7 +6,7 @@ import { getCurrentInstanceTag } from './instanceManager';
 import { getOtherLockedEmails, acquireLock, releaseLock } from './accountLock';
 import * as diskCache from './usageDiskCache';
 import { UsageTracker } from './usageTracker';
-import { clearHealthResult } from './healthCheckPanel';
+import { clearHealthResult, silentResetMachineId } from './healthCheckPanel';
 
 // ─── 类型 ───────────────────────────────────────────────
 
@@ -31,6 +31,7 @@ export type PoolScope = 'all' | 'tag' | 'instance';
 export interface AutoSwitchSettings {
   enabled: boolean;
   threshold: number;
+  preheatMargin: number;        // 预热边距：curScore <= threshold + preheatMargin 时触发预热
   checkSec: number;
   cooldownSec: number;
   refreshMin: number;
@@ -55,6 +56,7 @@ type AutoSwitchDoneCb = (newEmail: string, reason: string) => void;
 const DEFAULTS: AutoSwitchSettings = {
   enabled: true,
   threshold: 15,
+  preheatMargin: 10,            // 预热边距：当前分数 <= 25% 时开始预热
   checkSec: 5,
   cooldownSec: 15,
   scoreMode: 'min' as ScoreMode,
@@ -73,6 +75,7 @@ const THROTTLE_MS = 2000;
 const ERROR_BACKOFF_MS = 5000;
 // CURRENT_TTL_MS 不再硬编码，跟随 checkSec 设置（见 _checkAndSwitch）
 const ANTI_BOUNCE_MS = 5 * 60_000;
+const PREHEAT_VALID_MS = 5 * 60_000;  // 预热账号有效期 5 分钟
 
 // ─── AutoSwitcher ───────────────────────────────────────
 
@@ -89,6 +92,10 @@ export class AutoSwitcher implements vscode.Disposable {
   private _cooldownUntil = 0;
   private _lastSwitchedFrom = '';
   private _lastSwitchedAt = 0;
+  // 预热状态
+  private _preheatedEmail: string | null = null;
+  private _preheatedAt = 0;
+  private _preheating = false;
 
   private _onUsageUpdate: UsageUpdateCb | null = null;
   private _onSwitchEvent: SwitchEventCb | null = null;
@@ -110,6 +117,7 @@ export class AutoSwitcher implements vscode.Disposable {
     return {
       enabled: this._ctx.globalState.get('as.enabled', DEFAULTS.enabled),
       threshold: this._ctx.globalState.get('as.threshold', DEFAULTS.threshold),
+      preheatMargin: this._ctx.globalState.get('as.preheatMargin', DEFAULTS.preheatMargin),
       checkSec: this._ctx.globalState.get('as.checkSec', DEFAULTS.checkSec),
       cooldownSec: this._ctx.globalState.get('as.cooldownSec', DEFAULTS.cooldownSec),
       refreshMin: this._ctx.globalState.get('as.refreshMin', DEFAULTS.refreshMin),
@@ -128,6 +136,7 @@ export class AutoSwitcher implements vscode.Disposable {
   async updateSettings(p: Partial<AutoSwitchSettings>): Promise<void> {
     if (p.enabled !== undefined) await this._ctx.globalState.update('as.enabled', p.enabled);
     if (p.threshold !== undefined) await this._ctx.globalState.update('as.threshold', p.threshold);
+    if (p.preheatMargin !== undefined) await this._ctx.globalState.update('as.preheatMargin', p.preheatMargin);
     if (p.checkSec !== undefined) await this._ctx.globalState.update('as.checkSec', p.checkSec);
     if (p.cooldownSec !== undefined) await this._ctx.globalState.update('as.cooldownSec', p.cooldownSec);
     if (p.refreshMin !== undefined) await this._ctx.globalState.update('as.refreshMin', p.refreshMin);
@@ -461,6 +470,68 @@ export class AutoSwitcher implements vscode.Disposable {
     } catch { /* ignore */ }
   }
 
+  // ── 内部：预热下一个候选账号 ──
+
+  private async _triggerPreheat(curEmail: string, s: AutoSwitchSettings): Promise<void> {
+    // 已有有效预热账号则跳过
+    if (this._preheatedEmail && Date.now() - this._preheatedAt < PREHEAT_VALID_MS) {
+      console.log(`[autoSwitch][preheat] 已有预热账号: ${this._preheatedEmail}, 跳过`);
+      return;
+    }
+    this._preheating = true;
+    try {
+      // 找最佳候选（不需要比当前号好，只需要超过阈值）
+      const candidates = this._findAllCandidates(curEmail, s.threshold, s.scoreMode, 0);
+      if (candidates.length === 0) {
+        console.log('[autoSwitch][preheat] 无候选账号');
+        return;
+      }
+
+      const cand = candidates[0];
+      const candEntry = this._cache.get(cand.email);
+      const cacheFreshMs = s.refreshMin * 60_000;
+
+      // 缓存足够新鲜则直接信任
+      if (candEntry && Date.now() - candEntry.ts < cacheFreshMs) {
+        this._preheatedEmail = cand.email;
+        this._preheatedAt = Date.now();
+        console.log(`[autoSwitch][preheat] ✓ 预热完成 (缓存新鲜): ${cand.email} score=${Math.round(cand.score)}%`);
+        return;
+      }
+
+      // 否则发 API 验证
+      console.log(`[autoSwitch][preheat] 验证候选: ${cand.email}...`);
+      await this.refreshSingle(cand.email, true);
+      const freshEntry = this._cache.get(cand.email);
+      if (!freshEntry?.snapshot) {
+        console.log(`[autoSwitch][preheat] 验证失败: ${cand.email} 无 snapshot`);
+        return;
+      }
+
+      const vd = clamp(freshEntry.snapshot.dailyRemainingPercent);
+      const vw = clamp(freshEntry.snapshot.weeklyRemainingPercent);
+      const vHasBalance = (freshEntry.snapshot.overageBalanceMicros || 0) > 0;
+      const minQ = s.minQuota ?? 10;
+
+      if ((vd <= 1 || vw <= 1 || Math.min(vd, vw) <= minQ) && !vHasBalance) {
+        console.log(`[autoSwitch][preheat] 验证失败: ${cand.email} d=${Math.round(vd)}% w=${Math.round(vw)}% (耗尽)`);
+        return;
+      }
+
+      const vScore = calcScore(vd, vw, s.scoreMode);
+      if (vScore <= s.threshold) {
+        console.log(`[autoSwitch][preheat] 验证失败: ${cand.email} score=${Math.round(vScore)}% <= threshold=${s.threshold}%`);
+        return;
+      }
+
+      this._preheatedEmail = cand.email;
+      this._preheatedAt = Date.now();
+      console.log(`[autoSwitch][preheat] ✓ 预热完成: ${cand.email} d=${Math.round(vd)}% w=${Math.round(vw)}% score=${Math.round(vScore)}%`);
+    } finally {
+      this._preheating = false;
+    }
+  }
+
   // ── 内部：自动切号 ──
 
   private async _checkAndSwitch(): Promise<void> {
@@ -507,7 +578,15 @@ export class AutoSwitcher implements vscode.Disposable {
 
       if (!hardExhausted && curScore > s.threshold) {
         // 当前号额度充足，无需切换
-        console.log(`[autoSwitch][trigger] 当前号额度充足，不切换: ${curEmail} curScore=${Math.round(curScore)} d=${Math.round(dPct)}% w=${Math.round(wPct)}% threshold=${s.threshold}`);
+        // ── 预热机制：接近阈值时提前验证下一个候选账号 ──
+        const preheatThreshold = s.threshold + (s.preheatMargin ?? 10);
+        const inPreheatZone = curScore <= preheatThreshold;
+        const hasValidPreheat = this._preheatedEmail && Date.now() - this._preheatedAt < PREHEAT_VALID_MS;
+        if (inPreheatZone && !this._preheating && !hasValidPreheat) {
+          this._triggerPreheat(curEmail, s).catch(() => {});
+        }
+        const preheatHint = hasValidPreheat ? ` (已预热: ${this._preheatedEmail})` : (inPreheatZone ? ' (预热区)' : '');
+        console.log(`[autoSwitch][trigger] 当前号额度充足，不切换: ${curEmail} curScore=${Math.round(curScore)} d=${Math.round(dPct)}% w=${Math.round(wPct)}% threshold=${s.threshold}${preheatHint}`);
         return;
       }
 
@@ -548,7 +627,31 @@ export class AutoSwitcher implements vscode.Disposable {
       const maxVerify = Math.min(5, candidates.length);
       let verified: { email: string; score: number } | null = null;
 
-      for (let i = 0; i < maxVerify; i++) {
+      // ── 优先使用预热账号（如果仍在有效期且在候选列表中）──
+      if (this._preheatedEmail && Date.now() - this._preheatedAt < PREHEAT_VALID_MS) {
+        const preheated = candidates.find(c => c.email === this._preheatedEmail);
+        if (preheated) {
+          const pEntry = this._cache.get(preheated.email);
+          if (pEntry?.snapshot) {
+            const pd = clamp(pEntry.snapshot.dailyRemainingPercent);
+            const pw = clamp(pEntry.snapshot.weeklyRemainingPercent);
+            const pHasBalance = (pEntry.snapshot.overageBalanceMicros || 0) > 0;
+            const pScore = calcScore(pd, pw, s.scoreMode);
+            // 预热账号仍满足条件
+            if ((pd > 1 && pw > 1 && Math.min(pd, pw) > minQ) || pHasBalance) {
+              if (pScore > findScore || pHasBalance) {
+                verified = preheated;
+                console.log(`[autoSwitch][verify] ✓ 使用预热账号: ${preheated.email} d=${Math.round(pd)}% w=${Math.round(pw)}% score=${Math.round(pScore)}%`);
+              }
+            }
+          }
+        }
+        // 清除预热状态（无论是否使用）
+        this._preheatedEmail = null;
+        this._preheatedAt = 0;
+      }
+
+      for (let i = 0; verified === null && i < maxVerify; i++) {
         const cand = candidates[i];
         const candEntry = this._cache.get(cand.email);
 
@@ -617,6 +720,8 @@ export class AutoSwitcher implements vscode.Disposable {
         this._lastSwitchedAt = Date.now();
         clearHealthResult(verified.email);
         this._tracker.recordDiagnostic({ ts: Date.now(), email: verified.email, source: 'health', level: 'ok', reason: '自动切号成功，测活已清除' });
+        // 切号后静默重置机器码（减少风控关联）
+        silentResetMachineId().catch(() => {});
         console.log(`[autoSwitch][trigger] ✓ 切号成功: ${curEmail} → ${verified.email}, cooldown=${s.cooldownSec}s`);
         // 记录切号统计
         this._tracker.recordSwitch(verified.email);
@@ -700,6 +805,8 @@ export class AutoSwitcher implements vscode.Disposable {
 
       clearHealthResult(cand.email);
       this._tracker.recordDiagnostic({ ts: Date.now(), email: cand.email, source: 'health', level: 'ok', reason: '强制切号成功，测活已清除' });
+      // 切号后静默重置机器码（减少风控关联）
+      silentResetMachineId().catch(() => {});
       // 更新状态
       this._cooldownUntil = Date.now() + s.cooldownSec * 1000;
       this._lastSwitchedFrom = curEmail;
