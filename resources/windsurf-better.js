@@ -72,9 +72,10 @@
 		recoveryConfirmEnabled: true,        // 总开关：所有自动恢复操作都先弹 banner 倒计时
 		recoveryCountdownSeconds: 5,         // 倒计时秒数（3-15）
 		// 分类恢复规则
+		// v7.6.30: 精简策略 — 大部分错误发"继续"就够，只有真正配额耗尽才切号
 		recoveryRules: {
-			networkErrors:      { action: 'retry', maxRetries: 3, delay: 3000 },
-			quotaErrors:        { action: 'switch-account', afterAction: 'auto' },
+			networkErrors:      { action: 'send-continue' },  // 临时限流/网络错误 → 发继续
+			quotaErrors:        { action: 'switch-account', afterAction: 'auto' },  // 真正配额耗尽 → 切号
 			// modelErrors 默认从 switch-model 改为 send-continue：
 			// 实测"模型提供商不可达"等第三方故障是临时性的，等几秒发继续就能恢复，
 			// 切模型反而因 modelPriority 名字对不上而陷入冷却死锁
@@ -2319,32 +2320,35 @@
 		{ pattern: /stream.*was\s*(interrupted|cancelled|aborted)/i,           category: 'networkErrors' },
 		{ pattern: /connection.*was\s*(reset|closed)/i,                        category: 'networkErrors' },
 
-		// ── 配额耗尽 / 速率限制 ──
+		// ── 真正配额耗尽（需要切号） ──
 		{ pattern: /daily usage quota has been exhausted/i,                    category: 'quotaErrors', signal: 'quota-daily-exhausted' },
+		{ pattern: /weekly usage quota.*exhausted/i,                           category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /usage quota.*exhausted/i,                                  category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /monthly acu limit reached/i,                              category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /you have reached your.*limit/i,                           category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /reached your usage limit/i,                               category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /resource_exhausted/i,                                      category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /all API providers are over capacity/i,                     category: 'quotaErrors', signal: 'provider-overloaded' },
-		{ pattern: /Failed precondition.*quota/i,                              category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /all API providers are over their global rate limit/i,      category: 'quotaErrors', signal: 'rate-limited' },
-		{ pattern: /rate limit exceeded/i,                                     category: 'quotaErrors', signal: 'rate-limited' },
-		{ pattern: /upgrade to a Pro account for higher limits/i,              category: 'quotaErrors', signal: 'rate-limited' },
-		{ pattern: /权限拒绝.*rate limit/i,                                    category: 'quotaErrors', signal: 'rate-limited' },
-		{ pattern: /权限拒绝.*全局速率限制/,                                    category: 'quotaErrors', signal: 'rate-limited' },
-		{ pattern: /提供商.*全局速率限制/,                                      category: 'quotaErrors', signal: 'rate-limited' },
-		{ pattern: /Reached.*(?:message|rate) limit/i,                         category: 'quotaErrors', signal: 'rate-limited' },
-		{ pattern: /此模型已达到消息速率限制/i,                                category: 'quotaErrors', signal: 'rate-limited' },
-		{ pattern: /已达到.*(?:配额|限制|额度)/,                               category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /额度.*(?:耗尽|用完|不足)/,                                 category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /配额.*耗尽/,                                               category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /配额.*用完/,                                               category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /额度.*(?:耗尽|用完)/,                                      category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /配额.*(?:耗尽|用完)/,                                      category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /用量配额已耗尽/,                                           category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /credit(?:s)?\s*(?:exhausted|depleted|exceeded|run out)/i,    category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /no credits (?:remaining|left|available)/i,                  category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /credit(?:s)?\s*(?:exhausted|depleted|run out)/i,           category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /no credits (?:remaining|left|available)/i,                 category: 'quotaErrors', signal: 'quota-exhausted' },
 		{ pattern: /insufficient credits/i,                                    category: 'quotaErrors', signal: 'quota-exhausted' },
-		{ pattern: /积分.*(?:耗尽|不足|用完)/,                                  category: 'quotaErrors', signal: 'quota-exhausted' },
+		{ pattern: /积分.*(?:耗尽|用完)/,                                       category: 'quotaErrors', signal: 'quota-exhausted' },
+
+		// ── 临时限流 / 过载（发"继续"即可，无需切号） ──
+		{ pattern: /all API providers are over their global rate limit/i,      category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /rate limit exceeded/i,                                     category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /upgrade to a Pro account for higher limits/i,              category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /权限拒绝.*rate limit/i,                                    category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /权限拒绝.*全局速率限制/,                                    category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /提供商.*全局速率限制/,                                      category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /Reached.*(?:message|rate) limit/i,                         category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /此模型已达到消息速率限制/i,                                category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /all API providers are over capacity/i,                     category: 'networkErrors', signal: 'provider-overloaded' },
+		{ pattern: /resource_exhausted/i,                                      category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /you have reached your.*limit/i,                            category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /Failed precondition.*quota/i,                              category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /已达到.*(?:限制|额度)/,                                    category: 'networkErrors', signal: 'rate-limited' },
+		{ pattern: /额度.*不足/,                                               category: 'networkErrors', signal: 'rate-limited' },
 
 		// ── HTTP 服务端错误 / 工具调用失败（走 retry / switch-model 而非切号） ──
 		{ pattern: /HTTP\s*5\d{2}\b/i,                                          category: 'networkErrors' },
@@ -3342,8 +3346,9 @@
 	let _bannerState = null;  // { timer, deadline, defaultAction, options }
 
 	// 候选操作按分类映射（标签 + 排序，默认 action 由调用方传入）
+	// v7.6.30: networkErrors 默认 send-continue，顺序调整以匹配 fallback 优先级
 	const CATEGORY_CANDIDATES = {
-		networkErrors:      [['retry','重试'], ['send-continue','发继续'], ['switch-model','切换模型'], ['switch-account','切换账号']],
+		networkErrors:      [['send-continue','发继续'], ['retry','重试'], ['switch-model','切换模型'], ['switch-account','切换账号']],
 		modelErrors:        [['send-continue','发继续'], ['switch-model','切换模型'], ['switch-account','切换账号'], ['retry','重试']],
 		quotaErrors:        [['switch-account','切换账号'], ['send-continue','发继续'], ['retry','重试']],
 		continuationErrors: [['send-continue','发继续']],
