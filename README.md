@@ -6,7 +6,7 @@
 
 无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-7.6.30-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-7.7.1-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -131,16 +131,16 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
 
-### v7.7.0
-- **🏷️ 添加账号多标签选择器（体验对齐打标签）**：
-  - 重构了「添加账号」弹窗的标签选择逻辑。将各 Tab（OAuth 授权、单个登录、批量导入）的独立标签输入框，合并升级为置顶共享的**高级多标签选择组件**（体验与“为账号打标签”弹窗完全一致）。
-  - 支持**点击一键选择/取消已有标签**、带颜色圆点展示、输入新标签并回车快速新建并自动生成标签颜色。
-  - 批量导入（文本、JSON、Devin Token）和单个/OAuth 登录在导入新账号时，都会全自动且完美地继承上方已选的多个标签。
-
-### v7.6.30
+### v7.7.1
 - **🎯 精简恢复策略**：借鉴 wf-dialog-mcp 的简洁设计，大部分错误直接发"继续"即可恢复，只有真正配额耗尽才切号。
   - 临时限流（rate limit）从切号改为发继续，避免不必要的账号切换
   - `networkErrors` 的默认动作从 `retry` 改成 `send-continue`
+
+### v7.7.0
+- **🏷️ 添加账号多标签选择器（体验对齐打标签）**：
+  - 重构了「添加账号」弹窗的标签选择逻辑。将各 Tab（OAuth 授权、单个登录、批量导入）的独立标签输入框，合并升级为置顶共享的**高级多标签选择组件**（体验与"为账号打标签"弹窗完全一致）。
+  - 支持**点击一键选择/取消已有标签**、带颜色圆点展示、输入新标签并回车快速新建并自动生成标签颜色。
+  - 批量导入（文本、JSON、Devin Token）和单个/OAuth 登录在导入新账号时，都会全自动且完美地继承上方已选的多个标签。
 
 ### v7.6.29
 - **🔥 账号预热机制**：借鉴 wf-dialog-mcp 的实践，在当前账号额度接近阈值时提前验证下一个候选账号。
