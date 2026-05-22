@@ -51,8 +51,12 @@
 		// 汉化设置
 		localizationEnabled: true,
 		// 自动操作
-		continueMode: 'smart',  // 'smart' | 'brainless' | 'off'
-		continueText: 'continue',  // 自动发送的文本（两种模式共享）
+		continueMode: 'simple',  // 'simple' | 'smart' | 'brainless' | 'off'（默认 simple = 错误图标触发）
+		continueText: 'continue',  // 自动发送的文本（所有模式共享）
+		// simple 模式：检测红三角错误图标自动发 continue（参考 auto-continue 思路）
+		// smart 模式：检测 Cascade 显示的 Continue 按钮自动点击
+		// brainless 模式：长任务队列模式
+		simpleContinueCooldownMs: 8000,
 		dismissCorruptEnabled: true,
 		autoSwitchEnabled: true,
 		autoSwitchOnQuota: true,
@@ -103,11 +107,24 @@
 			const r = localStorage.getItem(STORAGE_KEY);
 			const local = r ? JSON.parse(r) : {};
 			const merged = { ...DEFAULT_SETTINGS, ...local, ...(injected || {}) };
-			// 迁移旧设置：autoContinueEnabled / brainlessModeEnabled → continueMode
-			if (!merged.continueMode || merged.continueMode === 'smart') {
+
+			// 防御性兜底：扩展宿主侧 resetContinueModeOnUpgrade 已经按版本号触发重置；
+			// 这里仅在 injected 缺失（极端情况）且 localStorage 残留 smart 时再做一次兜底。
+			// injected 由 enh-settings.json 派生，已带 __defaultsAppliedAt → 直接采纳。
+			if (injected && injected.__defaultsAppliedAt) {
+				// extension 已重置过，merged.continueMode 反映的是最新版本下的有效设置
+			} else if (merged.continueMode === undefined || merged.continueMode === 'smart') {
+				// 仅在没有版本号信号时兜底
+				merged.continueMode = 'simple';
+				merged.autoContinueTab = 'simple';
+			}
+
+			// 兜底：用户从未明确设置过 continueMode 时（兼容很老的版本字段）
+			const userHasMode = local.continueMode || (injected && injected.continueMode);
+			if (!userHasMode) {
 				if (merged.brainlessModeEnabled) merged.continueMode = 'brainless';
 				else if (merged.autoContinueEnabled === false) merged.continueMode = 'off';
-				else merged.continueMode = 'smart';
+				// 否则使用 DEFAULT_SETTINGS 提供的 'simple'
 			}
 			return merged;
 		} catch {
@@ -2242,6 +2259,120 @@
 		});
 		autoContinueObserver.observe(document.body, { childList: true, subtree: true });
 		console.log(LOG_PREFIX + '[AutoContinue] ✅已启用（防抖 200ms）');
+	}
+
+	// ========== 简单续聊（参考 auto-continue 思路） ==========
+	// 检测原理：最后一条消息（div.mark-js-ignore）的前一个兄弟节点若包含
+	// svg.lucide-triangle-alert（红三角警告图标），表示 AI 异常停止 → 自动发 continue。
+	// 不依赖文本/i18n，跨语言通用。与 smart 模式互补：smart 点 Continue 按钮，simple 处理错误中断。
+	let _simpleContinueLastFireTs = 0;
+
+	function detectSimpleContinueTrigger() {
+		const scrollbar = document.querySelector('.cascade-scrollbar');
+		if (!scrollbar) return false;
+		const messages = scrollbar.querySelectorAll('div.mark-js-ignore');
+		if (messages.length === 0) return false;
+		const lastMsg = messages[messages.length - 1];
+		const prev = lastMsg.previousElementSibling;
+		if (!prev) return false;
+		return !!prev.querySelector('svg.lucide-triangle-alert');
+	}
+
+	let _simpleContinueTimer = null;
+	let _simpleContinueRetryCount = 0;
+	function getSimpleCooldownMs() {
+		const sec = settings.simpleCooldownSeconds;
+		return (typeof sec === 'number' && sec >= 1 && sec <= 60) ? sec * 1000 : 3000;
+	}
+	const SIMPLE_CONTINUE_POLL_MS = 2000;      // 轮询 2s（和原版一致）
+	const SIMPLE_CONTINUE_LIMIT_WINDOW = 600000; // 10 分钟
+	const SIMPLE_CONTINUE_LIMIT_COUNT = 5;       // 最多 5 次
+	let _simpleContinueRecentSends = [];
+
+	function _checkSimpleContinueRateLimit(now) {
+		// 清理过期记录
+		while (_simpleContinueRecentSends.length && now - _simpleContinueRecentSends[0] > SIMPLE_CONTINUE_LIMIT_WINDOW) {
+			_simpleContinueRecentSends.shift();
+		}
+		return _simpleContinueRecentSends.length < SIMPLE_CONTINUE_LIMIT_COUNT;
+	}
+
+	function startSimpleContinue() {
+		stopSimpleContinue();
+		if (settings.continueMode !== 'simple') return;
+
+		const checkAndSend = async () => {
+			if (settings.continueMode !== 'simple') return;
+			const now = Date.now();
+
+			// 冷却期检查
+			if (now - _simpleContinueLastFireTs < getSimpleCooldownMs()) {
+				_scheduleSimpleContinue();
+				return;
+			}
+
+			// AI 正在生成 → 跳过，重置重试计数
+			if (typeof isAIGenerating === 'function' && isAIGenerating()) {
+				_simpleContinueRetryCount = 0;
+				_scheduleSimpleContinue();
+				return;
+			}
+
+			// 频率限制（10 分钟内最多 N 次）
+			if (!_checkSimpleContinueRateLimit(now)) {
+				console.log(LOG_PREFIX + '[SimpleContinue] 频率限制：10分钟内已达 ' + SIMPLE_CONTINUE_LIMIT_COUNT + ' 次上限');
+				_scheduleSimpleContinue();
+				return;
+			}
+
+			// 与 smart/recovery 共用冷却
+			if (isInCooldown()) {
+				_scheduleSimpleContinue();
+				return;
+			}
+
+			// 检测错误图标
+			if (!detectSimpleContinueTrigger()) {
+				_scheduleSimpleContinue();
+				return;
+			}
+
+			// 发送
+			_simpleContinueLastFireTs = now;
+			_simpleContinueRetryCount++;
+			_simpleContinueRecentSends.push(now);
+			bumpAcStat('continueBtn');
+			console.log(LOG_PREFIX + '[SimpleContinue] 检测到错误图标，自动发送 continue (#' + _simpleContinueRetryCount + ')');
+
+			try {
+				const sent = await sendContinueMessage();
+				if (!sent) {
+					// 发送失败，回滚计数
+					_simpleContinueRetryCount = Math.max(0, _simpleContinueRetryCount - 1);
+					_simpleContinueRecentSends.pop();
+					console.warn(LOG_PREFIX + '[SimpleContinue] 发送失败，已回滚计数');
+				}
+			} catch (e) {
+				console.warn(LOG_PREFIX + '[SimpleContinue] 发送异常:', e);
+				_simpleContinueRecentSends.pop();
+			}
+
+			_scheduleSimpleContinue();
+		};
+
+		const _scheduleSimpleContinue = () => {
+			if (settings.continueMode !== 'simple') return;
+			if (_simpleContinueTimer) clearTimeout(_simpleContinueTimer);
+			_simpleContinueTimer = setTimeout(checkAndSend, SIMPLE_CONTINUE_POLL_MS);
+		};
+
+		// 延迟 5s 启动（等页面完全加载）
+		_simpleContinueTimer = setTimeout(checkAndSend, 5000);
+		console.log(LOG_PREFIX + '[SimpleContinue] ✅已启用（2s 轮询，10分钟限 ' + SIMPLE_CONTINUE_LIMIT_COUNT + ' 次）');
+	}
+
+	function stopSimpleContinue() {
+		if (_simpleContinueTimer) { clearTimeout(_simpleContinueTimer); _simpleContinueTimer = null; }
 	}
 
 	let dismissCorruptObserver = null;
@@ -4405,8 +4536,32 @@
 
 		// 公共触发逻辑：grace 后 + bridge 就绪 → 全方位扫描
 		function tick() {
-			if (Date.now() < _recoveryGraceUntil) return;
-			if (!_bridgeReady) { _maybeWarnBridgeNotReady(); return; }
+			const now = Date.now();
+			if (now < _recoveryGraceUntil) {
+				// grace 期间扫描但不触发，记录日志供诊断
+				const { text } = getLatestErrorText();
+				if (text) {
+					recordDiagnose({
+						stage: 'grace-skip',
+						reason: 'grace 期间发现错误但暂不触发 (' + Math.round((_recoveryGraceUntil - now) / 1000) + 's 剩余)',
+						hitText: text.substring(0, 200)
+					});
+				}
+				return;
+			}
+			if (!_bridgeReady) {
+				// bridge 未就绪，记录日志
+				const { text } = getLatestErrorText();
+				if (text) {
+					recordDiagnose({
+						stage: 'bridge-not-ready',
+						reason: 'bridge 未就绪，发现错误但无法触发',
+						hitText: text.substring(0, 200)
+					});
+				}
+				_maybeWarnBridgeNotReady();
+				return;
+			}
 			checkForErrors();
 			checkForContinuePrompts();
 			checkForPermissionApproval();
@@ -4633,11 +4788,10 @@
 		if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }
 		console.log(LOG_PREFIX + '[Brainless] 停止: ' + reason);
 		showRecoveryNotification('长任务已停止: ' + reason);
-		// 恢复守护模式：continueMode 回到 smart，重启 autoContinue
-		// 避免长任务因错误/上限停止后，自动续写和突破限制功能静默失效
-		settings.continueMode = 'smart';
+		// 长任务结束：回到默认 simple 模式（避免错误/上限停止后自动续聊静默失效）
+		settings.continueMode = 'simple';
 		try { saveSettings(settings); } catch {}
-		startAutoContinue();
+		startSimpleContinue();
 		// 通知侧栏更新状态
 		bridgePostResult({ action: 'lt-stopped', reason, count: _brainlessConsecutive });
 	}
@@ -5303,17 +5457,18 @@
 		startDismissQuotaBanner();
 		startBridgePolling();
 		if (settings.continueMode === 'smart') startAutoContinue();
+		if (settings.continueMode === 'simple') startSimpleContinue();
 		if (settings.autoRecoveryEnabled) startAutoRecovery();
 		console.log(LOG_PREFIX + '[Notify] init: notifyEnabled=' + settings.notifyEnabled + ', sound=' + settings.notifySound + ', desktop=' + settings.notifyDesktop + ', trigger=' + settings.notifyTrigger + ', tone=' + settings.notifyTone);
 		if (settings.notifyEnabled) startNotifyObserver();
 		else console.log(LOG_PREFIX + '[Notify] ⚠️ notifyEnabled=false，未启动观察器');
 		// brainless 模式不在 init 自动启动——必须由用户显式点击「开始运行」触发
-		// 重启后 continueMode 应为 'smart'，不会走到 brainless 分支
+		// 重启后回退到 'simple' 默认（需手动启动长任务才会切回 brainless）
 		if (settings.continueMode === 'brainless') {
-			console.log(LOG_PREFIX + '[Brainless] 检测到残留 brainless 状态，重置为 smart（需手动启动长任务）');
-			settings.continueMode = 'smart';
+			console.log(LOG_PREFIX + '[Brainless] 检测到残留 brainless 状态，重置为 simple（需手动启动长任务）');
+			settings.continueMode = 'simple';
 			saveSettings(settings);
-			startAutoContinue();
+			startSimpleContinue();
 		}
 		
 		// 启动回复建议提示
@@ -5402,11 +5557,13 @@
 		const oldGd = old.guardian || {};
 		const newGd = settings.guardian || {};
 		if (old.continueMode !== settings.continueMode || oldGd.autoContinueButton !== newGd.autoContinueButton) {
-			// 停止旧模式
+			// 停止所有旧模式
 			if (autoContinueObserver) { autoContinueObserver.disconnect(); autoContinueObserver = null; }
 			if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }
-			// 启动新模式
+			stopSimpleContinue();
+			// 启动新模式（互斥）
 			if (settings.continueMode === 'smart') startAutoContinue();
+			else if (settings.continueMode === 'simple') startSimpleContinue();
 			else if (settings.continueMode === 'brainless') startBrainlessMode();
 		}
 		// 响应关闭损坏通知开关变化

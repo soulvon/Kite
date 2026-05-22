@@ -131,6 +131,49 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
 
+### v7.7.11
+- **🔁 每次升级都强制重置为「简单」模式**：从一次性标记（`__migratedToSimpleV779`）改为**版本号对比机制**（`__defaultsAppliedAt`）。
+  - **同版本内重启** → 不触发（尊重用户在该版本周期内的偏好）
+  - **跨版本升级** → 强制将 `continueMode='smart'` 重置为 `'simple'`
+  - 长任务运行中（`brainless`）和已禁用（`off`）保持不变
+  - 清理旧的 `__migratedToSimpleV779` 标记
+
+### v7.7.10
+- **🐛 长任务停止后回到「简单」而非「守护」**：审查发现长任务面板的暂停/停止/强制停止按钮仍硬编码 `continueMode='smart'`，与 v7.7.9 的"默认 simple"策略不一致。
+  - 移除 webview 端的 `saveLtMode(mode)` 强制覆盖逻辑
+  - 改为依赖 `collectEnhSettings()` 根据 `_ltRunning` + 当前 Tab 自动推断 continueMode
+  - 行为与 `windsurf-better.js` 的 `stopBrainlessMode` 对称：长任务结束 → 回到 `simple`
+
+### v7.7.9
+- **🔁 老用户强制迁移到「简单」模式**：v7.7.8 升级时保留了老用户的 `continueMode='smart'`，导致大部分人更新后仍停留在守护模式没体验到新默认。本版补迁移：
+  - 扩展激活时一次性检测 `enh-settings.json`：若 `continueMode === 'smart'`（或未设置）→ 强制切到 `'simple'` + `autoContinueTab = 'simple'`
+  - 通过 `__migratedToSimpleV779` 幂等标记，迁移仅触发一次；后续用户手动切回守护，不会再被覆盖
+  - 长任务运行中（`brainless`）和已禁用（`off`）状态**不动**，避免打断
+  - 双保险：`windsurf-better.js` 的 `loadSettings()` 也加了同样标记的防御性迁移，覆盖 localStorage 残留场景
+
+### v7.7.8
+- **🎯 自动继续：三模式互斥（默认 simple）**：自动继续面板的 Tab 从 2 段（守护 / 长任务）扩展为 3 段（**简单** / 守护 / 长任务），三种模式互斥，**默认 simple**。
+  - **简单模式**：检测红三角错误图标自动发 continue。极简，只做一件事，不依赖文本/语言
+  - **守护模式**：原有的「自动续写 + 自动重试 + 突破限制 + 清除干扰 + 自动批准权限」完整能力
+  - **长任务模式**：原有的队列循环 + 闲置检测
+  - **老用户已选 smart/brainless 保持不变**；新装用户默认进入 simple
+  - 长任务结束（错误/上限/手动停止）后回到 simple，而非 smart
+  - 撤回 v7.7.6 引入的「简单续聊」子开关（守护模式里的）— 升级为独立模式
+
+### v7.7.7
+- **🩺 测活面板默认隐藏 + 可手动开启**：侧栏底部「测活面板」卡片入口改为默认不显示，避免对仅用号池/切号的用户产生干扰。
+  - 在「Windsurf 增强」面板新增「显示测活面板」开关（默认关闭）。
+  - 开关打开后，侧栏底部立即显示「测活面板」卡片（不需要重启/重载）。
+  - 设置持久化到 `enh-settings.json` 的 `showHealthPanel` 字段，跨实例共享。
+  - 命令面板 `windsurfPool.openHealthCheck`（打开独立大测活面板）行为不变。
+
+### v7.7.6
+- **🎯 简单续聊**：守护模式新增「简单续聊」开关，默认启用。
+  - 检测 Cascade 异常停止时显示的红三角警告图标（`svg.lucide-triangle-alert`），自动发送 `continue`
+  - 不依赖文本正则/i18n，跨语言通用，覆盖原 recovery 框架兜底不到的场景
+  - 与「自动续写」（点 Continue 按钮）、「突破限制」（工具上限发 continue）三者互补，触发条件互不重叠
+  - 复用现有 `sendContinueMessage()` 的防重入锁与冷却，不会重复发送
+
 ### v7.7.4
 - **🔄 余额号保护健壮性加固**：修复多个边界场景，防止死循环和判断不一致。
   - **统一判断**：抽取 `_hasUsableBalance()` 方法，所有 6 处余额检查使用统一阈值

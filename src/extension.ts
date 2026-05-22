@@ -14,7 +14,7 @@ import { ensureBubbleRules, injectBubbleRules, removeBubbleRules, hasBubbleRules
 import { fixChecksums, restoreProductJson, getChecksumStatus } from './checksumFixer';
 import { startBridgeServer, stopBridgeServer } from './bridgeServer';
 import { initAccountLock, acquireLock, releaseLock, startHeartbeat, stopHeartbeat } from './accountLock';
-import { mergeEnhSettings, readEnhSettings } from './enhSettingsStore';
+import { mergeEnhSettings, readEnhSettings, resetContinueModeOnUpgrade } from './enhSettingsStore';
 import { isWindows, isMac, isWritable } from './utils';
 import { beginElevatedBatch, flushElevatedBatch, cancelElevatedBatch, ElevationError } from './elevatedFs';
 import { UsageTracker } from './usageTracker';
@@ -283,6 +283,21 @@ export function activate(context: vscode.ExtensionContext) {
     }).catch(err => {
       console.warn('[windsurf-pool] bridge server failed to start:', err);
     });
+  }
+
+  // [v7.7.11+ 升级重置] 每次版本升级都强制将 continueMode 重置为 'simple'（除长任务运行中和已禁用）
+  // 必须在 ensureEnhancement() 之前执行，确保注入到 workbench.html 的设置已是重置后状态
+  // 同版本启动不重复触发，跨版本升级时强制重置
+  try {
+    const currentVersion: string = (context.extension?.packageJSON?.version as string) || '0.0.0';
+    const m = resetContinueModeOnUpgrade(currentVersion);
+    if (m.changed) {
+      console.log(`[windsurf-pool] reset continueMode on upgrade ${m.lastVersion ?? '(none)'} → ${currentVersion}: ${m.from} → simple`);
+    } else if (m.lastVersion !== currentVersion) {
+      console.log(`[windsurf-pool] continueMode reset skipped (current=${m.from}) on upgrade ${m.lastVersion ?? '(none)'} → ${currentVersion}`);
+    }
+  } catch (err) {
+    console.warn('[windsurf-pool] resetContinueModeOnUpgrade failed:', err);
   }
 
   // [Windsurf 增强] 自动注入 DOM 增强脚本到 workbench.html

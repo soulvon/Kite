@@ -217,6 +217,8 @@
   const enhBubblesTheme = $('#enhBubblesTheme');
   const enhBubblesShape = $('#enhBubblesShape');
   const enhLocalizationEnabled = $('#enhLocalizationEnabled');
+  // 侧栏面板：是否显示测活面板入口（默认关闭）
+  const enhShowHealthPanel = $('#enhShowHealthPanel');
   // 底部状态栏设置
   const enhStatusBarEnabled = $('#enhStatusBarEnabled');
   const enhStatusBarPosition = $('#enhStatusBarPosition');
@@ -228,8 +230,10 @@
   const enhAutoContinueEnabled = $('#enhAutoContinueEnabled');
   const acOffHint = $('#acOffHint');
   const acOnContent = $('#acOnContent');
+  const acTabSimple = $('#acTabSimple');
   const acTabGuardian = $('#acTabGuardian');
   const acTabLongTask = $('#acTabLongTask');
+  const acPanelSimple = $('#acPanelSimple');
   const acPanelGuardian = $('#acPanelGuardian');
   const acPanelLongTask = $('#acPanelLongTask');
   // 守护面板
@@ -3374,11 +3378,16 @@
 
   // 切换 Tab 面板显示
   function switchAcTab(tab) {
+    if (acPanelSimple) acPanelSimple.style.display = tab === 'simple' ? '' : 'none';
     if (acPanelGuardian) acPanelGuardian.style.display = tab === 'guardian' ? '' : 'none';
     if (acPanelLongTask) acPanelLongTask.style.display = tab === 'long-task' ? '' : 'none';
-    // V2 segment slider
+    // V2 segment slider —— 3 段定位
     const slider = $('#acSegmentSlider');
-    if (slider) { tab === 'long-task' ? slider.classList.add('right') : slider.classList.remove('right'); }
+    if (slider) {
+      slider.classList.remove('pos-0', 'pos-1', 'pos-2', 'right');
+      const idx = tab === 'simple' ? 0 : tab === 'guardian' ? 1 : 2;
+      slider.classList.add('pos-' + idx);
+    }
   }
 
   // 切换总开关显示
@@ -3443,6 +3452,17 @@
     if (acStatsBar) acStatsBar.style.display = total > 0 ? '' : 'none';
   }
 
+  // 控制侧栏底部「测活面板」details 卡片的显隐
+  function applyHealthPanelVisibility(visible) {
+    var el = document.getElementById('healthPanelDetails');
+    if (!el) return;
+    if (visible) {
+      el.removeAttribute('hidden');
+    } else {
+      el.setAttribute('hidden', '');
+    }
+  }
+
   function applyEnhSettingsToUI(s) {
     if (!s || typeof s !== 'object') return;
     try {
@@ -3451,6 +3471,11 @@
       if (enhBubblesTheme) enhBubblesTheme.value = s.bubblesTheme || 'emerald';
       if (enhBubblesShape) enhBubblesShape.value = s.bubblesShape || 'rounded';
       if (enhLocalizationEnabled) enhLocalizationEnabled.checked = s.localizationEnabled !== false;
+
+      // 侧栏面板：显示测活面板（默认 false）
+      const showHc = s.showHealthPanel === true;
+      if (enhShowHealthPanel) enhShowHealthPanel.checked = showHc;
+      applyHealthPanelVisibility(showHc);
 
       // 底部状态栏
       const sb = s.statusBar || {};
@@ -3466,10 +3491,19 @@
       if (enhAutoContinueEnabled) enhAutoContinueEnabled.checked = acEnabled;
       toggleAcEnabled(acEnabled);
 
-      const acTab = s.autoContinueTab || (s.continueMode === 'brainless' ? 'long-task' : 'guardian');
+      // 推断 Tab：优先看用户上次显式选择的 autoContinueTab；否则按 continueMode 推断
+      const acTab = s.autoContinueTab
+        || (s.continueMode === 'brainless' ? 'long-task'
+          : s.continueMode === 'smart' ? 'guardian'
+          : 'simple');  // simple/off/默认 → simple Tab
+      if (acTabSimple) acTabSimple.checked = acTab === 'simple';
       if (acTabGuardian) acTabGuardian.checked = acTab === 'guardian';
       if (acTabLongTask) acTabLongTask.checked = acTab === 'long-task';
       switchAcTab(acTab);
+
+      // 简单模式冷却时间
+      const enhSimpleCooldown = document.getElementById('enhSimpleCooldown');
+      if (enhSimpleCooldown) enhSimpleCooldown.value = s.simpleCooldownSeconds || 3;
 
       // 守护模式
       const gd = s.guardian || {};
@@ -3574,9 +3608,17 @@
 
   function collectEnhSettings() {
     const acEnabled = enhAutoContinueEnabled ? enhAutoContinueEnabled.checked : true;
-    const acTab = (acTabLongTask && acTabLongTask.checked) ? 'long-task' : 'guardian';
-    // 长任务正在运行时保持 brainless；否则始终为 smart，避免重启后意外触发
-    const continueMode = !acEnabled ? 'off' : (_ltRunning ? 'brainless' : 'smart');
+    // Tab 取值优先级：长任务 > 守护 > 简单（默认）
+    const acTab = (acTabLongTask && acTabLongTask.checked) ? 'long-task'
+                : (acTabGuardian && acTabGuardian.checked) ? 'guardian'
+                : 'simple';
+    // 长任务运行中始终为 brainless（不受 Tab 切换影响，由控制按钮强制覆盖）；
+    // 总开关关 → off；否则按 Tab 决定 simple/smart
+    let continueMode;
+    if (!acEnabled) continueMode = 'off';
+    else if (_ltRunning) continueMode = 'brainless';
+    else if (acTab === 'guardian') continueMode = 'smart';
+    else continueMode = 'simple';
 
     // 预计算共享值，避免重复 parseInt / DOM 查询
     const idleSec = enhLtIdleSeconds ? Math.max(3, parseInt(enhLtIdleSeconds.value) || 8) : 8;
@@ -3595,6 +3637,7 @@
       bubblesTheme: enhBubblesTheme ? enhBubblesTheme.value : 'emerald',
       bubblesShape: enhBubblesShape ? enhBubblesShape.value : 'rounded',
       localizationEnabled: enhLocalizationEnabled ? enhLocalizationEnabled.checked : true,
+      showHealthPanel: enhShowHealthPanel ? enhShowHealthPanel.checked : false,
       statusBar: {
         enabled: enhStatusBarEnabled ? enhStatusBarEnabled.checked : true,
         position: enhStatusBarPosition ? enhStatusBarPosition.value : 'right',
@@ -3606,6 +3649,10 @@
       continueMode,
       autoContinueEnabled: acEnabled,
       autoContinueTab: acTab,
+      simpleCooldownSeconds: (() => {
+        const el = document.getElementById('enhSimpleCooldown');
+        return el ? Math.max(1, Math.min(60, parseInt(el.value, 10) || 3)) : 3;
+      })(),
       guardian: {
         autoContinueButton: enhGdAutoContinueBtn ? enhGdAutoContinueBtn.checked : true,
         autoRetry: enhGdAutoRetry ? enhGdAutoRetry.checked : true,
@@ -5231,33 +5278,33 @@
       saveEnhanceSettings();
     });
 
-    // ── 自动继续：Tab 切换（只切换面板，不立即变更 continueMode，避免杀掉运行中的长任务） ──
-    [acTabGuardian, acTabLongTask].forEach(radio => {
+    // ── 自动继续：Tab 切换 ──
+    // 切到 simple/guardian Tab：立即同步 continueMode（互斥切换模式）
+    // 切到 long-task Tab：仅切面板，continueMode 由「开始运行」按钮控制
+    // 长任务运行中切到非 long-task Tab：弹确认对话框
+    [acTabSimple, acTabGuardian, acTabLongTask].forEach(radio => {
       if (radio) radio.addEventListener('change', () => {
-        // G7: 长任务运行中切换到守护 Tab 时确认
-        if (_ltRunning && radio.value === 'guardian') {
+        // 长任务运行中切到非 long-task → 弹确认
+        if (_ltRunning && radio.value !== 'long-task') {
           if (!confirm('长任务正在运行中，切换将停止长任务。确定切换？')) {
             // 恢复 Tab 选中状态
             if (acTabLongTask) acTabLongTask.checked = true;
             return;
           }
           _ltRunning = false;
-          updateLtState('stopped', { reason: '切换到守护模式' });
-          saveLtMode('smart');
+          updateLtState('stopped', { reason: '切换到 ' + (radio.value === 'simple' ? '简单' : '守护') + ' 模式' });
         }
         switchAcTab(radio.value);
-        // 只保存 Tab 偏好，不强制同步 continueMode — 让用户通过控制按钮显式操作
-        try {
-          const cur = JSON.parse(localStorage.getItem('ws-better-settings') || '{}');
-          cur.autoContinueTab = radio.value;
-          localStorage.setItem('ws-better-settings', JSON.stringify(cur));
-        } catch {}
+        // 切 Tab 后让 collectEnhSettings 根据新 Tab 计算 continueMode 并保存
+        // simple Tab → continueMode='simple'，guardian Tab → 'smart'，long-task → 不变（按钮控制）
+        saveEnhanceSettings();
       });
     });
 
     // ── 守护面板 + 长任务面板的所有勾选/输入 ──
     const enhSettingsEls = [
       enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled,
+      enhShowHealthPanel,
       enhStatusBarEnabled, enhStatusBarPosition, enhStatusBarStyle, enhSbShowPool, enhSbShowAutoSwitch, enhSbShowInstance,
       // 守护模式
       enhGdAutoContinueBtn, enhGdAutoRetry, enhGdAutoSendOnToolLimit,
@@ -5276,6 +5323,16 @@
     enhSettingsEls.forEach(el => {
       if (el) el.addEventListener('change', saveEnhanceSettings);
     });
+    // 简单模式冷却时间
+    const enhSimpleCooldownEl = document.getElementById('enhSimpleCooldown');
+    if (enhSimpleCooldownEl) enhSimpleCooldownEl.addEventListener('change', saveEnhanceSettings);
+
+    // 「显示测活面板」开关切换时即时联动侧栏 details 显隐
+    if (enhShowHealthPanel) {
+      enhShowHealthPanel.addEventListener('change', () => {
+        applyHealthPanelVisibility(enhShowHealthPanel.checked);
+      });
+    }
 
     // ── 长任务：队列添加（按钮 + Enter 键） ──
     function addQueueItem() {
@@ -5293,41 +5350,39 @@
     });
 
     // ── 长任务：控制按钮 ──
-    // 通过修改 continueMode 并保存来触发注入脚本的 applySettingsChange
+    // 通过修改 _ltRunning 状态并保存来触发注入脚本的 applySettingsChange
+    // collectEnhSettings 会根据 _ltRunning + Tab 自动推断 continueMode：
+    //   _ltRunning=true                → 'brainless'
+    //   _ltRunning=false + 长任务 Tab  → 'simple'（v7.7.9 新默认）
+    //   _ltRunning=false + 守护 Tab    → 'smart'
+    //   _ltRunning=false + 简单 Tab    → 'simple'
     if (acStartBtn) acStartBtn.addEventListener('click', () => {
       _ltRunning = true;
       updateLtState('running');
-      saveLtMode('brainless');
+      saveEnhanceSettings();  // → continueMode='brainless'
     });
     if (acPauseBtn) acPauseBtn.addEventListener('click', () => {
       _ltRunning = false;
       updateLtState('paused');
-      saveLtMode('smart');
+      saveEnhanceSettings();  // → continueMode='simple'（暂停期间走简单模式兜底）
     });
     if (acResumeBtn) acResumeBtn.addEventListener('click', () => {
       _ltRunning = true;
       updateLtState('running');
-      saveLtMode('brainless');
+      saveEnhanceSettings();  // → continueMode='brainless'
     });
     if (acStopBtn) acStopBtn.addEventListener('click', () => {
       _ltRunning = false;
       updateLtState('idle');
-      saveLtMode('smart');
+      saveEnhanceSettings();  // → continueMode='simple'
     });
     if (acForceStopBtn) acForceStopBtn.addEventListener('click', () => {
       _ltRunning = false;
       updateLtState('idle');
-      saveLtMode('smart');
+      saveEnhanceSettings();  // → continueMode='simple'
       // G5: 发送 force-stop 命令清空输入框 + 取消待执行操作
       vscode.postMessage({ type: 'enhForceStop' });
     });
-    // 辅助函数：保存设置并强制覆盖 continueMode
-    function saveLtMode(mode) {
-      const s = collectEnhSettings();
-      s.continueMode = mode;
-      try { localStorage.setItem('ws-better-settings', JSON.stringify(s)); } catch {}
-      vscode.postMessage({ type: 'enhSave', settings: s });
-    }
 
     // 模型优先级添加
     if (modelPriorityAdd) {

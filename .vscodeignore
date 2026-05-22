@@ -19,6 +19,8 @@ scripts/**
 _reverse_wf_dialog/**
 wf-dialog-mcp-*.vsix
 devin_result.png
+# 临时参考代码（外部插件分析用）
+新建文件夹/**
 
 # 杂项
 .gitignore

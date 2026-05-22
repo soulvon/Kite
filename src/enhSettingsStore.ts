@@ -70,3 +70,54 @@ export function mergeEnhSettings(patch: Record<string, any>): Record<string, any
   writeEnhSettings(updated);
   return updated;
 }
+
+/**
+ * 升级重置：每次版本号变化时强制将 continueMode 重置为 'simple'。
+ *
+ * 背景：v7.7.8 引入三模式互斥，simple 是新默认。但只要用户曾经手动选过守护，
+ * 就会一直停留在守护，无法享受新默认。本函数将「默认 simple」作为长期产品策略：
+ *   - 同版本内重启 → 不重复触发（尊重用户当前偏好）
+ *   - 跨版本升级 → 强制把 smart 重置为 simple（除长任务运行中和已禁用）
+ *
+ * 规则：
+ *   - `continueMode === 'smart'`     → 强制 → `'simple'`（同步 `autoContinueTab='simple'`）
+ *   - `continueMode === undefined`   → 强制 → `'simple'`
+ *   - `continueMode === 'brainless'` → 不动（避免打断长任务运行中的用户）
+ *   - `continueMode === 'simple'`    → 不动（已是新默认）
+ *   - `continueMode === 'off'`       → 不动（尊重用户明确禁用的意愿）
+ *
+ * 通过 `__defaultsAppliedAt` 字段记录上次应用版本，与传入的 `currentVersion` 对比触发。
+ * 同时清理旧的 `__migratedToSimpleV779` 标记（被版本号机制取代）。
+ *
+ * 调用时机：扩展激活时、`ensureEnhancement()` 之前。
+ */
+export function resetContinueModeOnUpgrade(currentVersion: string): {
+  changed: boolean;
+  from?: string;
+  lastVersion?: string;
+} {
+  const settings = readEnhSettings();
+  const lastVersion: string | undefined = settings.__defaultsAppliedAt;
+
+  // 同版本启动 → 跳过（一个版本周期内只触发一次，尊重用户在该版本内的偏好）
+  if (lastVersion === currentVersion) return { changed: false, lastVersion };
+
+  const from = settings.continueMode;
+  let changed = false;
+
+  if (from === undefined || from === 'smart') {
+    settings.continueMode = 'simple';
+    settings.autoContinueTab = 'simple';
+    changed = true;
+  }
+  // brainless / simple / off 保持不变
+
+  settings.__defaultsAppliedAt = currentVersion;
+  // 清理旧的一次性标记（被版本号机制取代）
+  if ('__migratedToSimpleV779' in settings) {
+    delete settings.__migratedToSimpleV779;
+  }
+
+  writeEnhSettings(settings);
+  return { changed, from, lastVersion };
+}

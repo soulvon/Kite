@@ -2767,6 +2767,14 @@ button.primary:active { transform: scale(0.98); }
 }
 .v2-segment-slider.right { transform: translateX(calc(100% + 6px)); }
 
+/* 三段版本：每段 1/3 宽度，slider 通过 pos-0/1/2 三个 class 切换位置 */
+.v2-segment.v2-segment-3 .v2-segment-slider {
+    width: calc(33.333% - 2px);
+}
+.v2-segment.v2-segment-3 .v2-segment-slider.pos-0 { transform: translateX(0); }
+.v2-segment.v2-segment-3 .v2-segment-slider.pos-1 { transform: translateX(calc(100% + 3px)); }
+.v2-segment.v2-segment-3 .v2-segment-slider.pos-2 { transform: translateX(calc(200% + 6px)); }
+
 /* ─── Long Task Status ─── */
 .v2-lt-status {
     display: flex; align-items: center; gap: 10px;

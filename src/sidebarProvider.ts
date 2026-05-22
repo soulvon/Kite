@@ -34,10 +34,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _startTs = Date.now();
   private _healthCheckAbort?: AbortController;
   private _logFilePath: string;
+  private _diagnoseLogPath: string;
   private _autoSwitcher: AutoSwitcher;
   private _usageTracker: UsageTracker;
   private _lastSoundTs = 0; // 防重：上次播放时间戳
   private _lastUsagePercent = new Map<string, number>(); // 上次额度快照，用于检测额度减少
+  private _lastDiagnoseTs = 0; // 诊断日志写入时间戳，用于增量写入
 
   constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext, autoSwitcher: AutoSwitcher, usageTracker: UsageTracker) {
     this._usageTracker = usageTracker;
@@ -46,6 +48,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       fs.mkdirSync(this._context.globalStorageUri.fsPath, { recursive: true });
     } catch {}
     this._logFilePath = path.join(this._context.globalStorageUri.fsPath, 'windsurf-pool.log');
+    this._diagnoseLogPath = path.join(this._context.globalStorageUri.fsPath, 'diagnose.log');
     // 每次启动在文件头写分隔符
     try {
       const header = `\n\n==================== ${new Date().toISOString()} ====================\n`;
@@ -162,6 +165,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }
           if (Array.isArray(result.payload.diagnoseLogs)) {
             this._context.globalState.update('diagnoseLogs', result.payload.diagnoseLogs);
+            this._writeDiagnoseLogs(result.payload.diagnoseLogs);
           }
           return;
         }
@@ -231,9 +235,38 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     try { fs.appendFileSync(this._logFilePath, line + '\n', 'utf8'); } catch {}
   }
 
+  /** 写诊断日志到文件（增量追加，文件过大时截断） */
+  private _writeDiagnoseLogs(logs: any[]) {
+    try {
+      // 只写比上次更新的日志
+      const newLogs = logs.filter((l: any) => l.ts && l.ts > this._lastDiagnoseTs);
+      if (newLogs.length === 0) return;
+      this._lastDiagnoseTs = Math.max(...newLogs.map((l: any) => l.ts || 0));
+
+      const lines = newLogs.map((l: any) => {
+        const ts = l.ts ? new Date(l.ts).toISOString() : 'N/A';
+        const stage = l.stage || 'unknown';
+        const reason = l.reason || '';
+        const hit = l.hitText ? l.hitText.substring(0, 120) : '';
+        const extra = l.candidates ? `candidates=${l.candidatesCount || 0}` : 
+                      l.category ? `cat=${l.category} act=${l.action || ''}` : '';
+        return `[${ts}] [${stage}] ${reason} | hit="${hit}" ${extra}`;
+      }).join('\n');
+
+      fs.appendFileSync(this._diagnoseLogPath, lines + '\n', 'utf8');
+      // 文件过大截断（保留后 200KB）
+      const stat = fs.statSync(this._diagnoseLogPath);
+      if (stat.size > 500 * 1024) {
+        const buf = fs.readFileSync(this._diagnoseLogPath);
+        fs.writeFileSync(this._diagnoseLogPath, buf.slice(-200 * 1024));
+      }
+    } catch {}
+  }
+
   /** 显示日志面板 */
   public showLog() {
     this._output.appendLine(`日志文件: ${this._logFilePath}`);
+    this._output.appendLine(`诊断日志: ${this._diagnoseLogPath}`);
     this._output.show(true);
   }
 
@@ -1820,6 +1853,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
           <div class="v2-divider"></div>
 
+          <!-- 侧栏面板 -->
+          <div>
+            <div class="v2-section-title">侧栏面板</div>
+            <div class="v2-strip">
+              <div class="v2-strip-band c-blue"></div>
+              <div class="v2-strip-info">
+                <span class="v2-strip-name">显示测活面板</span>
+                <span class="v2-strip-desc">在侧栏底部显示「测活面板」入口（默认关闭）</span>
+              </div>
+              <div class="v2-mini-toggle" id="enhShowHealthPanelToggle" data-target="enhShowHealthPanel"></div>
+              <input type="checkbox" id="enhShowHealthPanel" hidden>
+            </div>
+          </div>
+
+          <div class="v2-divider"></div>
+
           <!-- 回复建议提示设置 -->
           <div>
             <div class="v2-section-title">回复建议提示</div>
@@ -2173,11 +2222,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               </div>
             </div>
             <!-- Segment Tab -->
-            <div class="v2-segment">
-              <input type="radio" name="acTab" id="acTabGuardian" value="guardian" checked>
+            <div class="v2-segment v2-segment-3">
+              <input type="radio" name="acTab" id="acTabSimple" value="simple" checked>
+              <label for="acTabSimple" class="v2-segment-label">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+                简单
+              </label>
+              <input type="radio" name="acTab" id="acTabGuardian" value="guardian">
               <label for="acTabGuardian" class="v2-segment-label">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                守护模式
+                守护
               </label>
               <input type="radio" name="acTab" id="acTabLongTask" value="long-task">
               <label for="acTabLongTask" class="v2-segment-label">
@@ -2187,8 +2241,31 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               <div class="v2-segment-slider" id="acSegmentSlider"></div>
             </div>
 
+            <!-- 简单模式 -->
+            <div class="ac-section-panel" id="acPanelSimple">
+              <div class="v2-strip">
+                <div class="v2-strip-band c-emerald"></div>
+                <div class="v2-strip-info"><span class="v2-strip-name">触发条件</span><span class="v2-strip-desc">检测 AI 异常停止时显示的三角警告图标</span></div>
+              </div>
+              <div class="v2-strip">
+                <div class="v2-strip-band c-blue"></div>
+                <div class="v2-strip-info"><span class="v2-strip-name">执行动作</span><span class="v2-strip-desc">自动在输入框写入 continue 并发送</span></div>
+              </div>
+              <div class="v2-strip">
+                <div class="v2-strip-band c-violet"></div>
+                <div class="v2-strip-info"><span class="v2-strip-name">冷却间隔</span><span class="v2-strip-desc">连续触发最小间隔，避免重复发送</span></div>
+                <div style="display:flex;align-items:center;gap:4px;margin-left:auto">
+                  <input type="number" id="enhSimpleCooldown" min="1" max="60" value="3" style="width:48px;padding:2px 4px;text-align:center;border-radius:4px;border:1px solid var(--border-subtle);background:var(--input-bg);color:inherit">
+                  <span style="font-size:11px;color:var(--muted)">秒</span>
+                </div>
+              </div>
+              <div style="margin-top:8px;padding:8px 10px;background:rgba(16,185,129,0.06);border-left:2px solid #10b981;border-radius:4px;font-size:11px;color:var(--muted);line-height:1.5">
+                极简模式，仅做一件事：AI 出错停止 → 发 continue。不依赖文本和语言，跨界面更新通用。如需点击「继续回复」按钮、自动重试、自动批准权限等更多能力，请切换到「守护」模式。
+              </div>
+            </div>
+
             <!-- 守护模式 -->
-            <div class="ac-section-panel" id="acPanelGuardian">
+            <div class="ac-section-panel" id="acPanelGuardian" style="display:none">
               <div class="v2-strip">
                 <div class="v2-strip-band c-emerald"></div>
                 <div class="v2-strip-info"><span class="v2-strip-name">自动续写</span><span class="v2-strip-desc">自动点击「继续回复」按钮</span></div>
@@ -2728,8 +2805,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           </div>
         </details>
 
-        <!-- 测活面板 -->
-        <details class="usage-stats-details health-panel-details" id="healthPanelDetails">
+        <!-- 测活面板（默认隐藏，由 Windsurf 增强里的「显示测活面板」开关控制） -->
+        <details class="usage-stats-details health-panel-details" id="healthPanelDetails" hidden>
           <summary class="usage-stats-summary health-panel-summary">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
             <span>测活面板</span>

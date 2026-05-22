@@ -212,6 +212,7 @@ export async function injectSession(
   // 用户可通过 windsurfPool.preflightSwitchCheck 关闭以提升切号速度。force=true 时（用户已确认）也跳过预检。
   const preflightEnabled = vscode.workspace.getConfiguration('windsurfPool').get<boolean>('preflightSwitchCheck', true);
   const skipPreflight = options?.force === true;
+  console.log(`[injectSession][#${seqNo}] 预检配置: preflightEnabled=${preflightEnabled}, force=${skipPreflight}`);
   if (preflightEnabled && !skipPreflight) {
     const ready = await checkCascadeSendReady(account, DEFAULT_CASCADE_CHECK_MODEL);
     if (!ready.ok) {
