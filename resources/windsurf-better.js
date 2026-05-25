@@ -137,7 +137,71 @@
 			localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
 		} catch {}
 	}
-	
+
+	// v7.8.5: 待同步设置队列（同 origin localStorage 可写，跨进程不丢）
+	// 解决死锁：bridge 未就绪时补丁端本地改的 settings 无法回写 enh-settings.json，
+	// 重启 Windsurf 后 injected.__WS_BETTER_INJECTED_SETTINGS__ 会覆盖回旧值。
+	// 通过队列暂存 + bridge 就绪时回放 → 持久化到 enh-settings.json + 重写 workbench.html。
+	const PENDING_ENH_PATCH_KEY = 'ws-pending-enh-patch';
+	function enqueuePendingEnhPatch(patch) {
+		if (!patch || typeof patch !== 'object') return;
+		try {
+			const raw = localStorage.getItem(PENDING_ENH_PATCH_KEY);
+			const list = raw ? JSON.parse(raw) : [];
+			list.push({ ts: Date.now(), patch });
+			while (list.length > 50) list.shift();
+			localStorage.setItem(PENDING_ENH_PATCH_KEY, JSON.stringify(list));
+			console.log('[ws-better][enh-patch] 入队: ' + Object.keys(patch).join(','));
+		} catch {}
+	}
+	// 注意：不能用 bridgePostResult，它静默吞所有错误（fetch 失败也不抛），
+	// 这里需要明确知道扩展端是否真的收到，否则误清队列会导致数据丢失。
+	async function flushPendingEnhPatch() {
+		let list;
+		try {
+			const raw = localStorage.getItem(PENDING_ENH_PATCH_KEY);
+			list = raw ? JSON.parse(raw) : [];
+		} catch { return; }
+		if (!list || list.length === 0) return;
+		// bridge 没配置端口/token 直接 return，下次就绪自动再调
+		if (typeof getBridgeUrl !== 'function' || typeof getBridgeHeaders !== 'function') return;
+		const base = getBridgeUrl();
+		if (!base) return;
+		// 多条 patch 后入覆盖前入（用户的最新意图为准）
+		const merged = {};
+		for (const item of list) {
+			if (item && item.patch) Object.assign(merged, item.patch);
+		}
+		if (Object.keys(merged).length === 0) {
+			try { localStorage.removeItem(PENDING_ENH_PATCH_KEY); } catch {}
+			return;
+		}
+		console.log('[ws-better][enh-patch] 回放 → 扩展: ' + Object.keys(merged).join(','));
+		let ok = false;
+		try {
+			const ctrl = new AbortController();
+			const tid = setTimeout(() => ctrl.abort(), 5000);
+			const res = await fetch(base + '/result', {
+				method: 'POST',
+				headers: getBridgeHeaders(),
+				body: JSON.stringify({ type: 'enh-settings-patch', patch: merged, ts: Date.now() }),
+				signal: ctrl.signal,
+			});
+			clearTimeout(tid);
+			ok = !!(res && res.ok);
+			if (!ok) console.warn('[ws-better][enh-patch] 回放 HTTP 失败 status=' + (res && res.status));
+		} catch (e) {
+			console.warn('[ws-better][enh-patch] 回放网络失败:', e && e.message || e);
+		}
+		// 关键：只有扩展端真正 ack（HTTP 200）才清队列，失败时保留下次自动重试
+		if (ok) {
+			try { localStorage.removeItem(PENDING_ENH_PATCH_KEY); } catch {}
+			console.log('[ws-better][enh-patch] ✓ 已持久化，队列清空');
+		} else {
+			console.log('[ws-better][enh-patch] 队列保留，下次 bridge 就绪重试');
+		}
+	}
+
 	let settings = loadSettings();
 	// 启动时把合并后的真相同步回 localStorage，保证 windsurf-better.js 自己的设置面板
 	// 在不重启的情况下也能反映侧栏改动
@@ -477,9 +541,34 @@
 	
 	function submitBubbleText(text) {
 		if (!text) return;
+		// v7.8.3: 提前短路 — bubbles 已关掉时根本不该写入输入框
+		if (!settings.bubblesEnabled) {
+			console.log(LOG_PREFIX + '[Bubbles] submitBubbleText 短路: bubblesEnabled=false');
+			return;
+		}
+		// v7.8.3: 抽取清空残留 helper（与 sendContinueMessage 的 before-trySend 一致）
+		const _cleanupBubbleResidual = (stage) => {
+			const cleanupEl = findInputEl();
+			if (cleanupEl) {
+				try { cleanupEl.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch {}
+			}
+			console.log(LOG_PREFIX + '[Bubbles] ' + stage + ' 短路: bubbles 已关闭，已清空输入框残留');
+		};
 		setInputText(text).then(ok => {
-			if (!ok || !settings.bubblesAutoSend) return;
-			setTimeout(() => trySendMessage(), 400);
+			if (!ok) return;
+			// v7.8.3: setInputText 完成后立即检查 — bubbles 总开关或 autoSend 关掉时清残留
+			if (!settings.bubblesEnabled || !settings.bubblesAutoSend) {
+				_cleanupBubbleResidual('post-setInput');
+				return;
+			}
+			// v7.8.2: setTimeout 400ms 内用户可能关掉 bubblesEnabled / bubblesAutoSend，闭包内独立短路
+			setTimeout(() => {
+				if (!settings.bubblesEnabled || !settings.bubblesAutoSend) {
+					_cleanupBubbleResidual('setTimeout');
+					return;
+				}
+				trySendMessage();
+			}, 400);
 		});
 	}
 	
@@ -2345,7 +2434,8 @@
 			console.log(LOG_PREFIX + '[SimpleContinue] 检测到错误图标，自动发送 continue (#' + _simpleContinueRetryCount + ')');
 
 			try {
-				const sent = await sendContinueMessage();
+				// v7.8.4: 传 'simple' — 用户从 simple 切到其他模式时，已 in-flight 的发送立即中断
+				const sent = await sendContinueMessage(null, 'simple');
 				if (!sent) {
 					// 发送失败，回滚计数
 					_simpleContinueRetryCount = Math.max(0, _simpleContinueRetryCount - 1);
@@ -3287,9 +3377,30 @@
 			console.log(LOG_PREFIX + '[Recovery] 冷却中，跳过');
 			return false;
 		}
+		// v7.8.3: 写入前先检查 autoRecoveryEnabled（与调用方 executeAfterAction 一致）
+		if (!settings.autoRecoveryEnabled) {
+			console.log(LOG_PREFIX + '[Recovery] sendInputAndClick 短路: autoRecoveryEnabled=false');
+			return false;
+		}
 		if (!await setInputText(text)) return false;
+		// v7.8.3: setInputText 内部有 await 链，写入完成后再次检查 — 用户在 await 期间关开关时清空残留
+		if (!settings.autoRecoveryEnabled) {
+			console.log(LOG_PREFIX + '[Recovery] sendInputAndClick 短路 @ post-setInput: autoRecoveryEnabled=false');
+			const cleanupEl = findInputEl();
+			if (cleanupEl) {
+				try { cleanupEl.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch {}
+			}
+			return false;
+		}
 		markActionClick();
-		setTimeout(() => trySendMessage(), 400);
+		setTimeout(() => {
+			// v7.8.3: setTimeout 闭包内独立短路 — 400ms 内用户可能关闭自动恢复
+			if (!settings.autoRecoveryEnabled) {
+				console.log(LOG_PREFIX + '[Recovery] sendInputAndClick setTimeout 短路: autoRecoveryEnabled=false');
+				return;
+			}
+			trySendMessage();
+		}, 400);
 		return true;
 	}
 
@@ -3383,6 +3494,76 @@
 		// 自动隐藏（4s）
 		clearTimeout(toast._hideTimer);
 		toast._hideTimer = setTimeout(hideToast, 4000);
+	}
+
+	// v7.8.5: 专用 bridge 未就绪 toast（带「关闭自动切号」按钮，绕过 bridge 直接改本端 settings）
+	// 不自动消失，必须用户主动点按钮 —— 这是死锁的应急出口
+	function showBridgeNotReadyToast() {
+		try { sessionStorage.setItem('ws-bridge-warn-shown', '1'); } catch {}
+		try { document.getElementById('ws-bridge-warn-toast')?.remove(); } catch {}
+		const toast = document.createElement('div');
+		toast.id = 'ws-bridge-warn-toast';
+		toast.style.cssText = [
+			'position:fixed', 'top:80px', 'right:20px',
+			'max-width:420px', 'min-width:280px',
+			'background:rgba(30,30,36,0.96)',
+			'backdrop-filter:blur(16px) saturate(1.4)',
+			'-webkit-backdrop-filter:blur(16px) saturate(1.4)',
+			'color:#e6edf3', 'padding:0',
+			'border-radius:12px',
+			'font-size:12.5px', 'font-weight:500', 'line-height:1.45',
+			'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Inter",sans-serif',
+			'z-index:2147483647',
+			'border:1px solid rgba(245,158,11,0.25)',
+			'box-shadow:0 8px 32px rgba(0,0,0,0.55),0 2px 8px rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,255,0.04)',
+			'transition:opacity 0.3s cubic-bezier(0.4,0,0.2,1),transform 0.3s cubic-bezier(0.4,0,0.2,1)',
+			'pointer-events:auto', 'overflow:hidden',
+			'opacity:0', 'transform:translateX(16px) scale(0.96)',
+		].join(';');
+		setSafeHTML(toast,
+			'<div style="display:flex;align-items:stretch">'
+			+ '<div style="width:3px;background:#f59e0b;flex-shrink:0;border-radius:12px 0 0 12px"></div>'
+			+ '<div style="padding:12px 14px;flex:1;min-width:0">'
+			+   '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'
+			+     '<div style="width:26px;height:26px;border-radius:7px;background:rgba(245,158,11,0.12);display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="font-size:13px">⚠️</span></div>'
+			+     '<span style="color:#e2e8f0;font-size:12.5px;font-weight:600">自动切号未激活</span>'
+			+   '</div>'
+			+   '<div style="color:#94a3b8;font-size:11.5px;line-height:1.5;margin-bottom:10px">'
+			+     '号池侧栏未打开，bridge 通道未就绪。<br/>'
+			+     '— 打开侧栏即可激活；<br/>'
+			+     '— 或永久关闭自动切号。'
+			+   '</div>'
+			+   '<div style="display:flex;gap:8px;justify-content:flex-end">'
+			+     '<button id="ws-bw-disable" style="background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.3);padding:5px 10px;border-radius:6px;font-size:11.5px;cursor:pointer;font-weight:500">关闭自动切号</button>'
+			+     '<button id="ws-bw-ack" style="background:rgba(148,163,184,0.12);color:#cbd5e1;border:1px solid rgba(148,163,184,0.2);padding:5px 10px;border-radius:6px;font-size:11.5px;cursor:pointer;font-weight:500">我知道了</button>'
+			+   '</div>'
+			+ '</div>'
+			+ '</div>');
+		document.body.appendChild(toast);
+		requestAnimationFrame(() => {
+			toast.style.opacity = '1';
+			toast.style.transform = 'translateX(0) scale(1)';
+		});
+		function hide() {
+			toast.style.opacity = '0';
+			toast.style.transform = 'translateX(16px) scale(0.96)';
+			setTimeout(() => { try { toast.remove(); } catch {} }, 350);
+		}
+		const disableBtn = toast.querySelector('#ws-bw-disable');
+		const ackBtn = toast.querySelector('#ws-bw-ack');
+		if (disableBtn) disableBtn.onclick = function() {
+			settings.autoSwitchEnabled = false;
+			try { saveSettings(settings); } catch {}
+			// v7.8.5: 入待同步队列 + 立即尝试 flush，确保下次启动 Windsurf 也是关闭状态
+			//   - bridge 就绪：立即推到扩展端，mergeEnhSettings + ensureEnhancement → 持久化
+			//   - bridge 未就绪：留在 localStorage 队列里，下次就绪自动回放
+			enqueuePendingEnhPatch({ autoSwitchEnabled: false });
+			flushPendingEnhPatch();
+			console.log(LOG_PREFIX + '[Recovery] 用户从 toast 关闭了自动切号（绕过 bridge）');
+			hide();
+			showRecoveryNotification('已关闭自动切号 ✓ 已持久化', 'success');
+		};
+		if (ackBtn) ackBtn.onclick = hide;
 	}
 
 	// ========== 恢复日志 ==========
@@ -3701,6 +3882,20 @@
 
 		function execute() {
 			if (_bannerState && _bannerState.timer) clearInterval(_bannerState.timer);
+			// v7.8.2: 倒计时（5-15s）期间用户可能关掉子开关 → 执行前再过一次 isActionDisabled
+			// 修补 v6.6.4 Bug B 的姊妹漏洞：banner 显示时按钮置灰，但倒计时结束自动 execute 时未再检查
+			if (isActionDisabled(chosen)) {
+				const label = ACTION_LABEL[chosen] || chosen;
+				console.log(LOG_PREFIX + '[Recovery] Banner execute 前发现 [' + chosen + '] 已被子开关禁用，取消执行');
+				try { showRecoveryNotification('动作「' + label + '」已被关闭，跳过自动执行', 'error'); } catch {}
+				// 走 cancel 流程清理 banner UI（避免视觉残留）
+				banner.style.opacity = '0';
+				banner.style.transform = 'translateY(8px) scale(0.96)';
+				setTimeout(() => { try { banner.remove(); } catch {} }, 250);
+				_bannerState = null;
+				try { opts.onCancel && opts.onCancel(); } catch {}
+				return;
+			}
 			const remember = !!banner.querySelector('.ws-rb-remember')?.checked;
 			if (remember) saveRecoveryPref(category, chosen);
 			// 关闭 banner
@@ -3787,11 +3982,18 @@
 	// - async 化 + await sendContinueMessage 拿真实结果
 	// - 失败时最多重试 1 次（共 2 次），每次重试前检查 isAIGenerating 避免对生成中的 AI 发送
 	// - 全失败时 toast 提示用户「请手动发送」
+	// v7.8.2 修订：
+	// - 每个 await 后重新检查 autoRecoveryEnabled / continueMode，避免重试循环（最长 6s）变成僵尸
 	async function executeAfterAction(afterAction, opts) {
 		opts = opts || {};
 		const action = afterAction || 'auto';
 		if (action === 'none') return;
 		if (action === 'retry-message') {
+			// v7.8.2: 真正发送前检查总开关（lastUserMessage 是历史值，关 autoRecovery 后不该重发）
+			if (!settings.autoRecoveryEnabled) {
+				console.log(LOG_PREFIX + '[Recovery] executeAfterAction 短路: retry-message 时 autoRecoveryEnabled=false');
+				return;
+			}
 			console.log(LOG_PREFIX + '[Recovery] 执行后续动作: 重发消息');
 			if (lastUserMessage) sendInputAndClick(lastUserMessage);
 			return;
@@ -3800,6 +4002,11 @@
 		if (action === 'auto') {
 			const retryBtn = findRetryButton();
 			if (retryBtn) {
+				// v7.8.2: 点 retry 按钮前检查 autoRecovery + guardian.autoRetry
+				if (!settings.autoRecoveryEnabled || (settings.guardian && settings.guardian.autoRetry === false)) {
+					console.log(LOG_PREFIX + '[Recovery] executeAfterAction 短路: auto 路径 retry 按钮被开关禁用');
+					return;
+				}
 				console.log(LOG_PREFIX + '[Recovery] auto: 点击重试按钮');
 				markActionClick();
 				retryBtn.click();
@@ -3811,10 +4018,24 @@
 		// send-continue 或 auto 降级 → 进入重试循环
 		const maxAttempts = 2;
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+			// v7.8.2: 每轮循环开始时检查总开关 + 子开关
+			if (!settings.autoRecoveryEnabled) {
+				console.log(LOG_PREFIX + '[Recovery] executeAfterAction 短路 @ 循环#' + attempt + ': autoRecoveryEnabled=false');
+				return;
+			}
+			if (settings.continueMode === 'off') {
+				console.log(LOG_PREFIX + '[Recovery] executeAfterAction 短路 @ 循环#' + attempt + ': continueMode=off');
+				return;
+			}
 			// #4 修复：AI 还在生成 → 等 3s 再尝试（避免对锁定的输入框发送）
 			if (isAIGenerating()) {
 				console.log(LOG_PREFIX + '[Recovery] sendContinue 第 ' + attempt + '/' + maxAttempts + ' 次：AI 仍在生成，等 3s');
 				await new Promise(r => setTimeout(r, 3000));
+				// v7.8.2: 等待 3s 后再次检查 — 用户可能在等待期间关掉开关
+				if (!settings.autoRecoveryEnabled || settings.continueMode === 'off') {
+					console.log(LOG_PREFIX + '[Recovery] executeAfterAction 短路 @ isAIGenerating-wait#' + attempt);
+					return;
+				}
 				if (isAIGenerating()) {
 					console.log(LOG_PREFIX + '[Recovery] AI 仍生成中，跳过本次尝试');
 					continue;
@@ -3829,6 +4050,11 @@
 			if (attempt < maxAttempts) {
 				console.log(LOG_PREFIX + '[Recovery] sendContinue 失败，3s 后重试');
 				await new Promise(r => setTimeout(r, 3000));
+				// v7.8.2: 重试间隔后检查 — 用户在 3s 间隔内关开关也立即中断
+				if (!settings.autoRecoveryEnabled || settings.continueMode === 'off') {
+					console.log(LOG_PREFIX + '[Recovery] executeAfterAction 短路 @ retry-interval#' + attempt);
+					return;
+				}
 			}
 		}
 
@@ -4198,8 +4424,26 @@
 	// - #3 修复：发送验证从单次 1500ms 改为轮询 5×600ms（避免误判 + 双发送）
 	// - #5 修复：queued 路径 Enter 后也轮询验证 hasQueuedMessage 是否真的消失
 	// - #6 修复：setInputText 失败重试 2 次（共 3 次尝试）
+	// v7.8.2 修订：
+	// - 每个 await 边界后重新检查 continueMode，避免 in-flight 4-5s 内关开关仍把消息发出
+	// v7.8.4 修订：
+	// - expectedMode 参数：调用方传入自己期望的模式（'brainless'/'simple'），await 后仅验证未被切走
+	//   修复场景：长任务发送中用户点「强制停止」，sendContinueMessage 仅查 'off' 不能拦截 brainless→simple 切换
 	let _sendingContinue = false;
-	async function sendContinueMessage(customText) {
+	// v7.8.2: 统一短路 helper —— 模块级变量 settings 始终是最新值（applySettingsChange 会 Object.assign）
+	// v7.8.4: 增加 expectedMode 参数 — 调用方传入后，模式变化（如 brainless→simple）同样短路
+	function _shouldAbortContinueSend(stage, expectedMode) {
+		if (settings.continueMode === 'off') {
+			console.warn(LOG_PREFIX + '[sendContinue] in-flight 短路 @ ' + stage + '：continueMode 已变 off');
+			return true;
+		}
+		if (expectedMode && settings.continueMode !== expectedMode) {
+			console.warn(LOG_PREFIX + '[sendContinue] in-flight 短路 @ ' + stage + '：mode 从 ' + expectedMode + ' 切换到 ' + settings.continueMode);
+			return true;
+		}
+		return false;
+	}
+	async function sendContinueMessage(customText, expectedMode) {
 		// #2: continueMode=off 配置矛盾 → 弹 toast 提醒（60s 节流防 spam）
 		if (settings.continueMode === 'off') {
 			const now = Date.now();
@@ -4235,6 +4479,9 @@
 				// #5 修复：轮询验证 queued 是否真的消失（5×600ms = 3s 验证窗口）
 				for (let i = 0; i < 5; i++) {
 					await new Promise(r => setTimeout(r, 600));
+					// v7.8.2: 每轮 await 后短路 — 用户在此期间关闭总开关时立即中断
+					// v7.8.4: 同样验证 expectedMode（brainless→simple 等切换）
+					if (_shouldAbortContinueSend('queued-verify#' + (i + 1), expectedMode)) return false;
 					if (!hasQueuedMessage()) {
 						_lastContinueTs = Date.now();
 						bumpAcStat('sendMsg');
@@ -4251,9 +4498,14 @@
 			// #6 修复：setInputText 失败重试 2 次（共 3 次尝试，间隔 500ms）
 			let setOk = false;
 			for (let attempt = 0; attempt < 3; attempt++) {
+				// v7.8.2: 每次尝试前短路检查
+				if (_shouldAbortContinueSend('setInput#' + (attempt + 1), expectedMode)) return false;
 				if (await setInputText(text)) { setOk = true; break; }
 				console.log(LOG_PREFIX + '[sendContinue] setInputText 失败 #' + (attempt + 1) + '/3');
-				if (attempt < 2) await new Promise(r => setTimeout(r, 500));
+				if (attempt < 2) {
+					await new Promise(r => setTimeout(r, 500));
+					if (_shouldAbortContinueSend('setInput-retry-wait#' + (attempt + 1), expectedMode)) return false;
+				}
 			}
 			if (!setOk) {
 				console.warn(LOG_PREFIX + '[sendContinue] ⚠ setInputText 连续 3 次失败');
@@ -4262,12 +4514,23 @@
 
 			markActionClick();
 			await new Promise(r => setTimeout(r, 400));
+			// v7.8.2: 触发 trySendMessage 前最后一次短路 — 防止已写入文本但用户关掉开关，仍点了发送
+			if (_shouldAbortContinueSend('before-trySend', expectedMode)) {
+				// 清空已写入的文本残留（避免下次用户手输时撞车）
+				const cleanupEl = findInputEl();
+				if (cleanupEl) {
+					try { cleanupEl.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch {}
+				}
+				return false;
+			}
 			trySendMessage();
 
 			// #3 修复：轮询 5 次每次 600ms = 最多 3s 验证窗口（替代原单次 1500ms）
 			// 避免网络抖动/输入动画导致误判，也避免清空残留时双发送
 			for (let i = 0; i < 5; i++) {
 				await new Promise(r => setTimeout(r, 600));
+				// v7.8.2: 验证轮询期间也短路（虽然此时发送已触发，但不再继续累计统计/cooldown）
+				if (_shouldAbortContinueSend('verify#' + (i + 1), expectedMode)) return false;
 				const el = findInputEl();
 				const remaining = (el?.textContent || '').trim();
 				// 输入框已清空 或 进入 queued 状态 = 发送成功
@@ -4510,15 +4773,20 @@
 	const RECOVERY_GRACE_MS = 8000;
 
 	// bridge 未就绪时主动提醒（避免静默失效）
-	// 启动 45s 后才报：等够 sidebar 懒加载 + bridge relay + _waitBridgeReady（最长 30s）
+	// v7.8.5: 修法 A+B
+	//   A. bridge 未就绪 = 整个自动切号链路本来就不工作，不再每 120s 反复弹（避免骚扰）
+	//      改为：仅在「本会话首次扫到错误时」弹一次，sessionStorage 标记
+	//   B. toast 提供「关闭自动切号」按钮，绕过 bridge 直接改本端 settings（同 origin localStorage 可写）
+	//      → 关键解药：用户之前死循环（侧栏没开 → bridge 没就绪 → apply-settings 命令推不到补丁）
 	function _maybeWarnBridgeNotReady() {
 		if (settings.autoSwitchEnabled === false) return;
 		const now = Date.now();
 		if (now - _initTs < 45000) return;
-		if (now - _bridgeWarnTs < 120000) return;
+		// sessionStorage 标记：本会话只弹一次
+		try { if (sessionStorage.getItem('ws-bridge-warn-shown') === '1') return; } catch {}
 		_bridgeWarnTs = now;
 		console.warn(LOG_PREFIX + '[Recovery] ⚠ bridge 未就绪，请打开 Windsurf 号池侧栏激活');
-		showRecoveryNotification('⚠ 自动切号未激活：请打开 Windsurf 号池侧栏');
+		showBridgeNotReadyToast();
 	}
 
 	function startAutoRecovery() {
@@ -4788,10 +5056,9 @@
 		if (brainlessTimer) { clearInterval(brainlessTimer); brainlessTimer = null; }
 		console.log(LOG_PREFIX + '[Brainless] 停止: ' + reason);
 		showRecoveryNotification('长任务已停止: ' + reason);
-		// 长任务结束：回到默认 simple 模式（避免错误/上限停止后自动续聊静默失效）
-		settings.continueMode = 'simple';
-		try { saveSettings(settings); } catch {}
-		startSimpleContinue();
+		// v7.8.4: 走 applySettingsChange 触发可观测性日志 + 自动启动 simple 模式
+		// 避免手动 settings.continueMode = 'simple' + saveSettings + startSimpleContinue 跳过统一出口
+		applySettingsChange({ continueMode: 'simple' }, 'brainless-stop');
 		// 通知侧栏更新状态
 		bridgePostResult({ action: 'lt-stopped', reason, count: _brainlessConsecutive });
 	}
@@ -4897,7 +5164,13 @@
 		console.log(LOG_PREFIX + '[Brainless] 🤖 自动发送"' + text + '" (#' + _brainlessConsecutive + ')');
 
 		try {
-			const sent = await sendContinueMessage(text);
+			// v7.8.4: 传 'brainless' — 用户点「强制停止」后 stopBrainlessMode 会切 mode='simple'，此时立即中断避免多发一条
+			const sent = await sendContinueMessage(text, 'brainless');
+			// v7.8.4: await 后再检查一次——sendContinueMessage 可能在验证轮询中被切模返回 false，此时不应续走 sent 分支
+			if (settings.continueMode !== 'brainless') {
+				console.log(LOG_PREFIX + '[Brainless] await 后发现模式已切换到 ' + settings.continueMode + '，不更新状态');
+				return;
+			}
 			if (sent) {
 				_brainlessSendFailCount = 0;
 				markExpectingNewResponse(); // 标记等待新回复，信号2开始检测
@@ -4906,6 +5179,11 @@
 				// v6.6.0 Bug B 修复：发送后 3s 主动 poll 错误，不等下一轮 idle
 				// 避免"发完继续 → 立刻报错（如配额耗尽）→ 8s 后才反应"的死锁
 				setTimeout(() => {
+					// v7.8.4: 3s 内用户可能已停止长任务——闭包内独立短路，避免多余扫描
+					if (settings.continueMode !== 'brainless') {
+						console.log(LOG_PREFIX + '[Brainless] post-send 3s setTimeout 短路: 模式已切换');
+						return;
+					}
 					try {
 						const { text: errText2 } = getLatestErrorText();
 						if (errText2) {
@@ -4940,6 +5218,14 @@
 		_brainlessLastChangeTs = Date.now();
 		brainlessTimer = setInterval(() => {
 			if (settings.continueMode !== 'brainless') return;
+			// v7.8.5: Bridge 失联 30s+ 自动暂停长任务（防止用户失联仍狂消耗 quota）
+			//   场景：扩展崩溃 / Windsurf 后台进程死掉 / 端口异常 → 用户没法点「强制停止」（force-stop 命令也送不到）
+			//   策略：补丁端自我保护，本地停 brainlessTimer + 切回 simple 模式
+			if (_bridgeUnreadySince > 0 && Date.now() - _bridgeUnreadySince > 30000) {
+				console.warn(LOG_PREFIX + '[Brainless] ⚠ Bridge 已失联 ' + Math.round((Date.now() - _bridgeUnreadySince) / 1000) + 's，自动暂停长任务（安全保护）');
+				stopBrainlessMode('Bridge 失联 30s，自动暂停（请重新打开侧栏后继续）');
+				return;
+			}
 			// AI 正在生成 → 重置计时器
 			if (isAIGenerating()) {
 				_brainlessLastChangeTs = Date.now();
@@ -5203,6 +5489,25 @@
 		}
 	}
 	let _bridgePollFailStreak = 0;
+	// v7.8.5: 记录 bridge 失联时间，给 brainless mode 提供 stale 判定（连续失联超过阈值自动暂停长任务）
+	let _bridgeUnreadySince = 0;
+	function _markBridgeUnready(reason) {
+		if (_bridgeReady) {
+			_bridgeReady = false;
+			_bridgeUnreadySince = Date.now();
+			console.warn(LOG_PREFIX + '[bridge] ' + reason + '，标记为未就绪');
+		}
+	}
+	function _markBridgeReady(reason) {
+		const wasUnready = !_bridgeReady;
+		_bridgeReady = true;
+		_bridgeUnreadySince = 0;
+		if (wasUnready) {
+			console.log(LOG_PREFIX + '[bridge] ' + reason);
+			// 关键：bridge 从未就绪转就绪时立即回放待同步队列（彻底解决死锁）
+			setTimeout(() => { try { flushPendingEnhPatch(); } catch {} }, 300);
+		}
+	}
 	async function bridgePoll() {
 		const base = getBridgeUrl();
 		if (!base) return [];
@@ -5213,24 +5518,15 @@
 			clearTimeout(tid);
 			if (!res.ok) {
 				_bridgePollFailStreak++;
-				if (_bridgePollFailStreak >= 3 && _bridgeReady) {
-					_bridgeReady = false;
-					console.warn(LOG_PREFIX + '[bridge] 连续 3 次响应非 200，标记为未就绪');
-				}
+				if (_bridgePollFailStreak >= 3) _markBridgeUnready('连续 3 次响应非 200');
 				return [];
 			}
 			_bridgePollFailStreak = 0;
-			if (!_bridgeReady) {
-				_bridgeReady = true;
-				console.log(LOG_PREFIX + '[bridge] 心跳恢复，重新标记为就绪');
-			}
+			_markBridgeReady('心跳恢复，重新标记为就绪');
 			return await res.json();
 		} catch (e) {
 			_bridgePollFailStreak++;
-			if (_bridgePollFailStreak >= 3 && _bridgeReady) {
-				_bridgeReady = false;
-				console.warn(LOG_PREFIX + '[bridge] 连续 3 次连接失败，标记为未就绪');
-			}
+			if (_bridgePollFailStreak >= 3) _markBridgeUnready('连续 3 次连接失败');
 			return [];
 		}
 	}
@@ -5262,7 +5558,8 @@
 			console.log(LOG_PREFIX + '[bridge] ✅就绪，启动命令轮询');
 		}
 		// 标记 bridge 就绪（无论超时与否都置 true，超时后仍尝试轮询）
-		_bridgeReady = true;
+		// v7.8.5: 走 _markBridgeReady 以触发 flushPendingEnhPatch
+		_markBridgeReady('启动后首次就绪');
 		// bridge 就绪后立即推送一次日志，并定期 60s 同步，确保 globalState 始终有最新数据
 		if (_logSyncIntervalTimer) { clearInterval(_logSyncIntervalTimer); _logSyncIntervalTimer = null; }
 		setTimeout(() => _pushLogsTobridge(), 1000);
@@ -5533,6 +5830,23 @@
 		Object.assign(settings, newSettings);
 		// 持久化到本地 localStorage（保证下次加载快速读到）
 		try { saveSettings(settings); } catch {}
+
+		// v7.8.2: 关键开关变更日志 — 帮助用户/开发者排查"关了开关为什么还在动作"类 bug
+		const trackedKeys = ['continueMode', 'autoRecoveryEnabled', 'autoSwitchEnabled', 'bubblesEnabled', 'bubblesAutoSend', 'localizationEnabled', 'notifyEnabled', 'dismissCorruptEnabled', 'autoApproveWebRequests'];
+		const changedKeys = trackedKeys.filter(k => old[k] !== settings[k]);
+		if (changedKeys.length > 0) {
+			const diff = changedKeys.map(k => k + ': ' + JSON.stringify(old[k]) + ' → ' + JSON.stringify(settings[k])).join(', ');
+			console.log(LOG_PREFIX + '[apply-settings] 关键开关变更 ' + (source || '') + ': ' + diff);
+		}
+		// 嵌套对象 guardian.* 单独 diff（用户最常碰的恢复子开关）
+		const oldGuardian = old.guardian || {};
+		const newGuardian = settings.guardian || {};
+		const guardianKeys = ['autoContinueButton', 'autoRetry', 'autoSendOnToolLimit', 'autoApprovePermission', 'dismissCorrupt'];
+		const changedGuardian = guardianKeys.filter(k => oldGuardian[k] !== newGuardian[k]);
+		if (changedGuardian.length > 0) {
+			const diff = changedGuardian.map(k => 'guardian.' + k + ': ' + JSON.stringify(oldGuardian[k]) + ' → ' + JSON.stringify(newGuardian[k])).join(', ');
+			console.log(LOG_PREFIX + '[apply-settings] 守护子开关变更 ' + (source || '') + ': ' + diff);
+		}
 
 		// 响应回复建议开关变化
 		if (old.bubblesEnabled !== settings.bubblesEnabled) {

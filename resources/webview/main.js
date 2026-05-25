@@ -115,10 +115,22 @@
     const startDate = new Date(start);
     const endDate = new Date(end);
     const now = new Date();
-    const daysLeft = Math.ceil((endDate.getTime() - now.getTime()) / 86400000);
+    const diffMs = endDate.getTime() - now.getTime();
     const fmtD = (d) => (d.getMonth() + 1).toString().padStart(2, '0') + '/' + d.getDate().toString().padStart(2, '0');
     const range = fmtD(startDate) + '-' + fmtD(endDate);
-    if (daysLeft <= 0) return '已到期 (' + range + ')';
+    if (diffMs <= 0) return '已到期 (' + range + ')';
+    // 最后一天（剩余 ≤ 24h）显示具体小时/分钟
+    if (diffMs <= 86400000) {
+      const totalMin = Math.floor(diffMs / 60000);
+      const h = Math.floor(totalMin / 60);
+      const m = totalMin % 60;
+      let label;
+      if (h > 0) label = '剩余' + h + '小时' + (m > 0 ? m + '分' : '');
+      else if (m > 0) label = '剩余' + m + '分钟';
+      else label = '剩余<1分钟';
+      return label + ' (' + range + ')';
+    }
+    const daysLeft = Math.ceil(diffMs / 86400000);
     return '剩余' + daysLeft + '天 (' + range + ')';
   }
 
@@ -645,7 +657,7 @@
       <div class="grid-card-actions">
         ${isActive
           ? '<span class="grid-current-label"><span style="color:#3fb950">●</span> 使用中</span>'
-          : `<button class="grid-switch-btn" data-action="switch" ${switchingEmail === account.email ? 'disabled' : ''}>${switchingEmail === account.email ? '<span class="btn-mini-spinner"></span>检查中' : '切换'}</button>`
+          : `<button class="grid-switch-btn" data-action="switch" ${switchingEmail === account.email ? 'disabled' : ''}>${switchingEmail === account.email ? '<span class="btn-mini-spinner"></span>切换中' : '切换'}</button>`
         }
         <div class="grid-actions-right">
           <button class="status-toggle-btn ${account.disabled ? 'is-disabled' : 'is-enabled'}" data-action="toggleDisabled" title="${account.disabled ? '点击启用账号' : '点击禁用账号'}">${account.disabled ? '已禁用' : '已启用'}</button>

@@ -144,6 +144,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this._playNotifyOnce(result.tone || 'funk', result.repeat || 2, result.customTone, result.audioFile, result.sound !== false, !!result.desktop, result.title, result.body);
           return;
         }
+        // v7.8.5: 反向设置同步 —— 补丁端从 toast 等本地 UI 改的 settings，通过此通路持久化到 enh-settings.json
+        // 死锁解药：bridge 就绪后补丁端调 flushPendingEnhPatch 自动推过来；扩展端这里 mergeEnhSettings + 重写 workbench.html → 下次启动也是新值
+        if (result && result.type === 'enh-settings-patch' && result.patch && typeof result.patch === 'object') {
+          const keys = Object.keys(result.patch);
+          this.log(`[bridge ←] enh-settings-patch keys=${keys.join(',')}`);
+          try {
+            const merged = mergeEnhSettings(result.patch);
+            // 同步重写 workbench.html，保证下次启动 __WS_BETTER_INJECTED_SETTINGS__ 已是新值
+            try { ensureEnhancement(); } catch (e) { this.log(`[bridge ✗] ensureEnhancement 失败: ${(e as Error)?.message || e}`); }
+            // 通知侧栏 UI 同步显示（如果当前打开着）
+            this.postMessage({ type: 'enhSettings', settings: merged } as any);
+            // 如果改了 autoSwitchEnabled，同步给 autoSwitcher（保持双端一致）
+            if (typeof result.patch.autoSwitchEnabled === 'boolean') {
+              this._autoSwitcher.updateSettings({ enabled: result.patch.autoSwitchEnabled })
+                .catch(e => this.log(`[bridge ✗] autoSwitcher 同步失败: ${(e as Error)?.message || e}`));
+            }
+          } catch (e) {
+            this.log(`[bridge ✗] mergeEnhSettings 失败: ${(e as Error)?.message || e}`);
+          }
+          return;
+        }
         // 长任务状态通知：转发给 webview 更新 UI
         if (result?.action === 'lt-stopped') {
           this.postMessage({ type: 'ltStateUpdate', state: 'stopped', reason: result.reason, count: result.count } as any);

@@ -131,6 +131,34 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
 
+### v7.8.4
+- **🛑 B1（中优先级 Bug）：长任务停止后不再多发一条 continue**：用户在 brainless 模式发送中点「强制停止」时，已经在 `await sendContinueMessage` 中的发送会继续完成（因为 `_shouldAbortContinueSend` 只查 `'off'` 不查模式切换），导致明明点了停止仍蹦出一条"继续"。修复：`sendContinueMessage(customText, expectedMode)` 新增第二参数，每个 await 边界除查 `'off'` 外还验证 `settings.continueMode !== expectedMode`；`fireBrainlessContinue` 传 `'brainless'`，`simpleContinue.checkAndSend` 传 `'simple'`，恢复路径不传（保持原模式无关行为）。`fireBrainlessContinue` await 后再补一次 mode 检查兜底状态污染。
+- **🧹 B2（一致性）：`fireBrainlessContinue` 的 3s setTimeout 内补 mode 短路**：发送后 3s 主动错误检测的 setTimeout 闭包内未独立查模式，长任务停止后仍会跑 `checkForErrors`（虽自带 `autoRecoveryEnabled` 守门不会乱触发，但浪费 DOM 扫描）。
+- **📊 B3（可观测性）：`stopBrainlessMode` 改用 `applySettingsChange` 走统一出口**：原本直接 `settings.continueMode = 'simple' + saveSettings + startSimpleContinue` 三步手动操作，跳过 v7.8.2 的 diff log。改用 `applySettingsChange({ continueMode: 'simple' }, 'brainless-stop')` 一行替代，让长任务自动停止也出现在关键开关变更日志里（与侧栏切换路径完全一致）。
+
+### v7.8.3
+- **🔍 v7.8.2 自审修复 4 项**：完成 v7.8.2 后做了一轮代码审查，补完 4 处遗漏。
+  - **🔴 R1（拼写 Bug）**：`applySettingsChange` 的 `guardianKeys` 数组里把 `autoApprovePermission`（实际单数）误写成 `autoApprovePermissions`（多了 s），导致"自动批准权限"开关变化永远不出现在 diff log 里，可观测性失效。同时把 `dismissCorrupt` 也加进 guardianKeys（之前漏了）。
+  - **🟠 R2（同类漏网）**：`sendInputAndClick`（`executeAfterAction('retry-message')` 的实际执行路径）只检查 `isInCooldown`，未检查 `autoRecoveryEnabled`，且 `setTimeout 400ms` 闭包内也无短路。补三层短路：写入前 / `setInputText` 写入完成后（含清空残留）/ `setTimeout` 闭包内。
+  - **🟠 R3（一致性）**：`submitBubbleText` 的 setTimeout 短路时未清空 `setInputText` 已写入的 bubble 文本，留在输入框里很奇怪（与 `sendContinueMessage` 的 `before-trySend` 行为不一致）。补：抽取 `_cleanupBubbleResidual` helper，在 post-setInput / setTimeout 两处短路时都清空；并在函数开头增加 `bubblesEnabled` 提前短路（关掉了根本不该写）。
+  - **🟡 R4（UX 文案）**：banner cancel toast 显示 `动作 [send-continue] 已被关闭` 这种英文 action 名用户看不懂，改用现有 `ACTION_LABEL` 映射显示成 `动作「发继续」已被关闭`。
+- **审查方法学**：每次大修后做一次完整审查，重点查"我刚加的代码是否有遗漏的同类反模式"（这次发现 R2 是 P0-2 修改的同类漏网）+ "字段名是否真实存在"（R1）+ "新增逻辑是否与已有行为一致"（R3）+ "新增 toast 是否本地化"（R4）。
+
+### v7.8.2
+- **🧟 修复"补丁僵尸程序"问题**：关闭开关后仍执行残留动作的 5 处 in-flight 漏洞。
+  - **P0 - `sendContinueMessage`**：函数内 4-5s 长 await 链（setInputText 重试 + 验证轮询）只在入口检查一次 `continueMode === 'off'`，关掉"自动继续"总开关后已经在 await 中的发送仍会完成。修复：在所有 await 边界后重新检查，并在 `trySendMessage` 触发前最后短路（含清空输入框残留）。
+  - **P0 - `executeAfterAction`**：切号成功后的重试循环（最长 6s，AI 生成等待 3s + 重试间隔 3s）期间关 `autoRecoveryEnabled` / `continueMode` 不能中断。修复：循环开头 + 每个 await 后短路；`retry-message` 和 `auto` 路径前也补检查。
+  - **P1 - Banner 倒计时漏洞**：恢复 banner 显示时按钮按 `isActionDisabled` 置灰，但倒计时（5-15s）结束自动 execute 时不再检查。修复：execute 前最后一次 `isActionDisabled` 过滤，被禁则取消并 toast 提示。
+  - **P1 - `submitBubbleText`**：点气泡后 `setTimeout 400ms` 闭包内未独立检查 `bubblesEnabled` / `bubblesAutoSend`，关掉气泡总开关仍会发送。修复：setTimeout 内独立短路。
+  - **P2 - 可观测性**：`applySettingsChange` 内对 9 个关键开关 + 4 个 `guardian.*` 子开关做 diff 日志，方便用户/开发者排查"关了开关却还在动作"类问题。
+- **同类已修过的反模式**：`handleRetryAction` / `handleSwitchModelAction` / `checkForPoolResult` / `waitForAIIdle` 的 setTimeout 闭包（v6.6.5）；本版补完所有 `await` 边界。
+
+### v7.8.1
+- **🎨 文案修复**：切换按钮的进行中状态文案从 `检查中` 改为 `切换中`，避免与「切号预检」开关概念混淆。
+  - 原文案让人误以为关闭「切号预检」后切号还会进行某种检查
+  - 实际「切号预检」开关只影响切号前的 Cascade 限速预检（多 0.5-2s 延迟），与按钮文案无关
+  - 按钮显示「切换中」是切号操作正在执行的 UI 反馈（等 PATCHED_CMD 就绪 + 调用 SwitchAccountByPatch）
+
 ### v7.7.11
 - **🔁 每次升级都强制重置为「简单」模式**：从一次性标记（`__migratedToSimpleV779`）改为**版本号对比机制**（`__defaultsAppliedAt`）。
   - **同版本内重启** → 不触发（尊重用户在该版本周期内的偏好）

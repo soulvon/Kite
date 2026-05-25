@@ -167,65 +167,13 @@ def _check_one(args, retries=3):
             last_err = str(e)
     return email, None
 
-GITHUB_EMAIL = "wnovonw@gmail.com"
-GITHUB_PASSWORD = "743521.locky"
+GITHUB_EMAIL = "your_github_email@gmail.com"
+GITHUB_PASSWORD = "your_github_password"
 
 DEVIN_ACCOUNTS = [
-    # ===== 用户提供的新批次与混合历史列表 =====
-    ("capcaseeir@gmail.com", "i17syial0"),
-    ("caresserw@gmail.com", "l97f3qu5gku"),
-    ("lupulusdb@gmail.com", "a20hk534nk"),
-    ("italicty8@gmail.com", "2t45geqy2s"),
-    ("untincxd3@gmail.com", "mcbe3o29fo"),
-    ("vhke54199054983@gmail.com", "c4wqz5gw3NrYgb"),
-    ("vgawne24@gmail.com", "lqmspV37PPB63U"),
-    ("vcwele789483633@gmail.com", "41H9iTtJ2vO5U8"),
-    ("vhfhqr629369@gmail.com", "0zPbSsLbA299wW"),
-    ("vela34646346532@gmail.com", "eUC95EaxQZcK0d"),
-    ("vcsflc016763041@gmail.com", "g4A5CcJK34RveS"),
-    ("vewwym6010672@gmail.com", "x5T4BiNE6JLxgA"),
-    ("vicjdy51012542@gmail.com", "x0g2Y524vRT5L4"),
-
-    ("lyonsmarleigh51@gmail.com", "UBphmt2K9933"),
-    ("gracelynnburns955@gmail.com", "9Apbcl4Nb1qk"),
-    ("phrmcrtr@gmail.com", "mpRPQMYu0wOn"),
-    ("woodwardemersyn316@gmail.com", "1SNPNLJv5233"),
-    ("zayneshaw20@gmail.com", "6sbo8N0x8REL"),
-
-    ("challotef6@gmail.com", "3bc6c8bi"),
-    ("david2657179318@gmail.com", "OqRGYn6%%k5$xB"),
-    ("nlam8447915725@gmail.com", "2gd$##Bv5xEcKx"),
-    ("williamwallace089273008@gmail.com", "bsIOSBHukJ@1tG"),
-    ("hmontgomery3447188@gmail.com", "HEU2Bg$ro%B8Wh"),
-    ("jameswilliams464918@gmail.com", "T3Kb7Wm%mvTN#4"),
-    ("robert31565211@gmail.com", "fF$27@#MLHfpxM"),
-
-    ("yfgeiel88379@gmail.com", "kY83Pti4MpRBKRmX"),
-    ("yflis6628090518@gmail.com", "EgWj3Um#C@sBpPup"),
-    ("ybbgv79218665@gmail.com", "!0mydwnAlVLNqfVN"),
-    ("ynwf55569497@gmail.com", "dxsdoZYcaU!kmw6P"),
-    ("yhfhwqv82532894@gmail.com", "N@mFi!OdtUH@$!1D"),
-    ("ydcxk2959657@gmail.com", "qWdODvZr6BdEauyf"),
-    ("ypebplx661157@gmail.com", "$wTyV6jkcFoEa0LL"),
-    ("ygpnrk45440650@gmail.com", "k1b4JdfWKA0IYKxj"),
-    ("ygwvgp055466674@gmail.com", "B!QvjWFE1xxjuE7l"),
-    ("ygevtv729046551@gmail.com", "Pl5BcvKbwSFGmKW5"),
-
-    ("patricia0381269566@gmail.com", "Hg0hT8Glg0Sg"),
-    ("heidi21344801@gmail.com", "e3jN4etuXcDn"),
-    ("antonio349584140204@gmail.com", "dvtvmgdeSZg6"),
-    ("odavis594507@gmail.com", "mEhcrN3MpJ6G"),
-    ("timothywarren086067471@gmail.com", "in9kEiKA3kNO"),
-
-    ("wayne19910806@proton.me", "LJs76XLYnqmuNC"),
-    ("carol19931225@proton.me", "LJZWsxSqIq8uoK"),
-    ("marie20050309@proton.me", "LJDTnq2LrSjkae"),
-    ("harry19910724@proton.me", "LJqPsTLBw21DDw"),
-    ("sienna20000223@proton.me", "LJndq9JLS1amKf"),
-    ("edgar19990603@proton.me", "LJ9c86hOvFdbEa"),
-    ("sofia19910826@proton.me", "LJ2Z5tLBtbRJt6"),
-    ("maggie19940410@proton.me", "LJM1U8adO2ZbVC"),
-    ("kurt19960912@proton.me", "LJRWXys0KsUK62"),
+    # 在此填入你的账号列表，格式：("email", "password")
+    # ("example1@gmail.com", "password1"),
+    # ("example2@gmail.com", "password2"),
 ]
 
 
