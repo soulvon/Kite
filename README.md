@@ -131,6 +131,22 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
 
+### v7.8.9
+- **📤 选择性导出**：多选模式下新增「导出」按钮，可只导出选中的账号，无需全部导出。
+
+### v7.8.8
+- **⚡ 快速批量导入**：从文件导入已存储账号（有 apiKey）时，一次性批量写入，秒级完成。无需逐个等待。
+- **🔧 UI 修复**：批量导入按钮大小对齐。
+
+### v7.8.7
+- **📂 从文件导入**：JSON 导入 Tab 新增「从文件导入」按钮，可直接选择本插件导出的 JSON 文件一键导入，无需手动复制粘贴。
+
+### v7.8.6
+- **⏸ 批量导入暂停/取消按钮**：导入进度弹窗新增「暂停」和「取消」控制按钮。
+  - **暂停**：点击后暂停导入，按钮变为「继续」，再次点击恢复
+  - **取消**：立即终止导入，显示已完成的结果和剩余未导入数量
+  - 取消后支持重试失败项（与正常完成一致）
+
 ### v7.8.4
 - **🛑 B1（中优先级 Bug）：长任务停止后不再多发一条 continue**：用户在 brainless 模式发送中点「强制停止」时，已经在 `await sendContinueMessage` 中的发送会继续完成（因为 `_shouldAbortContinueSend` 只查 `'off'` 不查模式切换），导致明明点了停止仍蹦出一条"继续"。修复：`sendContinueMessage(customText, expectedMode)` 新增第二参数，每个 await 边界除查 `'off'` 外还验证 `settings.continueMode !== expectedMode`；`fireBrainlessContinue` 传 `'brainless'`，`simpleContinue.checkAndSend` 传 `'simple'`，恢复路径不传（保持原模式无关行为）。`fireBrainlessContinue` await 后再补一次 mode 检查兜底状态污染。
 - **🧹 B2（一致性）：`fireBrainlessContinue` 的 3s setTimeout 内补 mode 短路**：发送后 3s 主动错误检测的 setTimeout 闭包内未独立查模式，长任务停止后仍会跑 `checkForErrors`（虽自带 `autoRecoveryEnabled` 守门不会乱触发，但浪费 DOM 扫描）。

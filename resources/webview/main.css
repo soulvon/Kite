@@ -2175,11 +2175,27 @@ button.primary {
     border: none;
     cursor: pointer;
     transition: all 0.15s;
-    width: 100%;
-    margin-top: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 button.primary:hover { background: #059669; }
 button.primary:active { transform: scale(0.98); }
+
+/* Secondary button (used in modals) */
+button.secondary {
+    padding: 7px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 6px;
+    background: var(--subtle-bg);
+    color: var(--vscode-foreground);
+    border: 1px solid var(--card-border);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+button.secondary:hover { background: var(--hover-bg); border-color: var(--ac-emerald); }
+button.secondary:active { transform: scale(0.98); }
 
 /* Instance create specific */
 .inst-create.v2-hint {
@@ -2254,6 +2270,39 @@ button.primary:active { transform: scale(0.98); }
     box-shadow: 0 2px 6px rgba(16, 185, 129, 0.25);
 }
 
+/* Batch file import bar */
+.batch-file-import-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    background: var(--subtle-bg);
+    border: 1px dashed var(--ac-emerald);
+    border-radius: var(--radius-sm);
+}
+.batch-file-import-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    background: var(--ac-emerald);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.batch-file-import-btn:hover { opacity: 0.85; }
+.batch-file-import-hint {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.4;
+}
+
 /* Batch import form */
 .batch-section { margin-bottom: 10px; }
 .batch-mode-label { font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 4px; display: block; }
@@ -2297,6 +2346,28 @@ button.primary:active { transform: scale(0.98); }
     min-height: 80px;
 }
 .batch-textarea:focus { border-color: var(--ac-emerald); }
+.batch-btn-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+.batch-btn-row .primary,
+.batch-btn-row .secondary {
+    flex: 1;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s;
+    box-sizing: border-box;
+}
+.batch-btn-row .secondary {
+    border: 1px solid var(--card-border);
+    background: var(--subtle-bg);
+    color: var(--vscode-foreground);
+}
+.batch-btn-row .secondary:hover { background: var(--hover-bg); border-color: var(--ac-emerald); }
 .batch-custom-delim {
     margin-top: 4px;
     width: 100%;
@@ -2379,6 +2450,105 @@ button.primary:active { transform: scale(0.98); }
 }
 .modal-retry-btn { background: var(--ac-amber); color: #1a1a1a; }
 .modal-done-btn { background: var(--ac-emerald); color: #fff; }
+
+/* Export modal */
+.export-section { margin-bottom: 12px; }
+.export-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 4px;
+    display: block;
+}
+.export-radio, .export-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    cursor: pointer;
+    font-size: 12px;
+    border-radius: 4px;
+}
+.export-radio:hover, .export-checkbox:hover { background: var(--hover-bg); }
+.export-radio input, .export-checkbox input {
+    margin: 0;
+    accent-color: var(--ac-emerald);
+}
+.export-radio span:first-of-type, .export-checkbox span { flex: 1; }
+.export-hint { font-size: 11px; color: var(--muted); margin-left: auto; }
+.export-footer {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--card-border);
+}
+
+/* Import options modal */
+.import-options-info {
+    font-size: 12px;
+    color: var(--muted-fg);
+    margin-bottom: 12px;
+    padding: 8px;
+    background: var(--subtle-bg);
+    border-radius: var(--radius-sm);
+}
+.import-options-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+.import-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.import-option input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--ac-emerald);
+}
+.import-options-btns {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+.import-options-btns button {
+    padding: 7px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+/* Batch import control buttons */
+.batch-ctrl-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+.batch-ctrl-btn {
+    flex: 1;
+    padding: 7px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    background: var(--subtle-bg);
+    color: var(--vscode-foreground);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.batch-ctrl-btn:hover { background: var(--hover-bg); }
+.batch-pause-btn { border-color: var(--ac-amber); color: var(--ac-amber); }
+.batch-pause-btn:hover { background: rgba(245, 158, 11, 0.1); }
+.batch-pause-btn.is-paused { background: var(--ac-amber); color: #1a1a1a; border-color: var(--ac-amber); }
+.batch-cancel-btn { border-color: var(--ac-red); color: var(--ac-red); }
+.batch-cancel-btn:hover { background: rgba(239, 68, 68, 0.1); }
 
 /* Alert modal */
 .alert-actions {

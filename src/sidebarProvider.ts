@@ -844,6 +844,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const result = await login(email, password, authMethod || 'auto');
           if (result.ok && result.value) {
             if (tag) { result.value.tag = tag; result.value.tags = [tag]; }
+            // 保存 importMeta 记录原始密码和导入来源
+            result.value.importMeta = {
+              source: 'password',
+              password: password,
+              importedAt: new Date().toISOString(),
+              importedFrom: 'login-save',
+            };
             const stored = await accountStore.upsertAccount(this._context, result.value);
             const finalEmail = stored.email;
             const aliased = finalEmail !== email;
@@ -1157,6 +1164,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         const result = await login(email, password, authMethod || 'auto');
         if (result.ok && result.value) {
+          // 保存 importMeta 记录原始密码和导入来源
+          result.value.importMeta = {
+            source: 'password',
+            password: password,
+            importedAt: new Date().toISOString(),
+            importedFrom: 'batch-login',
+          };
           const stored = await accountStore.upsertAccount(this._context, result.value);
           result.value.email = stored.email; // 下游代码可能还会读它
           this.postMessage({
@@ -1181,6 +1195,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const tokenResult = await loginByAuth1Token(token);
         if (tokenResult.ok && tokenResult.value) {
           if (message.tag) { tokenResult.value.tag = message.tag; tokenResult.value.tags = [message.tag]; }
+          // 保存 importMeta 记录原始 token 和导入来源
+          tokenResult.value.importMeta = {
+            source: 'token',
+            rawToken: token,
+            importedAt: new Date().toISOString(),
+            importedFrom: 'batch-token',
+          };
           const stored = await accountStore.upsertAccount(this._context, tokenResult.value);
           this.postMessage({ type: 'batchResult', ok: true, email: stored.email });
           this.refresh();
@@ -1199,6 +1220,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this.postMessage({ type: 'batchResult', ok: false, email: email || '账号配置', error: '缺少 email 或 apiKey' });
           return;
         }
+        // 保留原始 importMeta，或创建新的
+        const importMeta = raw.importMeta || {
+          source: 'file' as const,
+          importedAt: new Date().toISOString(),
+          importedFrom: 'file-import',
+        };
         const storedAcct = await accountStore.upsertAccount(this._context, {
           email,
           apiKey,
@@ -1209,8 +1236,50 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           disabled: raw.disabled === true ? true : undefined,
           devinAuth1Token: raw.devinAuth1Token ? String(raw.devinAuth1Token).trim() : undefined,
           orgId: raw.orgId ? String(raw.orgId).trim() : undefined,
+          importMeta,
         });
         this.postMessage({ type: 'batchResult', ok: true, email: storedAcct.email });
+        this.refresh();
+        break;
+      }
+
+      case 'bulkStoreAccounts': {
+        // 快速批量存储（全部有 apiKey 的账号，无需登录验证）
+        const rows = (message as any).accounts || [];
+        const skipped = (message as any).skipped || 0;
+        const results: { email: string; ok: boolean; error?: string }[] = [];
+        for (const raw of rows) {
+          const email = String(raw.email || '').trim();
+          const apiKey = String(raw.apiKey || '').trim();
+          if (!email || !apiKey) {
+            results.push({ email: email || '?', ok: false, error: '缺少 email 或 apiKey' });
+            continue;
+          }
+          try {
+            // 保留原始 importMeta，或创建新的
+            const importMeta = raw.importMeta || {
+              source: 'file' as const,
+              importedAt: new Date().toISOString(),
+              importedFrom: 'bulk-store',
+            };
+            await accountStore.upsertAccount(this._context, {
+              email,
+              apiKey,
+              apiServerUrl: String(raw.apiServerUrl || 'https://server.self-serve.windsurf.com').trim(),
+              name: raw.name,
+              tag: raw.tag,
+              tags: raw.tags || (raw.tag ? [raw.tag] : undefined),
+              disabled: raw.disabled === true ? true : undefined,
+              devinAuth1Token: raw.devinAuth1Token ? String(raw.devinAuth1Token).trim() : undefined,
+              orgId: raw.orgId ? String(raw.orgId).trim() : undefined,
+              importMeta,
+            });
+            results.push({ email, ok: true });
+          } catch (e: any) {
+            results.push({ email, ok: false, error: e.message });
+          }
+        }
+        this.postMessage({ type: 'bulkStoreResult', results, skipped } as any);
         this.refresh();
         break;
       }
@@ -1240,12 +1309,147 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
 
+      case 'exportSelectedAccounts': {
+        const emails: string[] = (message as any).emails || [];
+        if (emails.length === 0) {
+          this.postMessage({ type: 'exportAccountsResult', ok: false, message: '未选择账号' } as any);
+          break;
+        }
+        const allAccounts = await accountStore.readAccounts(this._context);
+        const emailSet = new Set(emails.map(e => e.toLowerCase()));
+        const selected = allAccounts.filter(a => emailSet.has(a.email.toLowerCase()));
+        if (selected.length === 0) {
+          this.postMessage({ type: 'exportAccountsResult', ok: false, message: '未找到选中的账号' } as any);
+          break;
+        }
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const payload = {
+          type: 'windsurf-pool-accounts',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          accounts: selected,
+        };
+        const text = JSON.stringify(payload, null, 2);
+        try { await vscode.env.clipboard.writeText(text); } catch {}
+        const uri = await vscode.window.showSaveDialog({
+          defaultUri: vscode.Uri.file(path.join(process.env.USERPROFILE || process.env.HOME || '', 'Desktop', `windsurf-pool-accounts-${stamp}.json`)),
+          filters: { JSON: ['json'] },
+          saveLabel: '导出选中账号',
+        });
+        if (!uri) {
+          this.postMessage({ type: 'exportAccountsResult', ok: true, copied: true, saved: false, count: selected.length, message: `已复制 ${selected.length} 个账号到剪贴板` } as any);
+          break;
+        }
+        await fs.promises.writeFile(uri.fsPath, text, 'utf8');
+        this.postMessage({ type: 'exportAccountsResult', ok: true, copied: true, saved: true, count: selected.length, path: uri.fsPath, message: `已导出 ${selected.length} 个账号` } as any);
+        break;
+      }
+
+      case 'exportAccountsV2': {
+        const { emails, format, copyClipboard } = message as unknown as { emails: string[]; format: 'json' | 'text'; copyClipboard: boolean };
+        if (!emails || emails.length === 0) {
+          this.postMessage({ type: 'exportAccountsResult', ok: false, message: '未选择账号' } as any);
+          break;
+        }
+        const allAccounts = await accountStore.readAccounts(this._context);
+        const emailSet = new Set(emails.map(e => e.toLowerCase()));
+        const selected = allAccounts.filter(a => emailSet.has(a.email.toLowerCase()));
+        if (selected.length === 0) {
+          this.postMessage({ type: 'exportAccountsResult', ok: false, message: '未找到选中的账号' } as any);
+          break;
+        }
+
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        let text: string;
+        let ext: string;
+        let filterName: string;
+
+        if (format === 'text') {
+          // 文本格式: email----password----token
+          const lines: string[] = [];
+          for (const acc of selected) {
+            const password = acc.importMeta?.password || '';
+            const rawToken = acc.importMeta?.rawToken || acc.devinAuth1Token || '';
+            if (password || rawToken) {
+              lines.push(`${acc.email}----${password}----${rawToken}`);
+            } else {
+              lines.push(acc.email);
+            }
+          }
+          text = lines.join('\n');
+          ext = 'txt';
+          filterName = '文本文件';
+        } else {
+          // JSON 完整格式
+          const payload = {
+            type: 'windsurf-pool-accounts',
+            version: 2,
+            exportedAt: new Date().toISOString(),
+            accounts: selected,
+          };
+          text = JSON.stringify(payload, null, 2);
+          ext = 'json';
+          filterName = 'JSON 文件';
+        }
+
+        if (copyClipboard) {
+          try { await vscode.env.clipboard.writeText(text); } catch {}
+        }
+
+        const uri = await vscode.window.showSaveDialog({
+          defaultUri: vscode.Uri.file(path.join(process.env.USERPROFILE || process.env.HOME || '', 'Desktop', `windsurf-pool-${stamp}.${ext}`)),
+          filters: { [filterName]: [ext] },
+          saveLabel: '导出账号',
+        });
+
+        if (!uri) {
+          const msg = copyClipboard ? `已复制 ${selected.length} 个账号到剪贴板` : '已取消导出';
+          this.postMessage({ type: 'exportAccountsResult', ok: true, copied: copyClipboard, saved: false, count: selected.length, message: msg } as any);
+          break;
+        }
+
+        await fs.promises.writeFile(uri.fsPath, text, 'utf8');
+        this.postMessage({ type: 'exportAccountsResult', ok: true, copied: copyClipboard, saved: true, count: selected.length, path: uri.fsPath, message: `已导出 ${selected.length} 个账号` } as any);
+        break;
+      }
+
+      case 'importAccountsFile': {
+        const uris = await vscode.window.showOpenDialog({
+          canSelectMany: false,
+          filters: { 'JSON 文件': ['json'] },
+          openLabel: '导入账号',
+        });
+        if (!uris || uris.length === 0) {
+          this.postMessage({ type: 'importAccountsFileResult', ok: false, message: '未选择文件' } as any);
+          break;
+        }
+        try {
+          const content = await fs.promises.readFile(uris[0].fsPath, 'utf8');
+          const data = JSON.parse(content);
+          const rows = Array.isArray(data) ? data : (Array.isArray(data.accounts) ? data.accounts : null);
+          if (!rows || rows.length === 0) {
+            this.postMessage({ type: 'importAccountsFileResult', ok: false, message: 'JSON 文件格式不正确或无账号数据' } as any);
+            break;
+          }
+          this.postMessage({ type: 'importAccountsFileResult', ok: true, accounts: rows, message: `已读取 ${rows.length} 个账号，开始导入…` } as any);
+        } catch (e: any) {
+          this.postMessage({ type: 'importAccountsFileResult', ok: false, message: `读取文件失败: ${e.message}` } as any);
+        }
+        break;
+      }
+
       case 'oauthLogin': {
         this.postMessage({ type: 'oauthStatus', phase: 'opening', message: '正在打开 Windsurf OAuth 授权页…' } as any);
         try {
           const account = await loginByWindsurfOAuth();
           const oauthTag = (message as any).tag;
           if (oauthTag) { account.tag = oauthTag; account.tags = [oauthTag]; }
+          // 保存 importMeta 记录 OAuth 导入来源
+          account.importMeta = {
+            source: 'oauth',
+            importedAt: new Date().toISOString(),
+            importedFrom: 'oauth-login',
+          };
           const originalEmail = account.email;
           const stored = await accountStore.upsertAccount(this._context, account);
           const finalEmail = stored.email;
@@ -1262,16 +1466,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
 
       case 'runCommand': {
-        const { command } = message;
+        const { command, args } = message as { command: string; args?: any[] };
         if (command) {
-          vscode.commands.executeCommand(command);
+          if (command === 'revealFileInOS' && args?.[0]) {
+            // 打开文件所在文件夹并选中文件
+            vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(args[0]));
+          } else if (args && args.length > 0) {
+            vscode.commands.executeCommand(command, ...args);
+          } else {
+            vscode.commands.executeCommand(command);
+          }
         }
         break;
       }
 
       case 'openExternal': {
-        const { url } = message;
-        if (url) {
+        const { url, uri } = message as { url?: string; uri?: string };
+        if (uri) {
+          // 打开本地文件
+          vscode.env.openExternal(vscode.Uri.file(uri));
+        } else if (url) {
           vscode.env.openExternal(vscode.Uri.parse(url));
         }
         break;
@@ -1607,7 +1821,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       email,
       apiKey,
       apiServerUrl: detectedApiServerUrl || 'https://server.codeium.com',
-      name: accountLabel || ''
+      name: accountLabel || '',
+      // 保存 importMeta 记录从当前会话导入
+      importMeta: {
+        source: 'session',
+        importedAt: new Date().toISOString(),
+        importedFrom: 'add-current',
+      },
     };
 
     const stored = await accountStore.upsertAccount(this._context, account);
@@ -2731,6 +2951,56 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
 
+    <!-- 导出账号确认/进度/结果模态框 -->
+    <div id="exportAccountsOverlay" class="modal-overlay" hidden>
+      <div class="modal-box" style="width:min(400px,90vw)">
+        <div class="modal-header">
+          <h3 id="exportAccountsTitle">导出账号</h3>
+          <button class="modal-close" id="exportAccountsClose" title="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <!-- 确认阶段 -->
+          <div id="exportConfirmStage">
+            <!-- 导出范围 -->
+            <div class="export-section">
+              <div class="export-section-title">导出范围</div>
+              <label class="export-radio"><input type="radio" name="exportScope" value="filtered" checked><span>当前筛选 (<strong id="exportFilteredCount" style="color:var(--ac-emerald)">0</strong> 个)</span></label>
+              <label class="export-radio"><input type="radio" name="exportScope" value="all"><span>全部账号 (<strong id="exportAllCount" style="color:var(--ac-emerald)">0</strong> 个)</span></label>
+            </div>
+            <!-- 导出格式 -->
+            <div class="export-section">
+              <div class="export-section-title">导出格式</div>
+              <label class="export-radio"><input type="radio" name="exportFormat" value="json" checked><span>JSON 完整格式</span><span class="export-hint">备份 / 迁移</span></label>
+              <label class="export-radio"><input type="radio" name="exportFormat" value="text"><span>文本格式</span><span class="export-hint">email----pass----token</span></label>
+            </div>
+            <!-- 选项 -->
+            <label class="export-checkbox"><input type="checkbox" id="exportCopyClipboard" checked><span>同时复制到剪贴板</span></label>
+            <!-- 底部按钮 -->
+            <div class="export-footer">
+              <button class="modal-cancel-btn" id="exportCancelBtn">取消</button>
+              <button class="primary" id="exportConfirmBtn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                导出 <span id="exportBtnCount">0</span> 个
+              </button>
+            </div>
+          </div>
+          <!-- 进度阶段 -->
+          <div id="exportProgressStage" hidden>
+            <div style="padding:20px 0">
+              <div class="modal-progress-bar"><div class="modal-progress-fill" id="exportProgressFill" style="width:0%"></div></div>
+              <div class="modal-progress-text" id="exportProgressText">准备导出…</div>
+            </div>
+          </div>
+          <!-- 结果阶段 -->
+          <div id="exportResultStage" hidden>
+            <div id="exportResultIcon" style="text-align:center;margin:16px 0 12px"></div>
+            <div id="exportResultMsg" style="font-size:13px;text-align:center;margin-bottom:16px"></div>
+            <div id="exportResultActions" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 我的账号（含汇总 + 账号列表） -->
     <div class="card list-card">
       <details class="list-details" id="listDetails" open>
@@ -2962,6 +3232,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <button class="batch-action-btn" id="batchTagBtn" title="为选中账号设置标签">加标签</button>
         <button class="batch-action-btn" id="batchEnableBtn" title="启用选中账号">启用</button>
         <button class="batch-action-btn" id="batchDisableBtn" title="禁用选中账号">禁用</button>
+        <button class="batch-action-btn" id="batchExportBtn" title="导出选中账号">导出</button>
         <button class="batch-action-btn batch-action-delete" id="batchDeleteBtn" title="删除选中账号">删除</button>
         <button class="batch-action-btn" id="batchCancelBtn">取消</button>
       </div>
@@ -3023,6 +3294,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         <!-- 批量导入 -->
         <div id="batchImportArea">
+          <!-- 从文件导入（醒目入口） -->
+          <div class="batch-file-import-bar">
+            <button class="batch-file-import-btn" data-action="importAccountsFile">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+              从文件导入
+            </button>
+            <span class="batch-file-import-hint">支持本插件导出的 JSON 文件，无需重新登录</span>
+          </div>
+
           <div class="batch-section">
             <label class="batch-mode-label">导入格式</label>
             <div class="batch-radio-group">
@@ -3138,9 +3418,44 @@ devin-session-token$eyJhbGciOiJIUzI1NiIs...</pre>
         <div class="modal-progress-text" id="batchModalProgressText">准备中…</div>
         <div class="modal-current" id="batchModalCurrent"></div>
         <div class="modal-counts" id="batchModalCounts"></div>
+        <div class="batch-ctrl-row" id="batchModalCtrlRow">
+          <button class="batch-ctrl-btn batch-pause-btn" id="batchModalPause" title="暂停">⏸ 暂停</button>
+          <button class="batch-ctrl-btn batch-cancel-btn" id="batchModalCancel" title="取消导入">✕ 取消</button>
+        </div>
         <div class="modal-fail-list" id="batchModalFailList" hidden></div>
         <button class="modal-retry-btn" id="batchModalRetry" hidden>重试失败项</button>
         <button class="modal-done-btn" id="batchModalDone" hidden>完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 文件导入选项弹窗 -->
+  <div id="importOptionsOverlay" class="modal-overlay" hidden>
+    <div class="modal-box" style="max-width:360px">
+      <div class="modal-header">
+        <h3>导入选项</h3>
+        <button class="modal-close" id="importOptionsClose" title="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="import-options-info" id="importOptionsInfo"></div>
+        <div class="import-options-list">
+          <label class="import-option">
+            <input type="checkbox" id="importOptTags" checked>
+            <span>导入原始标签</span>
+          </label>
+          <label class="import-option">
+            <input type="checkbox" id="importOptDisabled" checked>
+            <span>导入禁用状态</span>
+          </label>
+          <label class="import-option">
+            <input type="checkbox" id="importOptRevalidate">
+            <span>重新验证账号（即使有 apiKey）</span>
+          </label>
+        </div>
+        <div class="import-options-btns">
+          <button class="secondary" id="importOptionsCancel">取消</button>
+          <button class="primary" id="importOptionsConfirm">开始导入</button>
+        </div>
       </div>
     </div>
   </div>

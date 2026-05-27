@@ -1,4 +1,20 @@
 /**
+ * 导入元信息
+ */
+export interface ImportMeta {
+  /** 导入来源: password=密码登录, oauth=OAuth, token=token导入, session=当前会话, file=文件导入 */
+  source?: 'password' | 'oauth' | 'token' | 'session' | 'file';
+  /** 原始密码（如有） */
+  password?: string;
+  /** 原始导入的 token（如 auth1_xxx） */
+  rawToken?: string;
+  /** 导入时间 */
+  importedAt?: string;
+  /** 导入来源描述 */
+  importedFrom?: string;
+}
+
+/**
  * 存储的账号数据结构
  */
 export interface StoredAccount {
@@ -12,6 +28,8 @@ export interface StoredAccount {
   orgId?: string;
   /** Devin Auth1 原始 token（用于 Devin Automations 一键领$200 接口） */
   devinAuth1Token?: string;
+  /** 导入元信息 */
+  importMeta?: ImportMeta;
 }
 
 /**
@@ -69,6 +87,10 @@ export type WebviewMessageType =
   | 'batchTokenImport'
   | 'batchStoredAccountImport'
   | 'exportAccounts'
+  | 'exportSelectedAccounts'
+  | 'exportAccountsV2'
+  | 'importAccountsFile'
+  | 'bulkStoreAccounts'
   | 'poolSignal'
   | 'batchDelete'
   | 'batchEnable'

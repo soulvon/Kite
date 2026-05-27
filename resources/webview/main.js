@@ -664,6 +664,9 @@
           <button class="icon-btn" data-action="refresh" title="刷新配额">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           </button>
+          <button class="icon-btn" data-action="exportSingle" title="导出此账号">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
           <button class="icon-btn danger" data-action="delete" title="删除账号">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
           </button>
@@ -1708,6 +1711,9 @@
     const cnt = document.getElementById('batchModalCounts');
     const fl = document.getElementById('batchModalFailList');
     const close = document.getElementById('batchModalClose');
+    const ctrlRow = document.getElementById('batchModalCtrlRow');
+    const pauseBtn = document.getElementById('batchModalPause');
+    const cancelBtn = document.getElementById('batchModalCancel');
     if (t) t.textContent = title || '批量导入中';
     if (fill) fill.style.width = '0%';
     if (text) text.textContent = '准备中…';
@@ -1717,7 +1723,56 @@
     if (close) close.hidden = true;
     const done = document.getElementById('batchModalDone');
     if (done) done.hidden = true;
+    // 显示控制按钮并重置状态
+    _batchPaused = false;
+    _batchCancelled = false;
+    if (ctrlRow) ctrlRow.hidden = false;
+    if (pauseBtn) {
+      pauseBtn.textContent = '⏸ 暂停';
+      pauseBtn.classList.remove('is-paused');
+      pauseBtn.onclick = toggleBatchPause;
+    }
+    if (cancelBtn) cancelBtn.onclick = cancelBatchImport;
     ov.hidden = false;
+  }
+
+  function toggleBatchPause() {
+    const pauseBtn = document.getElementById('batchModalPause');
+    const cur = document.getElementById('batchModalCurrent');
+    if (_batchPaused) {
+      // 继续
+      _batchPaused = false;
+      if (pauseBtn) {
+        pauseBtn.textContent = '⏸ 暂停';
+        pauseBtn.classList.remove('is-paused');
+      }
+      if (cur) cur.textContent = '继续导入中…';
+      sendNextBatchItem();
+    } else {
+      // 暂停
+      _batchPaused = true;
+      if (pauseBtn) {
+        pauseBtn.textContent = '▶ 继续';
+        pauseBtn.classList.add('is-paused');
+      }
+      if (cur) cur.textContent = '已暂停，点击“继续”恢复导入';
+    }
+  }
+
+  function cancelBatchImport() {
+    _batchCancelled = true;
+    _batchPaused = false;
+    if (_batchTimeoutTimer) { clearTimeout(_batchTimeoutTimer); _batchTimeoutTimer = null; }
+    // 立即显示已取消的结果
+    const st = vscode.getState() || {};
+    const results = st._batchResults || [];
+    const meta = st._batchMeta || { skipped: 0, parseFail: 0 };
+    const remaining = (st._batchTotal || 0) - (st._batchIndex || 0);
+    // 清除状态
+    clearBatchState();
+    globalThis._wsBatchMode = false;
+    // 显示取消结果
+    finalizeBatchModal('批量导入已取消', results, Object.assign({}, meta, { cancelled: remaining }));
   }
 
   function updateBatchModal(info) {
@@ -1740,6 +1795,9 @@
 
   // 暂存最近一次批量导入的原始队列，用于重试时查找密码
   let _lastBatchQueue = [];
+  // 批量导入暂停/取消状态
+  let _batchPaused = false;
+  let _batchCancelled = false;
 
   function finalizeBatchModal(title, results, meta) {
     const ov = document.getElementById('batchModalOverlay');
@@ -1763,8 +1821,12 @@
         `<span class="count-ok">✓ 成功 ${ok.length}</span>` +
         `<span class="count-fail">✗ 失败 ${fail.length}</span>` +
         (meta?.skipped ? `<span class="count-skip">⤼ 已跳过重复 ${meta.skipped}</span>` : '') +
-        (meta?.parseFail ? `<span class="count-skip">⚠ 解析失败 ${meta.parseFail}</span>` : '');
+        (meta?.parseFail ? `<span class="count-skip">⚠ 解析失败 ${meta.parseFail}</span>` : '') +
+        (meta?.cancelled ? `<span class="count-skip">✘ 已取消 ${meta.cancelled}</span>` : '');
     }
+    // 隐藏控制按钮
+    const ctrlRow = document.getElementById('batchModalCtrlRow');
+    if (ctrlRow) ctrlRow.hidden = true;
     if (fl) {
       if (fail.length > 0) {
         fl.hidden = false;
@@ -1866,6 +1928,9 @@
   let _lastBatchSentAt = 0;
 
   function sendNextBatchItem() {
+    // 暂停/取消检查
+    if (_batchCancelled) return;
+    if (_batchPaused) return;
     const st = vscode.getState() || {};
     const queue = st._batchQueue;
     const idx = st._batchIndex || 0;
@@ -1881,6 +1946,8 @@
   }
 
   function actuallySendCurrentItem() {
+    // 暂停/取消检查
+    if (_batchCancelled || _batchPaused) return;
     const st = vscode.getState() || {};
     const queue = st._batchQueue;
     const idx = st._batchIndex || 0;
@@ -2184,6 +2251,119 @@
       await sendBatchAccounts(fresh, { skipped: skipped.length, parseFail: errors.length });
     } finally {
       setBatchBusy(false, '[data-action="batchImportJson"]');
+    }
+  }
+
+  // ==================== 导入选项弹窗 ====================
+  let _pendingImportRows = null;
+
+  function showImportOptionsModal(rows) {
+    _pendingImportRows = rows;
+    const overlay = document.getElementById('importOptionsOverlay');
+    const info = document.getElementById('importOptionsInfo');
+    if (!overlay) return;
+    // 统计信息
+    const hasApiKey = rows.filter(r => r.apiKey).length;
+    const hasPassword = rows.filter(r => r.password && !r.apiKey).length;
+    const hasTags = rows.filter(r => r.tags?.length || r.tag).length;
+    const hasDisabled = rows.filter(r => r.disabled === true).length;
+    info.innerHTML = `共 <b>${rows.length}</b> 个账号（已验证: ${hasApiKey}，需登录: ${hasPassword}，有标签: ${hasTags}，已禁用: ${hasDisabled}）`;
+    // 重置选项
+    const optTags = document.getElementById('importOptTags');
+    const optDisabled = document.getElementById('importOptDisabled');
+    const optRevalidate = document.getElementById('importOptRevalidate');
+    if (optTags) optTags.checked = true;
+    if (optDisabled) optDisabled.checked = true;
+    if (optRevalidate) optRevalidate.checked = false;
+    overlay.hidden = false;
+  }
+
+  function hideImportOptionsModal() {
+    const overlay = document.getElementById('importOptionsOverlay');
+    if (overlay) overlay.hidden = true;
+    _pendingImportRows = null;
+  }
+
+  function confirmImportOptions() {
+    if (!_pendingImportRows) return;
+    const optTags = document.getElementById('importOptTags');
+    const optDisabled = document.getElementById('importOptDisabled');
+    const optRevalidate = document.getElementById('importOptRevalidate');
+    const options = {
+      importTags: optTags?.checked !== false,
+      importDisabled: optDisabled?.checked !== false,
+      revalidate: optRevalidate?.checked === true,
+    };
+    const rows = _pendingImportRows;
+    hideImportOptionsModal();
+    doImportFromFileAccounts(rows, options);
+  }
+
+  async function doImportFromFileAccounts(rows, options = {}) {
+    const { importTags = true, importDisabled = true, revalidate = false } = options;
+    if (batchBusy) return;
+    const accts = [];
+    const errors = [];
+    const seen = new Set();
+    for (let i = 0; i < rows.length; i++) {
+      const item = rows[i];
+      const hasCredential = item.password || item.apiKey || item.token || item.importMeta?.password || item.importMeta?.rawToken;
+      if (!item.email || !hasCredential) { errors.push(`第 ${i+1} 项缺少必要字段`); continue; }
+      const em = String(item.email).trim().toLowerCase();
+      if (seen.has(em)) continue;
+      seen.add(em);
+      const itemTags = importTags ? (Array.isArray(item.tags) ? item.tags.map(t => String(t).trim()).filter(Boolean) : (item.tag ? [String(item.tag).trim()] : undefined)) : undefined;
+      const itemDisabled = importDisabled ? (item.disabled === true) : false;
+      // 如果强制重新验证，即使有 apiKey 也走邮箱密码登录
+      if (item.apiKey && !revalidate) {
+        accts.push({
+          email: String(item.email).trim(),
+          apiKey: String(item.apiKey).trim(),
+          apiServerUrl: String(item.apiServerUrl || 'https://server.self-serve.windsurf.com').trim(),
+          name: item.name ? String(item.name).trim() : undefined,
+          tag: itemTags ? itemTags[0] : undefined,
+          tags: itemTags,
+          disabled: itemDisabled,
+          devinAuth1Token: item.devinAuth1Token ? String(item.devinAuth1Token).trim() : undefined,
+          orgId: item.orgId ? String(item.orgId).trim() : undefined,
+          importMeta: item.importMeta || undefined, // 保留原始 importMeta
+        });
+      } else if (item.token || item.importMeta?.rawToken) {
+        const tok = item.token || item.importMeta.rawToken;
+        accts.push({ token: String(tok).trim(), tag: itemTags ? itemTags[0] : undefined, tags: itemTags });
+      } else if (item.password || item.importMeta?.password || (revalidate && item.apiKey)) {
+        // 有密码，或者强制重新验证但原账号没有密码就跳过
+        const pwd = item.password || item.importMeta?.password || '';
+        if (!pwd && revalidate) { errors.push(`第 ${i+1} 项无密码，无法重新验证`); continue; }
+        accts.push({ 
+          email: String(item.email).trim(), 
+          password: String(pwd).trim(), 
+          tag: itemTags ? itemTags[0] : undefined,
+          tags: itemTags 
+        });
+      }
+    }
+    const { fresh, skipped } = filterExistingAccounts(accts);
+    if (fresh.length === 0) {
+      const msg = skipped.length ? `所有 ${skipped.length} 个账号已存在，跳过导入` : (errors.length ? errors.join('\n') : '未解析到有效账号');
+      showToast(msg, 'info', 5000);
+      return;
+    }
+    // 检查是否全部是已存储账号（有 apiKey），可以快速批量存储
+    const allHaveApiKey = fresh.every(a => !!a.apiKey);
+    if (allHaveApiKey) {
+      // 快速路径：显示进度弹窗，一次性批量存储
+      showBatchModal('快速导入中');
+      updateBatchModal({ done: 0, total: fresh.length, ok: 0, fail: 0, skipped: skipped, current: '正在批量写入…' });
+      postMsg('bulkStoreAccounts', { accounts: fresh, skipped: skipped });
+      return;
+    }
+    // 慢路径：需要登录验证的账号，逐个处理
+    setBatchBusy(true, '[data-action="importAccountsFile"]');
+    try {
+      await sendBatchAccounts(fresh, { skipped: skipped.length, parseFail: errors.length });
+    } finally {
+      setBatchBusy(false, '[data-action="importAccountsFile"]');
     }
   }
 
@@ -2665,6 +2845,10 @@
         setTimeout(() => postMsg('delete', { email }), 200);
         break;
       }
+      case 'exportSingle': {
+        postMsg('exportSelectedAccounts', { emails: [email] });
+        break;
+      }
       case 'editTag': {
         openTagEditModal('edit', email);
         break;
@@ -2798,11 +2982,38 @@
       }
 
       case 'exportAccountsResult': {
-        if (msg.ok) {
-          showToast(msg.message || `已导出 ${msg.count || 0} 个账号设置`, 'success', 6000);
-        } else {
-          showToast(msg.message || '导出账号设置失败', 'error', 8000);
+        // 更新进度到 100%
+        updateExportProgress(100, '完成');
+        // 短暂延迟后显示结果（让进度条完成动画）
+        setTimeout(() => {
+          showExportResult(msg.ok, msg.message || (msg.ok ? `已导出 ${msg.count || 0} 个账号` : '导出失败'), msg.path);
+        }, 300);
+        break;
+      }
+
+      case 'importAccountsFileResult': {
+        if (!msg.ok) {
+          showToast(msg.message || '导入失败', 'error', 5000);
+          break;
         }
+        const rows = msg.accounts || [];
+        if (rows.length === 0) {
+          showToast('文件中没有账号数据', 'error', 5000);
+          break;
+        }
+        // 显示导入选项弹窗
+        showImportOptionsModal(rows);
+        break;
+      }
+
+      case 'bulkStoreResult': {
+        const results = msg.results || [];
+        const okList = results.filter(r => r.ok);
+        const failList = results.filter(r => !r.ok);
+        const skippedCount = msg.skipped || 0;
+        // 使用批量导入的结束弹窗
+        const batchResults = results.map(r => ({ email: r.email, ok: r.ok, error: r.error }));
+        finalizeBatchModal('快速导入完成', batchResults, { skipped: skippedCount, parseFail: 0 });
         break;
       }
 
@@ -4221,6 +4432,187 @@
     });
   }
 
+  // ==================== 导出账号模态框 ====================
+  let _exportResultPath = null;
+  
+  function initExportAccountsModal() {
+    const overlay = document.getElementById('exportAccountsOverlay');
+    const closeBtn = document.getElementById('exportAccountsClose');
+    const cancelBtn = document.getElementById('exportCancelBtn');
+    const confirmBtn = document.getElementById('exportConfirmBtn');
+    
+    if (!overlay) return;
+    
+    // 关闭按钮
+    if (closeBtn) closeBtn.addEventListener('click', closeExportAccountsModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeExportAccountsModal);
+    
+    // 范围选择变化时更新按钮数量
+    overlay.querySelectorAll('input[name="exportScope"]').forEach(radio => {
+      radio.addEventListener('change', updateExportBtnCount);
+    });
+    
+    // 确认导出按钮
+    if (confirmBtn) {
+      confirmBtn.addEventListener('click', () => {
+        const scope = overlay.querySelector('input[name="exportScope"]:checked')?.value || 'filtered';
+        const format = overlay.querySelector('input[name="exportFormat"]:checked')?.value || 'json';
+        const copyClipboard = document.getElementById('exportCopyClipboard')?.checked ?? true;
+        
+        // 获取要导出的账号邮箱列表
+        const emailsToExport = scope === 'all' 
+          ? accounts.map(a => a.email) 
+          : getFilteredAccounts().map(a => a.email);
+        
+        setExportStage('progress');
+        postMsg('exportAccountsV2', { 
+          emails: emailsToExport, 
+          format, 
+          copyClipboard 
+        });
+      });
+    }
+    
+    // 点击遮罩层关闭（仅在确认和结果阶段）
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        const progressStage = document.getElementById('exportProgressStage');
+        if (progressStage && !progressStage.hidden) return;
+        closeExportAccountsModal();
+      }
+    });
+  }
+  
+  // 获取当前筛选后的账号列表
+  function getFilteredAccounts() {
+    return accounts.filter(a => passesFilter(a));
+  }
+  
+  function updateExportBtnCount() {
+    const overlay = document.getElementById('exportAccountsOverlay');
+    const scope = overlay?.querySelector('input[name="exportScope"]:checked')?.value || 'filtered';
+    const count = scope === 'all' ? accounts.length : getFilteredAccounts().length;
+    const btnCountEl = document.getElementById('exportBtnCount');
+    if (btnCountEl) btnCountEl.textContent = count;
+  }
+  
+  function openExportAccountsModal() {
+    const overlay = document.getElementById('exportAccountsOverlay');
+    if (!overlay) return;
+    
+    const filteredCount = getFilteredAccounts().length;
+    const allCount = accounts.length;
+    
+    // 更新账号数量显示
+    const filteredEl = document.getElementById('exportFilteredCount');
+    const allEl = document.getElementById('exportAllCount');
+    if (filteredEl) filteredEl.textContent = filteredCount;
+    if (allEl) allEl.textContent = allCount;
+    
+    // 默认选中筛选范围
+    const filteredRadio = overlay.querySelector('input[name="exportScope"][value="filtered"]');
+    if (filteredRadio) filteredRadio.checked = true;
+    
+    // 更新按钮数量
+    updateExportBtnCount();
+    
+    // 重置到确认阶段
+    setExportStage('confirm');
+    _exportResultPath = null;
+    
+    overlay.hidden = false;
+  }
+  
+  function closeExportAccountsModal() {
+    const overlay = document.getElementById('exportAccountsOverlay');
+    if (overlay) overlay.hidden = true;
+  }
+  
+  function setExportStage(stage) {
+    const confirmStage = document.getElementById('exportConfirmStage');
+    const progressStage = document.getElementById('exportProgressStage');
+    const resultStage = document.getElementById('exportResultStage');
+    const closeBtn = document.getElementById('exportAccountsClose');
+    const titleEl = document.getElementById('exportAccountsTitle');
+    
+    if (confirmStage) confirmStage.hidden = stage !== 'confirm';
+    if (progressStage) progressStage.hidden = stage !== 'progress';
+    if (resultStage) resultStage.hidden = stage !== 'result';
+    
+    if (closeBtn) closeBtn.style.display = stage === 'progress' ? 'none' : '';
+    
+    if (titleEl) {
+      titleEl.textContent = stage === 'confirm' ? '导出账号' : 
+                            stage === 'progress' ? '正在导出…' : '导出完成';
+    }
+    
+    if (stage === 'progress') {
+      updateExportProgress(30, '准备导出…');
+      setTimeout(() => updateExportProgress(60, '正在生成文件…'), 200);
+      setTimeout(() => updateExportProgress(90, '即将完成…'), 400);
+    }
+  }
+  
+  function updateExportProgress(percent, text) {
+    const fill = document.getElementById('exportProgressFill');
+    const textEl = document.getElementById('exportProgressText');
+    if (fill) fill.style.width = percent + '%';
+    if (textEl) textEl.textContent = text;
+  }
+  
+  function showExportResult(ok, message, path) {
+    setExportStage('result');
+    _exportResultPath = path;
+    
+    const iconEl = document.getElementById('exportResultIcon');
+    const msgEl = document.getElementById('exportResultMsg');
+    const actionsEl = document.getElementById('exportResultActions');
+    
+    if (iconEl) {
+      iconEl.innerHTML = ok 
+        ? '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--ac-emerald)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>'
+        : '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--ac-coral)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+    }
+    
+    if (msgEl) {
+      msgEl.innerHTML = ok 
+        ? `<div style="color:var(--ac-emerald);font-weight:500;margin-bottom:4px">导出成功</div><div style="color:var(--muted);font-size:12px">${escHtml(message)}</div>`
+        : `<div style="color:var(--ac-coral);font-weight:500;margin-bottom:4px">导出失败</div><div style="color:var(--muted);font-size:12px">${escHtml(message)}</div>`;
+    }
+    
+    if (actionsEl) {
+      if (ok && path) {
+        actionsEl.innerHTML = `
+          <button class="primary" id="exportOpenFileBtn" style="display:inline-flex;align-items:center;gap:4px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            打开文件
+          </button>
+          <button class="secondary" id="exportOpenFolderBtn" style="display:inline-flex;align-items:center;gap:4px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            打开所在文件夹
+          </button>
+          <button class="modal-cancel-btn" id="exportDoneBtn">完成</button>
+        `;
+        document.getElementById('exportOpenFileBtn')?.addEventListener('click', () => {
+          postMsg('openExternal', { uri: _exportResultPath });
+        });
+        document.getElementById('exportOpenFolderBtn')?.addEventListener('click', () => {
+          postMsg('runCommand', { command: 'revealFileInOS', args: [_exportResultPath] });
+        });
+        document.getElementById('exportDoneBtn')?.addEventListener('click', closeExportAccountsModal);
+      } else if (ok) {
+        actionsEl.innerHTML = `<button class="primary" id="exportDoneBtn2">完成</button>`;
+        document.getElementById('exportDoneBtn2')?.addEventListener('click', closeExportAccountsModal);
+      } else {
+        actionsEl.innerHTML = `<button class="primary" id="exportRetryBtn">重试</button><button class="modal-cancel-btn" id="exportCloseBtn2">关闭</button>`;
+        document.getElementById('exportRetryBtn')?.addEventListener('click', () => {
+          setExportStage('confirm');
+        });
+        document.getElementById('exportCloseBtn2')?.addEventListener('click', closeExportAccountsModal);
+      }
+    }
+  }
+
   function getTagList() {
     const tags = new Set();
     accounts.forEach(a => { getAccTags(a).forEach(t => tags.add(t)); });
@@ -4688,6 +5080,14 @@
       });
     }
 
+    // 批量导出
+    const batchExportBtn = document.getElementById('batchExportBtn');
+    if (batchExportBtn) {
+      batchExportBtn.addEventListener('click', () => {
+        if (selectedEmails.size === 0) return;
+        postMsg('exportSelectedAccounts', { emails: [...selectedEmails] });
+      });
+    }
 
     // 取消多选
     const batchCancelBtn = document.getElementById('batchCancelBtn');
@@ -4722,12 +5122,17 @@
 
     // 刷新全部
     if (refreshAllBtn) refreshAllBtn.addEventListener('click', () => refreshAll(true, true));
+    
+    // 导出账号按钮 -> 打开确认模态框
     const exportAccountsBtn = document.getElementById('exportAccountsBtn');
     if (exportAccountsBtn) {
       exportAccountsBtn.addEventListener('click', () => {
-        postMsg('exportAccounts', {});
+        openExportAccountsModal();
       });
     }
+    
+    // 导出模态框事件绑定
+    initExportAccountsModal();
 
     const savedState = vscode.getState() || {};
     privacyMode = savedState.privacyMode === true;
@@ -4773,6 +5178,8 @@
     if (batchTextBtn) batchTextBtn.addEventListener('click', () => { doBatchImportText(); closeAddAccountModal(); });
     const batchJsonBtn = $('[data-action="batchImportJson"]');
     if (batchJsonBtn) batchJsonBtn.addEventListener('click', () => { doBatchImportJson(); closeAddAccountModal(); });
+    const importFileBtn = $('[data-action="importAccountsFile"]');
+    if (importFileBtn) importFileBtn.addEventListener('click', () => { postMsg('importAccountsFile', {}); closeAddAccountModal(); });
     const batchDevinBtn = $('[data-action="batchImportDevin"]');
     if (batchDevinBtn) batchDevinBtn.addEventListener('click', () => { doBatchImportDevin(); closeAddAccountModal(); });
     const oauthLoginBtn = $('[data-action="oauthLogin"]');
@@ -4792,6 +5199,14 @@
     // 从当前账户添加
     const addCurrentBtn = $('[data-action="addCurrent"]');
     if (addCurrentBtn) addCurrentBtn.addEventListener('click', () => { postMsg('addCurrent', {}); closeAddAccountModal(); });
+
+    // 导入选项弹窗事件
+    const importOptClose = document.getElementById('importOptionsClose');
+    const importOptCancel = document.getElementById('importOptionsCancel');
+    const importOptConfirm = document.getElementById('importOptionsConfirm');
+    if (importOptClose) importOptClose.addEventListener('click', hideImportOptionsModal);
+    if (importOptCancel) importOptCancel.addEventListener('click', hideImportOptionsModal);
+    if (importOptConfirm) importOptConfirm.addEventListener('click', confirmImportOptions);
 
     // 外部账户 "加入号池" 按钮
     const externalAddBtn = document.getElementById('externalAddBtn');
