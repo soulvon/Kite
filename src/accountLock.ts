@@ -254,6 +254,22 @@ export function getCurrentLockedEmail(): string | null {
 }
 
 /**
+ * 获取所有被存活窗口占用的账号邮箱（包含当前窗口）
+ * 用于异常监控：判断某账号是否正被任意实例使用，避免误报
+ */
+export function getAllLockedEmails(): string[] {
+  const data = readLockFile();
+  const cleaned = cleanStaleLocks(data);
+  if (cleaned) {
+    try { writeLockFile(data); } catch { /* ignore */ }
+  }
+  // 直接返回所有锁定的邮箱（key 即 email，天然去重，无 instanceId 覆盖风险）
+  return Object.entries(data.locks)
+    .filter(([, entry]) => isPidAlive(entry.pid))
+    .map(([email]) => email);
+}
+
+/**
  * 获取所有存活窗口的 instanceId → email 映射（包含当前窗口）
  * 用于在实例列表中展示"自动选号模式"实例当前实际登录的账号
  */

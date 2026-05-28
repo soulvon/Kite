@@ -5,6 +5,7 @@ import * as accountStore from './accountStore';
 import { requestSyncLogs, onBridgeResult, getBridgeInfo } from './bridgeServer';
 import { getBridgeRelayScript } from './signalBridge';
 import { getContextMonitorSnapshot } from './contextMonitor';
+import { getAllLockedEmails } from './accountLock';
 
 let _panel: vscode.WebviewPanel | undefined;
 let _listenerDisposable: { dispose(): void } | undefined;
@@ -72,6 +73,13 @@ export function openLogPanel(
       // 统计面板的 relay 脚本请求 bridge 信息 → 广播到 workbench 顶层 frame
       const info = getBridgeInfo();
       if (info) webview.postMessage({ type: 'bridgeInfo', port: info.port, token: info.token });
+      return;
+    }
+  if (msg.type === 'anomalyCheckDone') {
+      // 保存异常数量到 globalState，供侧边栏读取
+      ctx.globalState.update('anomalyCount', msg.count || 0);
+      // 通过命令通知侧边栏
+      vscode.commands.executeCommand('windsurfPool._anomalyCountUpdate', msg.count || 0);
       return;
     }
   if (msg.type === 'refresh') {
@@ -148,9 +156,13 @@ async function pushAllData(ctx: vscode.ExtensionContext, tracker: UsageTracker, 
     });
   } catch {}
 
+  // 获取所有活跃实例正在使用的邮箱（基于心跳，90s 过期 + PID 判活）
+  const activeEmails = getAllLockedEmails();
+
   webview.postMessage({
     type: 'allData', currentEmail, quotaEntries, quotaEmails,
     switchLogs, recoveryLogs, diagnoseLogs, diagnosticLogs, summary, accountOverview, contextMonitor,
+    activeEmails,
   });
 }
 
@@ -212,6 +224,10 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-7"/><circle cx="7" cy="15" r="1"/><circle cx="11" cy="11" r="1"/><circle cx="14" cy="14" r="1"/><circle cx="19" cy="7" r="1"/></svg>
       账号诊断
     </button>
+    <button class="lp-tab" data-tab="anomaly">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+      异常监控
+    </button>
     <button class="lp-tab" data-tab="context">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6M7 16h8"/></svg>
       上下文
@@ -250,10 +266,10 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
 
   <!-- 配额历史 -->
   <div class="lp-content" id="lpQuota" hidden>
-    <div class="lp-filter-row">
-      <div class="lp-filter-group">
-        <label class="lp-filter-label">账号</label>
-        <select class="lp-select" id="lpEmailFilter"><option value="">全部账号</option><option value="_recent_">最近使用</option></select>
+    <!-- 筛选栏（搜索+标签+时间） -->
+    <div class="lp-quota-filter-bar">
+      <input type="text" class="lp-search-input" id="lpEmailSearch" placeholder="搜索账号...">
+      <div class="lp-quick-btns">
         <button class="lp-quick-btn" id="lpBtnCurrent">当前</button>
         <button class="lp-quick-btn" id="lpBtnRecent">最近</button>
       </div>
@@ -265,6 +281,7 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
         <button class="lp-time-btn" data-range="all">全部</button>
       </div>
     </div>
+    <div class="lp-tag-chips" id="lpTagChips"></div>
     <div class="lp-chart-wrap">
       <div class="lp-chart-yaxis">
         <span>100%</span><span>80%</span><span>60%</span><span>40%</span><span>20%</span><span>0%</span>
@@ -432,6 +449,28 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
       </table>
     </div>
     <div class="lp-pagination" id="lpDiagnosticPagination"></div>
+  </div>
+
+  <!-- 异常监控 -->
+  <div class="lp-content" id="lpAnomaly" hidden>
+    <div class="lp-anomaly-header">
+      <div class="lp-anomaly-title-row">
+        <div class="lp-section-title">异常监控</div>
+        <div class="lp-anomaly-actions">
+          <label class="lp-anomaly-tag-label">标签：<input type="text" class="lp-input lp-anomaly-tag-input" id="lpAnomalyTag" value="监控" placeholder="标签名"></label>
+          <button class="lp-btn lp-btn-sm" id="lpAnomalyCheck">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            重新检测
+          </button>
+        </div>
+      </div>
+      <div class="lp-anomaly-desc">检测带 <code>监控</code> 标签的账号，配额减少但本机无使用记录 = 异常</div>
+    </div>
+    <div class="lp-anomaly-summary" id="lpAnomalySummary" hidden>
+      <div class="lp-anomaly-summary-cards" id="lpAnomalyStats"></div>
+    </div>
+    <div class="lp-anomaly-cards" id="lpAnomalyBody"></div>
+    <div class="lp-anomaly-empty" id="lpAnomalyEmpty">切换到此标签页时自动检测</div>
   </div>
 
   <!-- 上下文监控 -->

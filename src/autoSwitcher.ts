@@ -1002,4 +1002,8 @@ function calcScore(dPct: number, wPct: number, mode: ScoreMode): number {
   return Math.min(dPct, wPct);
 }
 function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
-function ts(): string { return new Date().toLocaleTimeString(); }
+function ts(): string {
+  const d = new Date();
+  const pad = (n: number) => n < 10 ? '0' + n : String(n);
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}

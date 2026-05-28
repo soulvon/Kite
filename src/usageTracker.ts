@@ -56,7 +56,7 @@ export interface PoolStats {
 const STORAGE_KEY = 'usageTracker.stats';
 const HISTORY_KEY = 'usageTracker.quotaHistory';
 const DIAGNOSTIC_KEY = 'usageTracker.diagnosticHistory';
-const MAX_HISTORY = 500;
+const MAX_HISTORY = 100000; // 约 1 个月（662账号 × 3次/天 × 30天 ≈ 60000）
 const MAX_DIAGNOSTIC_HISTORY = 1000;
 
 export class UsageTracker {

@@ -151,6 +151,52 @@ body {
   color: var(--lp-fg-dim);
   font-weight: 600;
 }
+/* 配额历史筛选栏 */
+.lp-quota-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  flex-wrap: wrap;
+}
+.lp-search-input {
+  background: var(--lp-surface);
+  border: 1px solid var(--lp-border);
+  color: var(--lp-fg);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  min-width: 160px;
+  flex-shrink: 0;
+}
+.lp-search-input:focus { outline: 1px solid var(--lp-accent); border-color: var(--lp-accent); }
+.lp-search-input::placeholder { color: var(--lp-fg-mute); }
+.lp-quick-btns { display: flex; gap: 4px; }
+/* 标签筛选 chips */
+.lp-tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0 10px;
+}
+.lp-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+  border: 1px solid var(--lp-border);
+  background: var(--lp-surface);
+  color: var(--lp-fg-dim);
+  transition: all 0.15s;
+}
+.lp-tag-chip:hover { opacity: 0.85; }
+.lp-tag-chip .lp-tag-count {
+  margin-left: 4px;
+  opacity: 0.7;
+  font-size: 10px;
+}
 .lp-select {
   background: var(--lp-surface);
   border: 1px solid var(--lp-border);
@@ -674,6 +720,222 @@ body {
 .lp-toast-show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+/* ─── 异常监控 ─── */
+.lp-anomaly-header { margin-bottom: 16px; }
+.lp-anomaly-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.lp-anomaly-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.lp-anomaly-tag-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--lp-fg-dim);
+}
+.lp-anomaly-tag-input {
+  width: 64px;
+  padding: 4px 8px;
+  font-size: 11px;
+  border: 1px solid var(--lp-border);
+  border-radius: 4px;
+  background: var(--lp-bg);
+  color: var(--lp-fg);
+}
+.lp-anomaly-tag-input:focus { outline: none; border-color: var(--lp-accent); }
+.lp-btn-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: 1px solid var(--lp-border);
+  background: var(--lp-surface);
+  color: var(--lp-fg-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.lp-btn-sm:hover { border-color: var(--lp-accent); color: var(--lp-accent); }
+.lp-anomaly-desc {
+  font-size: 11px;
+  color: var(--lp-fg-mute);
+  margin-top: 6px;
+}
+.lp-anomaly-desc code {
+  background: var(--lp-surface);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--lp-accent);
+  font-size: 10px;
+}
+
+/* Summary cards */
+.lp-anomaly-summary { margin-bottom: 16px; }
+.lp-anomaly-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.lp-anom-stat-card {
+  padding: 12px 14px;
+  background: var(--lp-surface);
+  border: 1px solid var(--lp-border);
+  border-radius: 8px;
+  text-align: center;
+}
+.lp-anom-stat-card.is-ok {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.06);
+}
+.lp-anom-stat-card.is-danger {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.06);
+}
+.lp-anom-stat-num {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--lp-fg);
+  line-height: 1.2;
+}
+.lp-anom-stat-card.is-ok .lp-anom-stat-num { color: #22c55e; }
+.lp-anom-stat-card.is-danger .lp-anom-stat-num { color: #ef4444; }
+.lp-anom-stat-label {
+  font-size: 11px;
+  color: var(--lp-fg-dim);
+  margin-top: 2px;
+}
+
+/* Grouped cards */
+.lp-anomaly-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lp-anom-card {
+  border: 1px solid var(--lp-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--lp-surface);
+  border-left: 3px solid #f59e0b;
+}
+.lp-anom-card-head {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  cursor: pointer;
+  gap: 10px;
+  user-select: none;
+  transition: background 0.12s;
+}
+.lp-anom-card-head:hover { background: rgba(255,255,255,0.03); }
+.lp-anom-card-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.lp-anom-card-email {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--lp-fg);
+}
+.lp-anom-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.15s, color 0.15s;
+}
+.lp-anom-link:hover {
+  color: var(--lp-accent);
+  text-decoration-color: var(--lp-accent);
+}
+.lp-anom-card-count {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  font-weight: 500;
+}
+.lp-anom-card-summary {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  justify-content: flex-end;
+}
+.lp-anom-chip {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+.lp-anom-chip.is-warn {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+}
+.lp-anom-chevron {
+  flex-shrink: 0;
+  color: var(--lp-fg-mute);
+  transition: transform 0.2s;
+}
+.lp-anom-card.is-collapsed .lp-anom-chevron { transform: rotate(-90deg); }
+.lp-anom-card-body {
+  border-top: 1px solid var(--lp-border);
+  padding: 6px 14px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.lp-anom-card.is-collapsed .lp-anom-card-body { display: none; }
+.lp-anom-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(127,127,127,0.08);
+  font-size: 11px;
+}
+.lp-anom-row:last-child { border-bottom: none; }
+.lp-anom-time {
+  color: var(--lp-fg-dim);
+  flex-shrink: 0;
+  width: 110px;
+}
+.lp-anom-change {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.lp-anom-delta {
+  font-weight: 500;
+  color: var(--lp-fg-dim);
+}
+.lp-anom-delta.is-neg { color: #ef4444; }
+
+/* Empty state */
+.lp-anomaly-empty {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--lp-fg-mute);
+  font-size: 13px;
+}
+.lp-anomaly-empty-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+.lp-anomaly-empty-sub {
+  font-size: 11px;
+  color: var(--lp-fg-mute);
+  opacity: 0.7;
 }
 
 /* ─── Footer ─── */

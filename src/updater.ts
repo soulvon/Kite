@@ -17,10 +17,11 @@ interface GitHubRelease {
   }>;
 }
 
+// 硬编码仓库信息（公开仓库，无需 token）
+const REPO_OWNER = 'soulvon';
+const REPO_NAME = 'windsurf-pool-releases';
+
 interface UpdateConfig {
-  repoOwner: string;
-  repoName: string;
-  token: string;
   autoCheck: boolean;
   autoInstall: boolean;
 }
@@ -31,9 +32,6 @@ interface UpdateConfig {
 function getUpdateConfig(): UpdateConfig {
   const config = vscode.workspace.getConfiguration('windsurfPool.update');
   return {
-    repoOwner: config.get('repoOwner', ''),
-    repoName: config.get('repoName', ''),
-    token: config.get('token', ''),
     autoCheck: config.get('autoCheck', true),
     autoInstall: config.get('autoInstall', true),
   };
@@ -179,19 +177,11 @@ function compareVersions(a: string, b: string): number {
  */
 export async function checkForUpdates(silent: boolean = false): Promise<boolean> {
   const config = getUpdateConfig();
-
-  if (!config.repoOwner || !config.repoName) {
-    if (!silent) {
-      vscode.window.showWarningMessage('未配置 GitHub 仓库信息，请在设置中配置 repoOwner 和 repoName');
-    }
-    return false;
-  }
-
   const currentVersion = getCurrentVersion();
 
   try {
-    const url = `https://api.github.com/repos/${config.repoOwner}/${config.repoName}/releases/latest`;
-    const release: GitHubRelease = await fetchGitHubApi(url, config.token);
+    const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+    const release: GitHubRelease = await fetchGitHubApi(url, '');
 
     const latestVersion = release.tag_name.startsWith('v') ? release.tag_name.slice(1) : release.tag_name;
 
@@ -222,9 +212,9 @@ export async function checkForUpdates(silent: boolean = false): Promise<boolean>
     );
 
     if (choice === '立即更新') {
-      await downloadAndInstall(vsixAsset.browser_download_url, config.token, latestVersion);
+      await downloadAndInstall(vsixAsset.browser_download_url, '', latestVersion);
     } else if (choice === '下载') {
-      await downloadOnly(vsixAsset.browser_download_url, config.token, latestVersion);
+      await downloadOnly(vsixAsset.browser_download_url, '', latestVersion);
     } else if (choice === '打开发布页') {
       vscode.env.openExternal(vscode.Uri.parse(release.html_url));
     }
@@ -316,16 +306,13 @@ export async function autoCheckOnStartup(): Promise<void> {
   if (!config.autoCheck) {
     return;
   }
-  if (!config.repoOwner || !config.repoName) {
-    return;
-  }
 
   // 延迟 30 秒后检查，避免影响启动性能
   setTimeout(async () => {
     try {
       const currentVersion = getCurrentVersion();
-      const url = `https://api.github.com/repos/${config.repoOwner}/${config.repoName}/releases/latest`;
-      const release: GitHubRelease = await fetchGitHubApi(url, config.token);
+      const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+      const release: GitHubRelease = await fetchGitHubApi(url, '');
 
       const latestVersion = release.tag_name.startsWith('v') ? release.tag_name.slice(1) : release.tag_name;
 
@@ -347,7 +334,7 @@ export async function autoCheckOnStartup(): Promise<void> {
         );
 
         if (confirm === '立即更新') {
-          await downloadAndInstall(vsixAsset.browser_download_url, config.token, latestVersion);
+          await downloadAndInstall(vsixAsset.browser_download_url, '', latestVersion);
         }
       } else {
         vscode.window.showInformationMessage(

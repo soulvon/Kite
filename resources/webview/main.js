@@ -196,6 +196,25 @@
       : '切号预检：已关闭（切号无延迟但可能切到限速的号）。点击开启。';
   }
 
+  // 异常监控徽章
+  let anomalyCount = 0;
+  function updateAnomalyBadge(count) {
+    anomalyCount = count;
+    if (!anomalyBadgeBtn || !anomalyBadgeCount) return;
+    if (count > 0) {
+      anomalyBadgeBtn.hidden = false;
+      anomalyBadgeBtn.classList.remove('is-ok');
+      anomalyBadgeCount.textContent = count > 99 ? '99+' : count;
+      anomalyBadgeBtn.title = '异常监控：发现 ' + count + ' 个异常，点击查看详情';
+    } else {
+      // 无异常时也显示，但用绿色
+      anomalyBadgeBtn.hidden = false;
+      anomalyBadgeBtn.classList.add('is-ok');
+      anomalyBadgeCount.textContent = '✓';
+      anomalyBadgeBtn.title = '异常监控：未发现异常';
+    }
+  }
+
   function setExternalEmailText() {
     const emailEl = document.getElementById('externalEmail');
     if (emailEl) emailEl.textContent = displayEmail(externalAccount);
@@ -211,6 +230,8 @@
   const refreshAllBtn = $('#refreshAllBtn');
   const privacyModeBtn = $('#privacyModeBtn');
   const preflightToggleBtn = $('#preflightToggleBtn');
+  const anomalyBadgeBtn = $('#anomalyBadgeBtn');
+  const anomalyBadgeCount = $('#anomalyBadgeCount');
 
   // Windsurf 增强面板元素
   const enhanceToggleBtn = $('#enhanceToggleBtn');
@@ -3068,6 +3089,11 @@
         break;
       }
 
+      case 'anomalyCheckResult': {
+        updateAnomalyBadge(msg.count || 0);
+        break;
+      }
+
       case 'preflightSettingSync': {
         preflightEnabled = msg.enabled !== false;
         updatePreflightUi();
@@ -5070,6 +5096,43 @@
       });
     }
 
+    // 批量添加监控标签
+    const batchMonitorBtn = document.getElementById('batchMonitorBtn');
+    if (batchMonitorBtn) {
+      batchMonitorBtn.addEventListener('click', () => {
+        if (selectedEmails.size === 0) {
+          showToast('请先选择账号', 'warn');
+          return;
+        }
+        // 为选中账号添加"监控"标签
+        const emails = [...selectedEmails];
+        let addedCount = 0;
+        emails.forEach(email => {
+          const account = accounts.find(a => a.email === email);
+          if (account) {
+            const currentTags = getAccTags(account);
+            if (!currentTags.includes('监控')) {
+              const newTags = [...currentTags, '监控'];
+              postMsg('updateTag', { email, tags: newTags });
+              // 本地立即更新以便看到效果
+              if (account.tags) {
+                account.tags.push('监控');
+              } else {
+                account.tags = ['监控'];
+              }
+              addedCount++;
+            }
+          }
+        });
+        if (addedCount > 0) {
+          showToast(`已为 ${addedCount} 个账号添加「监控」标签`, 'success', 3000);
+          renderCards(); // 刷新卡片显示
+        } else {
+          showToast('选中账号已全部添加过监控标签', 'info');
+        }
+      });
+    }
+
     // 批量打标签
     const batchTagBtn = document.getElementById('batchTagBtn');
     if (batchTagBtn) {
@@ -5155,6 +5218,13 @@
         preflightEnabled = !preflightEnabled;
         updatePreflightUi();
         postMsg('togglePreflightCheck');
+      });
+    }
+
+    // 异常监控徽章：点击打开统计面板的异常监控标签页
+    if (anomalyBadgeBtn) {
+      anomalyBadgeBtn.addEventListener('click', () => {
+        postMsg('openLogPanel', { tab: 'anomaly' });
       });
     }
 

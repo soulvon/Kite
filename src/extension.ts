@@ -28,8 +28,10 @@ let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
 let statusBar: StatusBarManager;
 let usageTracker: UsageTracker;
+let _context: vscode.ExtensionContext;
 
 export function activate(context: vscode.ExtensionContext) {
+  _context = context;
   setExtensionPath(context.extensionPath);
   scheduleAcpAgentRepair('extension-activate', 10_000);
   scheduleAcpConnectionRecovery('extension-activate', 12_000);
@@ -122,6 +124,12 @@ export function activate(context: vscode.ExtensionContext) {
     openLogPanel(context, usageTracker, context.extensionUri, tab, autoSwitcher);
   });
   context.subscriptions.push(openLogPanelCmd);
+
+  // 内部命令：统计面板检测完成后通知侧边栏更新异常徽章
+  const anomalyCountUpdateCmd = vscode.commands.registerCommand('windsurfPool._anomalyCountUpdate', (count: number) => {
+    sidebarProvider?.updateAnomalyCount?.(count);
+  });
+  context.subscriptions.push(anomalyCountUpdateCmd);
 
   const openHealthCheckCmd = vscode.commands.registerCommand('windsurfPool.openHealthCheck', () => {
     openHealthCheckPanel(context, context.extensionUri, usageTracker);
@@ -612,6 +620,20 @@ export async function deactivate(): Promise<void> {
   try { releaseLock(); } catch {}
   try { stopBridgeServer(); } catch {}
   try { const { shutdownSoundPlayer } = require('./soundPlayer'); shutdownSoundPlayer(); } catch {}
+
+  // 记录当前账号退出日志（用于异常监控的引用计数）
+  try {
+    const curEmail = _context?.globalState.get<string>('lastEmail');
+    if (curEmail && _context) {
+      const logs: string[] = _context.globalState.get('autoSwitchLogs', []);
+      const now = new Date();
+      const ts = `${now.getMonth() + 1}/${now.getDate()} ${now.toTimeString().slice(0, 8)}`;
+      logs.push(`[${ts}][exit] ${curEmail} → (实例关闭)`);
+      if (logs.length > 200) logs.splice(0, logs.length - 200);
+      await _context.globalState.update('autoSwitchLogs', logs);
+    }
+  } catch {}
+
   // 显式等待 usageTracker 写盘完成（VS Code 不会等 context.subscriptions 的 dispose Promise，
   // 必须在 deactivate 里 await，VS Code 才会等扩展卸载完成）
   try { await usageTracker?.dispose(); } catch {}

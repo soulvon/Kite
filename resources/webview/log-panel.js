@@ -13,9 +13,30 @@
   let contextMonitor = null;
   let allSummary = {};
   let currentEmail = '';
+  let activeEmails = []; // 所有实例当前使用中的邮箱（心跳存活）
   let filterEmail = '';
   let timeRange = '24h';
+  let searchQuery = '';       // 搜索关键词
+  let activeTag = '';         // 当前选中的标签（空=全部）
+  let allTags = [];           // 所有标签列表
+  let emailTagMap = {};       // email -> tags[] 映射
+  let allEmails = [];         // 所有账号邮箱（包括无配额记录的）
   let recoveryFilter = '';
+
+  // ── 标签颜色系统 ──
+  const TAG_PALETTE = [
+    '#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
+    '#ec4899', '#14b8a6', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
+  ];
+  const tagColorsMap = {};
+  function getTagColor(tag) {
+    if (!tag) return TAG_PALETTE[0];
+    if (tagColorsMap[tag]) return tagColorsMap[tag];
+    let hash = 0;
+    for (let i = 0; i < tag.length; i++) hash = ((hash << 5) - hash + tag.charCodeAt(i)) | 0;
+    tagColorsMap[tag] = TAG_PALETTE[Math.abs(hash) % TAG_PALETTE.length];
+    return tagColorsMap[tag];
+  }
   let diagnoseFilter = '';
   let diagnosticFilter = '';
   let quotaPage = 1;
@@ -82,6 +103,10 @@
     activeTab = name;
     tabs.forEach(t => t.classList.toggle('active', t.getAttribute('data-tab') === name));
     contents.forEach(c => { c.hidden = c.id !== 'lp' + name.charAt(0).toUpperCase() + name.slice(1); });
+    // 切换到异常监控时自动运行检测
+    if (name === 'anomaly') {
+      setTimeout(() => { if (typeof runAnomalyCheck === 'function') runAnomalyCheck(); }, 100);
+    }
   }
   tabs.forEach(t => t.addEventListener('click', () => switchTab(t.getAttribute('data-tab'))));
 
@@ -139,39 +164,91 @@
     });
   });
 
-  // ── 账号筛选 ──
-  const emailSel = document.getElementById('lpEmailFilter');
-  emailSel.addEventListener('change', () => {
-    filterEmail = emailSel.value;
-    quotaPage = 1;
-    renderQuota();
-  });
+  // ── 账号筛选（搜索+标签） ──
+  const emailSearch = document.getElementById('lpEmailSearch');
+  const tagChipsEl = document.getElementById('lpTagChips');
+
+  // 搜索功能
+  if (emailSearch) {
+    emailSearch.addEventListener('input', () => {
+      searchQuery = emailSearch.value.toLowerCase().trim();
+      quotaPage = 1;
+      renderQuota();
+    });
+    emailSearch.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        emailSearch.value = '';
+        searchQuery = '';
+        quotaPage = 1;
+        renderQuota();
+      }
+    });
+  }
+
+  // 构建标签筛选 chips
+  function buildTagChips() {
+    if (!tagChipsEl) return;
+    // 统计每个标签的账号数（基于所有账号，不只是有配额记录的）
+    const tagCounts = {};
+    allTags.forEach(t => { tagCounts[t] = 0; });
+    allEmails.forEach(em => {
+      const tags = emailTagMap[em] || [];
+      tags.forEach(t => { if (tagCounts[t] !== undefined) tagCounts[t]++; });
+    });
+    // 全部标签
+    let html = '<span class="lp-tag-chip' + (!activeTag ? ' active' : '') + '" data-tag="">全部<span class="lp-tag-count">(' + allEmails.length + ')</span></span>';
+    // 各标签（带颜色）
+    allTags.forEach(t => {
+      const isActive = activeTag === t;
+      const tc = getTagColor(t);
+      const chipStyle = isActive
+        ? 'background:' + tc + ';color:#fff;border-color:' + tc
+        : 'background:' + tc + '20;color:' + tc + ';border-color:' + tc + '60';
+      html += '<span class="lp-tag-chip' + (isActive ? ' active' : '') + '" data-tag="' + escHtml(t) + '" style="' + chipStyle + '">' + escHtml(t) + '<span class="lp-tag-count">(' + (tagCounts[t] || 0) + ')</span></span>';
+    });
+    tagChipsEl.innerHTML = html;
+    tagChipsEl.querySelectorAll('.lp-tag-chip').forEach(el => {
+      el.addEventListener('click', () => {
+        activeTag = el.dataset.tag || '';
+        quotaPage = 1;
+        buildTagChips();
+        renderQuota();
+      });
+    });
+  }
+
+  function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
   // ── 快捷筛选按钮 ──
   const btnCurrent = document.getElementById('lpBtnCurrent');
   const btnRecent = document.getElementById('lpBtnRecent');
   function setQuickFilter(val) {
-    // 若目标值在下拉中不存在，回落为「全部账号」并提示，避免 filterEmail 与 select 显示不一致
-    const exists = !!emailSel.querySelector('option[value="' + val + '"]');
-    if (val && !exists) {
+    if (val === '_recent_') {
+      // 最近使用
+      filterEmail = '_recent_';
+      searchQuery = '';
+      if (emailSearch) emailSearch.value = '';
+    } else if (val) {
+      // 当前账号：填入搜索框
+      filterEmail = val;
+      searchQuery = val.toLowerCase();
+      if (emailSearch) emailSearch.value = val;
+    } else {
       filterEmail = '';
-      emailSel.value = '';
-      quotaPage = 1;
-      btnCurrent.classList.remove('lp-quick-btn-active');
-      btnRecent.classList.remove('lp-quick-btn-active');
-      renderQuota();
-      showToast(val === '_recent_' ? '暂无最近 7 天的配额变动' : '当前账号尚无配额变动记录');
-      return;
+      searchQuery = '';
+      if (emailSearch) emailSearch.value = '';
     }
-    filterEmail = val;
-    emailSel.value = val;
     quotaPage = 1;
     btnCurrent.classList.toggle('lp-quick-btn-active', val === currentEmail && !!currentEmail);
     btnRecent.classList.toggle('lp-quick-btn-active', val === '_recent_');
     renderQuota();
   }
   if (btnCurrent) btnCurrent.addEventListener('click', () => {
-    setQuickFilter(currentEmail || '');
+    if (!currentEmail) {
+      showToast('当前账号尚无配额变动记录');
+      return;
+    }
+    setQuickFilter(currentEmail);
   });
   if (btnRecent) btnRecent.addEventListener('click', () => {
     setQuickFilter('_recent_');
@@ -221,23 +298,20 @@
       contextMonitor = msg.contextMonitor || null;
       allSummary = msg.summary || {};
       currentEmail = msg.currentEmail || '';
+      activeEmails = msg.activeEmails || [];
 
-      // 更新邮箱下拉
-      const prev = emailSel.value;
-      emailSel.innerHTML = '<option value="">全部账号</option><option value="_recent_">最近使用</option>';
-      for (const em of allQuotaEmails) {
-        const opt = document.createElement('option');
-        opt.value = em;
-        opt.textContent = maskEmailShort(em);
-        emailSel.appendChild(opt);
-      }
-      if (!prev && currentEmail && allQuotaEmails.includes(currentEmail)) {
-        emailSel.value = currentEmail;
-        filterEmail = currentEmail;
-      } else {
-        emailSel.value = prev || '';
-        filterEmail = emailSel.value;
-      }
+      // 构建 email -> tags 映射、标签列表、所有邮箱列表
+      emailTagMap = {};
+      allEmails = [];
+      const tagSet = new Set();
+      allAccountOverview.forEach(a => {
+        allEmails.push(a.email);
+        const tags = (a.tags && a.tags.length > 0) ? a.tags : (a.tag ? [a.tag] : []);
+        emailTagMap[a.email] = tags;
+        tags.forEach(t => tagSet.add(t));
+      });
+      allTags = Array.from(tagSet).sort();
+      buildTagChips();
 
       renderOverview();
       renderQuota();
@@ -247,6 +321,10 @@
       renderDiagnostic();
       renderContext();
       renderFooter();
+      // 若当前在异常监控页，数据刷新后重新检测（使用最新 activeEmails，避免陈旧快照误报）
+      if (activeTab === 'anomaly' && typeof runAnomalyCheck === 'function') {
+        runAnomalyCheck();
+      }
     }
     if (msg.type === 'contextData') {
       contextMonitor = msg.contextMonitor || null;
@@ -315,20 +393,27 @@
 
   function getFiltered() {
     let arr = allQuotaEntries;
-    if (filterEmail) {
-      if (filterEmail === '_recent_') {
-        // 最近使用：筛选最近 7 天有配额变动的账号
-        var recentCutoff = Date.now() - 604800000; // 7 天
-        var recentEmails = new Set();
-        for (var i = 0; i < allQuotaEntries.length; i++) {
-          if (allQuotaEntries[i].ts >= recentCutoff) {
-            recentEmails.add(allQuotaEntries[i].email);
-          }
+    // 1. 按特殊筛选（最近使用）
+    if (filterEmail === '_recent_') {
+      var recentCutoff = Date.now() - 604800000; // 7 天
+      var recentEmails = new Set();
+      for (var i = 0; i < allQuotaEntries.length; i++) {
+        if (allQuotaEntries[i].ts >= recentCutoff) {
+          recentEmails.add(allQuotaEntries[i].email);
         }
-        arr = arr.filter(function(e) { return recentEmails.has(e.email); });
-      } else {
-        arr = arr.filter(function(e) { return e.email === filterEmail; });
       }
+      arr = arr.filter(function(e) { return recentEmails.has(e.email); });
+    }
+    // 2. 按搜索关键词筛选
+    if (searchQuery) {
+      arr = arr.filter(function(e) { return e.email.toLowerCase().includes(searchQuery); });
+    }
+    // 3. 按标签筛选
+    if (activeTag) {
+      arr = arr.filter(function(e) {
+        var tags = emailTagMap[e.email] || [];
+        return tags.includes(activeTag);
+      });
     }
     return filterByTime(arr);
   }
@@ -1115,6 +1200,293 @@
   function setText(id, val) {
     const el = document.getElementById(id);
     if (el) el.textContent = String(val);
+  }
+
+  // ── 异常监控 ──
+  const anomalyTagInput = document.getElementById('lpAnomalyTag');
+  const anomalyCheckBtn = document.getElementById('lpAnomalyCheck');
+  const anomalyStatsEl = document.getElementById('lpAnomalyStats');
+  const anomalySummaryEl = document.getElementById('lpAnomalySummary');
+  const anomalyBodyEl = document.getElementById('lpAnomalyBody');
+  const anomalyEmptyEl = document.getElementById('lpAnomalyEmpty');
+
+  if (anomalyCheckBtn) {
+    anomalyCheckBtn.addEventListener('click', runAnomalyCheck);
+  }
+
+  function runAnomalyCheck() {
+    const monitorTag = (anomalyTagInput?.value || '监控').trim();
+
+    // 1. 找出带监控标签的账号
+    const monitoredEmails = new Set();
+    allAccountOverview.forEach(a => {
+      const tags = (a.tags && a.tags.length > 0) ? a.tags : (a.tag ? [a.tag] : []);
+      if (tags.some(t => t === monitorTag)) {
+        monitoredEmails.add(a.email);
+      }
+    });
+
+    if (monitoredEmails.size === 0) {
+      if (anomalyStatsEl) anomalyStatsEl.innerHTML = '';
+      if (anomalySummaryEl) anomalySummaryEl.hidden = true;
+      anomalyBodyEl.innerHTML = '';
+      anomalyEmptyEl.innerHTML = '<div class="lp-anomaly-empty-icon">🏷️</div><div>未找到带「' + escHtml(monitorTag) + '」标签的账号<br><span class="lp-anomaly-empty-sub">请先给要监控的账号添加该标签</span></div>';
+      anomalyEmptyEl.hidden = false;
+      vscode.postMessage({ type: 'anomalyCheckDone', count: 0 });
+      return;
+    }
+
+    // 2. 构建切号事件列表：{ts, srcEmail, dstEmail}
+    // 日志格式：[M/D HH:MM:SS][auto] srcEmail(配额) reason → dstEmail(配额)
+    const switchEvents = []; // {ts, src, dst}
+    const now = new Date();
+    const nowTs = now.getTime();
+    const thisYear = now.getFullYear();
+
+    function parseSwitchLogTime(log) {
+      // 尝试解析新格式 [M/D HH:MM:SS]
+      let m = log.match(/\[(\d{1,2})\/(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\]/);
+      if (m) {
+        const t = new Date(thisYear, parseInt(m[1]) - 1, parseInt(m[2]),
+          parseInt(m[3]), parseInt(m[4]), parseInt(m[5]));
+        if (t.getTime() > nowTs + 86400000) t.setFullYear(thisYear - 1);
+        return t.getTime();
+      }
+      // 旧格式 [HH:MM:SS]
+      m = log.match(/\[(\d{2}):(\d{2}):(\d{2})\]/);
+      if (m) {
+        const t = new Date();
+        t.setHours(parseInt(m[1]), parseInt(m[2]), parseInt(m[3]), 0);
+        if (t.getTime() > nowTs) t.setDate(t.getDate() - 1);
+        return t.getTime();
+      }
+      return null;
+    }
+
+    allSwitchLogs.forEach(log => {
+      if (!log.includes('→')) return;
+      const ts = parseSwitchLogTime(log);
+      if (!ts) return;
+
+      // 处理启动日志：[start] (实例启动) → xxx@gmail.com
+      if (log.includes('[start]')) {
+        const dstMatch = log.match(/→\s*(\S+@\S+)/);
+        if (dstMatch) {
+          const dst = dstMatch[1].replace(/\(.*$/, '');
+          switchEvents.push({ ts, src: null, dst }); // 只有切入，没有切出
+        }
+        return;
+      }
+
+      // 处理退出日志：[exit] xxx@gmail.com → (实例关闭)
+      if (log.includes('[exit]')) {
+        const srcMatch = log.match(/(\S+@\S+)/);
+        if (srcMatch) {
+          const src = srcMatch[1].replace(/\(.*$/, '');
+          switchEvents.push({ ts, src, dst: null }); // 只有切出，没有切入
+        }
+        return;
+      }
+
+      // 正常切号日志：从 → 分割提取源邮箱和目标邮箱
+      const parts = log.split('→');
+      if (parts.length < 2) return;
+      const srcMatch = parts[0].match(/(\S+@\S+)/);
+      const dstMatch = parts[1].match(/(\S+@\S+)/);
+      if (!dstMatch) return;
+
+      const dst = dstMatch[1].replace(/\(.*$/, '');
+      const src = srcMatch ? srcMatch[1].replace(/\(.*$/, '') : null;
+
+      switchEvents.push({ ts, src, dst });
+    });
+    switchEvents.sort((a, b) => a.ts - b.ts);
+
+    // 计算切号日志覆盖的时间范围
+    const switchLogMinTs = switchEvents.length > 0 ? switchEvents[0].ts : nowTs;
+
+    // 辅助函数：判断某账号是否"仍在使用中"（最后一条相关日志是切入/启动）
+    // 如果最后一次出现是 dst（切入/启动），则认为仍在使用，未被切出
+    const lastEventMap = {}; // email -> 'in' | 'out'
+    switchEvents.forEach(ev => {
+      if (ev.dst) lastEventMap[ev.dst] = 'in';
+      if (ev.src) lastEventMap[ev.src] = 'out';
+    });
+
+    // 辅助函数：用引用计数判断时间 T 时某账号是否活跃（支持多实例）
+    // 切入(dst) → refCount++，切出(src) → refCount--，实例关闭(exit) → refCount--
+    function isActiveAt(email, t) {
+      // 当前账号或任何实例正在使用的账号 → 视为活跃
+      if (email === currentEmail) return true;
+      if (activeEmails.includes(email)) return true;
+      // 最后一条日志是切入且无切出 → 视为仍在使用（兜底）
+      if (lastEventMap[email] === 'in') return true;
+      let count = 0;
+      for (const ev of switchEvents) {
+        if (ev.ts > t) break;
+        if (ev.dst === email) count++;
+        if (ev.src === email) count = Math.max(0, count - 1);
+      }
+      return count > 0;
+    }
+
+    // 3. 检测异常：有消耗但本机当时没有使用该账号（支持多实例并行）
+    const anomalies = [];
+    let prevQuotaMap = {}; // email -> {daily, weekly, balance, ts}
+
+    // 只检测最近 24 小时内的异常（避免历史累积过多）
+    const checkWindowMs = 24 * 60 * 60 * 1000;
+    const checkMinTs = Math.max(switchLogMinTs, nowTs - checkWindowMs);
+
+    // 消耗阈值：日配额减少 ≥ 2% 或 周配额减少 ≥ 2% 才算有意义的消耗
+    const DAILY_THRESHOLD = -2;
+    const WEEKLY_THRESHOLD = -2;
+    // 相邻记录最大间隔：超过则视为数据不连续（累积差值无法可靠归因到单一时刻），跳过检测
+    const MAX_GAP_MS = 3 * 60 * 60 * 1000;
+
+    // 按时间排序配额历史
+    const sortedQuota = [...allQuotaEntries].sort((a, b) => a.ts - b.ts);
+
+    let checkedCount = 0;
+    sortedQuota.forEach(entry => {
+      if (!monitoredEmails.has(entry.email)) return;
+
+      const prev = prevQuotaMap[entry.email];
+      if (prev) {
+        const dailyDelta = entry.daily - prev.daily;
+        const weeklyDelta = entry.weekly - prev.weekly;
+        const balanceDelta = (entry.balance || 0) - (prev.balance || 0);
+
+        // 有意义的消耗：超过阈值
+        const hasConsumption = dailyDelta <= DAILY_THRESHOLD || weeklyDelta <= WEEKLY_THRESHOLD || balanceDelta < 0;
+        // 数据连续性：相邻记录间隔过大时累积差值无法可靠归因，跳过
+        const isContinuous = (entry.ts - prev.ts) <= MAX_GAP_MS;
+        if (hasConsumption && isContinuous && entry.ts >= checkMinTs) {
+          checkedCount++;
+          // 检查配额减少时，本机是否正在使用该账号（多实例：引用计数 > 0）
+          const wasActive = isActiveAt(entry.email, entry.ts);
+
+          if (!wasActive) {
+            anomalies.push({
+              email: entry.email,
+              ts: entry.ts,
+              dailyBefore: prev.daily,
+              dailyAfter: entry.daily,
+              weeklyBefore: prev.weekly,
+              weeklyAfter: entry.weekly,
+              balanceDelta: balanceDelta,
+              reason: '本机无使用记录'
+            });
+          }
+        }
+      }
+
+      prevQuotaMap[entry.email] = {
+        daily: entry.daily,
+        weekly: entry.weekly,
+        balance: entry.balance || 0,
+        ts: entry.ts
+      };
+    });
+
+    // 4. 渲染结果
+    if (anomalySummaryEl) anomalySummaryEl.hidden = false;
+
+    if (switchEvents.length === 0) {
+      anomalyStatsEl.innerHTML = renderSummaryCards(monitoredEmails.size, 0, 0, 0);
+      anomalyBodyEl.innerHTML = '';
+      anomalyEmptyEl.innerHTML = '<div class="lp-anomaly-empty-icon">⚠️</div><div>无切号日志，无法检测异常<br><span class="lp-anomaly-empty-sub">请先使用一段时间后再检测</span></div>';
+      anomalyEmptyEl.hidden = false;
+      vscode.postMessage({ type: 'anomalyCheckDone', count: 0 });
+      return;
+    }
+
+    anomalyStatsEl.innerHTML = renderSummaryCards(monitoredEmails.size, switchEvents.length, checkedCount, anomalies.length);
+
+    if (anomalies.length === 0) {
+      anomalyBodyEl.innerHTML = '';
+      anomalyEmptyEl.innerHTML = '<div class="lp-anomaly-empty-icon">✅</div><div>未发现异常<br><span class="lp-anomaly-empty-sub">所有配额变动都有对应的本机使用记录</span></div>';
+      anomalyEmptyEl.hidden = false;
+      vscode.postMessage({ type: 'anomalyCheckDone', count: 0 });
+      return;
+    }
+
+    anomalyEmptyEl.hidden = true;
+
+    // 按账号分组
+    const grouped = {};
+    anomalies.forEach(a => {
+      if (!grouped[a.email]) grouped[a.email] = [];
+      grouped[a.email].push(a);
+    });
+
+    // 按异常数量降序排列
+    const sortedEmails = Object.keys(grouped).sort((a, b) => grouped[b].length - grouped[a].length);
+
+    anomalyBodyEl.innerHTML = sortedEmails.map(email => {
+      const items = grouped[email];
+      const totalDaily = items.reduce((s, a) => s + (a.dailyAfter - a.dailyBefore), 0);
+      const totalWeekly = items.reduce((s, a) => s + (a.weeklyAfter - a.weeklyBefore), 0);
+
+      const rows = items.map(a => {
+        const dd = a.dailyAfter - a.dailyBefore;
+        const wd = a.weeklyAfter - a.weeklyBefore;
+        return '<div class="lp-anom-row">'
+          + '<span class="lp-anom-time">' + fmtTime(a.ts) + '</span>'
+          + '<span class="lp-anom-change">'
+          + (dd !== 0 ? '<span class="lp-anom-delta' + (dd < 0 ? ' is-neg' : '') + '">日 ' + (dd > 0 ? '+' : '') + dd + '%</span>' : '')
+          + (wd !== 0 ? '<span class="lp-anom-delta' + (wd < 0 ? ' is-neg' : '') + '">周 ' + (wd > 0 ? '+' : '') + wd + '%</span>' : '')
+          + (a.balanceDelta < 0 ? '<span class="lp-anom-delta is-neg">$' + (a.balanceDelta / 1000000).toFixed(2) + '</span>' : '')
+          + '</span>'
+          + '</div>';
+      }).join('');
+
+      return '<div class="lp-anom-card">'
+        + '<div class="lp-anom-card-head" onclick="this.parentElement.classList.toggle(\'is-collapsed\')">'
+        + '<div class="lp-anom-card-info">'
+        + '<span class="lp-anom-card-email lp-anom-link" data-email="' + escHtml(email) + '">' + maskEmail(email) + '</span>'
+        + '<span class="lp-anom-card-count">' + items.length + ' 次异常</span>'
+        + '</div>'
+        + '<div class="lp-anom-card-summary">'
+        + (totalDaily < 0 ? '<span class="lp-anom-chip is-warn">日配额 ' + totalDaily + '%</span>' : '')
+        + (totalWeekly < 0 ? '<span class="lp-anom-chip is-warn">周配额 ' + totalWeekly + '%</span>' : '')
+        + '</div>'
+        + '<svg class="lp-anom-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>'
+        + '</div>'
+        + '<div class="lp-anom-card-body">' + rows + '</div>'
+        + '</div>';
+    }).join('');
+
+    // 邮箱点击 → 跳转配额历史并筛选
+    anomalyBodyEl.querySelectorAll('.lp-anom-link').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation(); // 阻止卡片折叠
+        const email = el.getAttribute('data-email');
+        if (email) {
+          setQuickFilter(email);
+          switchTab('quota');
+        }
+      });
+    });
+
+    // 通知侧边栏更新徽章
+    vscode.postMessage({ type: 'anomalyCheckDone', count: anomalies.length });
+  }
+
+  function renderSummaryCards(accounts, logs, changes, anomalies) {
+    const isOk = anomalies === 0;
+    return '<div class="lp-anom-stat-card">'
+      + '<div class="lp-anom-stat-num">' + accounts + '</div>'
+      + '<div class="lp-anom-stat-label">监控账号</div></div>'
+      + '<div class="lp-anom-stat-card">'
+      + '<div class="lp-anom-stat-num">' + logs + '</div>'
+      + '<div class="lp-anom-stat-label">日志条数</div></div>'
+      + '<div class="lp-anom-stat-card">'
+      + '<div class="lp-anom-stat-num">' + changes + '</div>'
+      + '<div class="lp-anom-stat-label">配额变动</div></div>'
+      + '<div class="lp-anom-stat-card ' + (isOk ? 'is-ok' : 'is-danger') + '">'
+      + '<div class="lp-anom-stat-num">' + anomalies + '</div>'
+      + '<div class="lp-anom-stat-label">' + (isOk ? '✓ 无异常' : '⚠ 异常') + '</div></div>';
   }
 
   // ── 底部状态栏 ──

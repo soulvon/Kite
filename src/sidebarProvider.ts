@@ -245,7 +245,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private _tsFmt(): string {
     const n = new Date();
-    return `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
+    return `${n.getMonth() + 1}/${n.getDate()} ${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
   }
 
   private log(msg: string) {
@@ -294,6 +294,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /** 主动通知 webview 刷新 Windsurf 增强状态（供外部命令在修改文件/配置后调用） */
   public refreshEnhancementStatus(): void {
     this._pushEnhancementStatus();
+  }
+
+  /** 更新异常监控徽章（供统计面板检测完成后调用） */
+  public updateAnomalyCount(count: number): void {
+    this.postMessage({ type: 'anomalyCheckResult', count } as any);
   }
 
   /**
@@ -614,6 +619,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._pushPreflightSetting();
       this._pushUsageStats();
       this._pushQuotaHistory();
+
+      // 记录实例启动日志（用于异常监控的引用计数）
+      const curEmail = this._context.globalState.get<string>('lastEmail');
+      if (curEmail) {
+        const startLog = `[${this._tsFmt()}][start] (实例启动) → ${curEmail}`;
+        this._recordSwitchLog(startLog, '');
+      }
+
       // 恢复持久化的切号日志
       const savedLogs: string[] = this._context.globalState.get('autoSwitchLogs', []);
       if (savedLogs.length > 0) {
@@ -621,6 +634,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this.postMessage({ type: 'autoSwitchEvent', log } as any);
         }
       }
+
+      // 恢复上次保存的异常数量
+      const anomalyCount = this._context.globalState.get<number>('anomalyCount', 0);
+      this.postMessage({ type: 'anomalyCheckResult', count: anomalyCount } as any);
     }, 600);
 
     // 监听 auth session 变化（Windsurf 登录/登出时触发）
@@ -3172,6 +3189,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <polyline points="19 12 12 19 5 12"/>
           </svg>
         </button>
+        <button class="toolbar-icon-btn anomaly-badge-btn" id="anomalyBadgeBtn" title="异常监控：点击查看详情" hidden>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span class="anomaly-badge-count" id="anomalyBadgeCount">0</span>
+        </button>
         <button class="toolbar-icon-btn" id="refreshAllBtn" title="刷新全部配额">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
@@ -3229,6 +3253,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <label class="batch-check-all"><input type="checkbox" id="batchCheckAll"><span>全选</span></label>
         <div style="flex:1"></div>
         <span class="batch-count" id="batchCount">已选 0</span>
+        <button class="batch-action-btn batch-action-monitor" id="batchMonitorBtn" title="添加监控标签，用于异常检测">加监控</button>
         <button class="batch-action-btn" id="batchTagBtn" title="为选中账号设置标签">加标签</button>
         <button class="batch-action-btn" id="batchEnableBtn" title="启用选中账号">启用</button>
         <button class="batch-action-btn" id="batchDisableBtn" title="禁用选中账号">禁用</button>
