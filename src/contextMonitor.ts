@@ -1,4 +1,5 @@
 import { discoverLsInstances, grpcPost, LS_SERVICE, LsInfo } from './cascadeProbe';
+import { getIdeDisplayName } from './ideDetector';
 
 export interface ContextSessionSummary {
   id: string;
@@ -149,7 +150,7 @@ function workspaceName(summary: any): string {
 
 export async function getContextMonitorSnapshot(): Promise<ContextMonitorSnapshot> {
   const ls = await selectLiveLs();
-  if (!ls) return { ok: false, error: '未找到可用 Windsurf Language Server', updatedAt: Date.now(), sessions: [] };
+  if (!ls) return { ok: false, error: `未找到可用 ${getIdeDisplayName()} Language Server`, updatedAt: Date.now(), sessions: [] };
 
   try {
     const all = await grpcPost(ls.port, ls.csrf, `${LS_SERVICE}/GetAllCascadeTrajectories`, { metadata: meta(ls) }, 10000);

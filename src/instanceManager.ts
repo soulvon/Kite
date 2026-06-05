@@ -6,6 +6,7 @@ import * as os from 'os';
 import { getPoolRoot, getAppDataDir, ensureDir, isWindows, isMac } from './utils';
 import { CACHE_TTL } from './config';
 import { getInstanceEmailMap } from './accountLock';
+import { getIdeExeName, getIdeProcessNames, getUserDataDirCandidates, getIdeDisplayName } from './ideDetector';
 
 // ─── 类型 ───────────────────────────────────────────────
 
@@ -54,15 +55,12 @@ function getInstancesFilePath(): string {
 
 function getDefaultUserDataDir(): string {
   const appDataDir = getAppDataDir();
-  // 优先检测实际存在的目录，兼容 Windsurf / Windsurf - Next
-  const candidates = [
-    path.join(appDataDir, 'Windsurf'),
-    path.join(appDataDir, 'Windsurf - Next'),
-  ];
+  // 优先检测实际存在的目录，兼容 Devin / Windsurf / Windsurf - Next
+  const candidates = getUserDataDirCandidates();
   for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
+    if (fs.existsSync(c.path)) return c.path;
   }
-  return candidates[0];  // 默认返回 Windsurf
+  return candidates[0].path;  // 默认返回 Devin（新版优先）
 }
 
 // ─── Store 读写 ─────────────────────────────────────────
@@ -421,19 +419,30 @@ async function doDetectWindsurfExePath(): Promise<string | null> {
 }
 
 async function doDetectWindsurfExePathWindows(): Promise<string | null> {
-  // 1. 从已运行的 Windsurf 进程取 exe 路径（wmic 原生命令，不触发安全软件）
+  // 1. 从已运行的 IDE 进程取 exe 路径（wmic 原生命令，不触发安全软件）
   const entries = await getRunningWindsurfEntries();
+  const processNames = getIdeProcessNames();
   for (const [pid] of entries) {
     const out = await runShellAsync(`wmic process where "ProcessId=${pid}" get ExecutablePath /FORMAT:LIST`, 3000);
     const match = out?.match(/ExecutablePath=(.+)/);
     const exePath = match?.[1]?.trim();
-    if (exePath && exePath.toLowerCase().endsWith('windsurf.exe') && fs.existsSync(exePath)) return exePath;
+    if (exePath && processNames.some(n => exePath.toLowerCase().endsWith(n.toLowerCase())) && fs.existsSync(exePath)) return exePath;
   }
 
   // 2. 常见安装路径（最快，先于注册表）
   const userProfile = process.env.USERPROFILE || '';
   const localAppData = process.env.LOCALAPPDATA || '';
   const candidates = [
+    // Devin
+    path.join(localAppData, 'Programs', 'Devin', 'Devin.exe'),
+    'C:\\Program Files\\Devin\\Devin.exe',
+    'C:\\Program Files (x86)\\Devin\\Devin.exe',
+    path.join(userProfile, 'scoop', 'apps', 'devin', 'current', 'Devin.exe'),
+    'D:\\Program Files\\Devin\\Devin.exe',
+    'D:\\Program\\devin\\Devin.exe',
+    'E:\\Program Files\\Devin\\Devin.exe',
+    'E:\\Program\\devin\\Devin.exe',
+    // Windsurf
     path.join(localAppData, 'Programs', 'Windsurf', 'Windsurf.exe'),
     path.join(localAppData, 'Programs', 'Windsurf - Next', 'Windsurf.exe'),
     'C:\\Program Files\\Windsurf\\Windsurf.exe',
@@ -454,23 +463,27 @@ async function doDetectWindsurfExePathWindows(): Promise<string | null> {
     'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
     'HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
   ];
+  const searchTerms = ['Devin', 'Windsurf'];
   for (const regBase of regBases) {
-    const regOut = await runShellAsync(
-      `reg query "${regBase}" /s /f "Windsurf" /d 2>nul`,
-      5000
-    );
-    if (!regOut) continue;
-    for (const line of regOut.split(/\r?\n/)) {
-      if (!line.startsWith('HK')) continue;
-      const keyPath = line.trim();
-      const locOut = await runShellAsync(`reg query "${keyPath}" /v InstallLocation 2>nul`, 2000);
-      if (!locOut) continue;
-      const locMatch = locOut.match(/InstallLocation\s+REG_SZ\s+(.+)/i);
-      if (locMatch) {
-        const installDir = locMatch[1].trim();
-        if (installDir) {
-          const exe = path.join(installDir, 'Windsurf.exe');
-          if (fs.existsSync(exe)) return exe;
+    for (const term of searchTerms) {
+      const regOut = await runShellAsync(
+        `reg query "${regBase}" /s /f "${term}" /d 2>nul`,
+        5000
+      );
+      if (!regOut) continue;
+      for (const line of regOut.split(/\r?\n/)) {
+        if (!line.startsWith('HK')) continue;
+        const keyPath = line.trim();
+        const locOut = await runShellAsync(`reg query "${keyPath}" /v InstallLocation 2>nul`, 2000);
+        if (!locOut) continue;
+        const locMatch = locOut.match(/InstallLocation\s+REG_SZ\s+(.+)/i);
+        if (locMatch) {
+          const installDir = locMatch[1].trim();
+          if (installDir) {
+            const exeName = term === 'Devin' ? 'Devin.exe' : 'Windsurf.exe';
+            const exe = path.join(installDir, exeName);
+            if (fs.existsSync(exe)) return exe;
+          }
         }
       }
     }
@@ -478,11 +491,15 @@ async function doDetectWindsurfExePathWindows(): Promise<string | null> {
 
   // 4. PATH 环境变量
   try {
-    const out = cp.execSync('where Windsurf.exe', {
-      encoding: 'utf8', timeout: 3000, windowsHide: true
-    });
-    const first = out.split('\n').map(l => l.trim()).find(l => l && fs.existsSync(l));
-    if (first) return first;
+    for (const exeName of processNames) {
+      try {
+        const out = cp.execSync(`where ${exeName}`, {
+          encoding: 'utf8', timeout: 3000, windowsHide: true
+        });
+        const first = out.split('\n').map(l => l.trim()).find(l => l && fs.existsSync(l));
+        if (first) return first;
+      } catch { /* try next */ }
+    }
   } catch { /* ignore */ }
 
   return null;
@@ -494,10 +511,25 @@ async function doDetectWindsurfExePathUnix(): Promise<string | null> {
   // 1. 常见安装路径
   const candidates = isMac
     ? [
+        // Devin
+        '/Applications/Devin.app/Contents/MacOS/Electron',
+        path.join(home, 'Applications', 'Devin.app', 'Contents', 'MacOS', 'Electron'),
+        // Windsurf
         '/Applications/Windsurf.app/Contents/MacOS/Electron',
         path.join(home, 'Applications', 'Windsurf.app', 'Contents', 'MacOS', 'Electron'),
       ]
     : [
+        // Devin
+        '/usr/bin/devin',
+        '/usr/local/bin/devin',
+        '/snap/bin/devin',
+        path.join(home, '.local', 'bin', 'devin'),
+        '/opt/Devin/devin',
+        '/opt/devin/devin',
+        '/usr/share/devin/devin',
+        '/usr/lib/devin/devin',
+        path.join(home, '.local', 'opt', 'devin', 'devin'),
+        // Windsurf
         '/usr/bin/windsurf',
         '/usr/local/bin/windsurf',
         '/snap/bin/windsurf',
@@ -513,13 +545,15 @@ async function doDetectWindsurfExePathUnix(): Promise<string | null> {
   }
 
   // 2. which 查询 PATH
-  try {
-    const out = cp.execSync('which windsurf', {
-      encoding: 'utf8', timeout: 3000
-    });
-    const found = out.trim();
-    if (found && fs.existsSync(found)) return found;
-  } catch { /* ignore */ }
+  for (const cmd of ['devin', 'windsurf']) {
+    try {
+      const out = cp.execSync(`which ${cmd}`, {
+        encoding: 'utf8', timeout: 3000
+      });
+      const found = out.trim();
+      if (found && fs.existsSync(found)) return found;
+    } catch { /* try next */ }
+  }
 
   return null;
 }
@@ -544,7 +578,7 @@ export async function startInstance(instanceId: string, onLog?: (msg: string) =>
 
   const exePath = await detectWindsurfExePath();
   if (!exePath) {
-    throw new Error('未找到 Windsurf 可执行文件。请确认已安装 Windsurf，或将其加入 PATH 环境变量');
+    throw new Error(`未找到 ${getIdeDisplayName()} 可执行文件。请确认已安装，或将其加入 PATH 环境变量`);
   }
 
   // 通过 CLI 模式启动：ELECTRON_RUN_AS_NODE=1 + cli.js
@@ -755,48 +789,53 @@ async function getRunningWindsurfEntries(forceFresh = false): Promise<Array<[num
 
 async function getRunningWindsurfEntriesWindows(): Promise<Array<[number, string | null]>> {
   const entries: Array<[number, string | null]> = [];
+  const processNames = getIdeProcessNames(); // ['Devin.exe', 'Windsurf.exe']
 
   // 1. 优先使用 wmic（原生命令，不触发 360 等安全软件拦截）
-  try {
-    const stdout = await runShellAsync(
-      'wmic process where "name=\'Windsurf.exe\'" get ProcessId,CommandLine /FORMAT:LIST',
-      10000
-    );
-    if (stdout && stdout.trim()) {
-      const blocks = stdout.split(/\r?\n\r?\n/);
-      for (const block of blocks) {
-        const cmdMatch = block.match(/CommandLine=(.*)/);
-        const pidMatch = block.match(/ProcessId=(\d+)/);
-        if (!pidMatch) continue;
-        const pid = parseInt(pidMatch[1], 10);
-        const cmd = cmdMatch ? cmdMatch[1] : '';
-        if (cmd.includes('--type=')) continue;
-        const m = cmd.match(/--user-data-dir[= ]+["']?([^"']+?)["']?(?:\s+--|\s*$)/i);
-        entries.push([pid, m ? m[1].trim() : getDefaultUserDataDir()]);
+  for (const procName of processNames) {
+    try {
+      const stdout = await runShellAsync(
+        `wmic process where "name='${procName}'" get ProcessId,CommandLine /FORMAT:LIST`,
+        10000
+      );
+      if (stdout && stdout.trim()) {
+        const blocks = stdout.split(/\r?\n\r?\n/);
+        for (const block of blocks) {
+          const cmdMatch = block.match(/CommandLine=(.*)/);
+          const pidMatch = block.match(/ProcessId=(\d+)/);
+          if (!pidMatch) continue;
+          const pid = parseInt(pidMatch[1], 10);
+          const cmd = cmdMatch ? cmdMatch[1] : '';
+          if (cmd.includes('--type=')) continue;
+          const m = cmd.match(/--user-data-dir[= ]+["']?([^"']+?)["']?(?:\s+--|\s*$)/i);
+          entries.push([pid, m ? m[1].trim() : getDefaultUserDataDir()]);
+        }
+        if (entries.length > 0) return entries;
       }
-      if (entries.length > 0) return entries;
+    } catch {
+      /* try next process name or fallback PowerShell */
     }
-  } catch {
-    /* fallback PowerShell */
   }
 
   // 2. 回退：PowerShell（某些新系统 wmic 已移除）
-  try {
-    const psCmd = `Get-CimInstance Win32_Process -Filter "name='Windsurf.exe'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
-    const stdout = await runPowerShellAsync(psCmd, 10000);
-    if (stdout && stdout.trim()) {
-      const parsed = JSON.parse(stdout);
-      const list = Array.isArray(parsed) ? parsed : [parsed];
-      for (const p of list) {
-        const pid = Number(p.ProcessId);
-        const cmd: string = p.CommandLine || '';
-        if (!pid || cmd.includes('--type=')) continue;
-        const m = cmd.match(/--user-data-dir[= ]+["']?([^"']+?)["']?(?:\s+--|\s*$)/i);
-        entries.push([pid, m ? m[1].trim() : getDefaultUserDataDir()]);
+  for (const procName of processNames) {
+    try {
+      const psCmd = `Get-CimInstance Win32_Process -Filter "name='${procName}'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
+      const stdout = await runPowerShellAsync(psCmd, 10000);
+      if (stdout && stdout.trim()) {
+        const parsed = JSON.parse(stdout);
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        for (const p of list) {
+          const pid = Number(p.ProcessId);
+          const cmd: string = p.CommandLine || '';
+          if (!pid || cmd.includes('--type=')) continue;
+          const m = cmd.match(/--user-data-dir[= ]+["']?([^"']+?)["']?(?:\s+--|\s*$)/i);
+          entries.push([pid, m ? m[1].trim() : getDefaultUserDataDir()]);
+        }
+        if (entries.length > 0) return entries;
       }
-      return entries;
-    }
-  } catch { /* ignore */ }
+    } catch { /* try next */ }
+  }
 
   return entries;
 }
@@ -804,15 +843,15 @@ async function getRunningWindsurfEntriesWindows(): Promise<Array<[number, string
 async function getRunningWindsurfEntriesUnix(): Promise<Array<[number, string | null]>> {
   const entries: Array<[number, string | null]> = [];
 
-  // 使用 ps + grep 查找 windsurf 进程
+  // 使用 ps + grep 查找 devin / windsurf 进程
   try {
     const stdout = await runShellAsync('ps aux', 5000);
     if (!stdout) return entries;
 
     const lines = stdout.split('\n');
     for (const line of lines) {
-      // 匹配包含 windsurf 的进程行（排除 grep 自身和子进程 --type=）
-      if (!/windsurf/i.test(line) || /grep/i.test(line) || /--type=/i.test(line)) continue;
+      // 匹配包含 devin 或 windsurf 的进程行（排除 grep 自身和子进程 --type=）
+      if (!/(devin|windsurf)/i.test(line) || /grep/i.test(line) || /--type=/i.test(line)) continue;
 
       const parts = line.trim().split(/\s+/);
       const pid = parseInt(parts[1], 10);

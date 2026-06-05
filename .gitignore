@@ -5,3 +5,5 @@ out/
 *.log
 *.har
 *.msi
+.claude/
+orderProject/

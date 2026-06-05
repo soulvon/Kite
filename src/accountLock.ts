@@ -254,19 +254,18 @@ export function getCurrentLockedEmail(): string | null {
 }
 
 /**
- * 获取所有被存活窗口占用的账号邮箱（包含当前窗口）
- * 用于异常监控：判断某账号是否正被任意实例使用，避免误报
+ * 轻量判断单个账号当前是否被任意存活实例持有锁（只读，不触发清理写回）
+ * 用于配额记录时即时打标 heldByPool，适合高频调用
  */
-export function getAllLockedEmails(): string[] {
+export function isEmailLocked(email: string): boolean {
+  if (!email) return false;
   const data = readLockFile();
-  const cleaned = cleanStaleLocks(data);
-  if (cleaned) {
-    try { writeLockFile(data); } catch { /* ignore */ }
-  }
-  // 直接返回所有锁定的邮箱（key 即 email，天然去重，无 instanceId 覆盖风险）
-  return Object.entries(data.locks)
-    .filter(([, entry]) => isPidAlive(entry.pid))
-    .map(([email]) => email);
+  const entry = data.locks[email];
+  if (!entry) return false;
+  // 过期或进程已死视为未持有
+  if (Date.now() - entry.ts > STALE_THRESHOLD_MS) return false;
+  if (!isPidAlive(entry.pid)) return false;
+  return true;
 }
 
 /**

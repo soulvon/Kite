@@ -3,6 +3,7 @@ import * as http from 'http';
 import * as vscode from 'vscode';
 import { StoredAccount } from './types';
 import { post } from './httpClient';
+import { getIdeDisplayName } from './ideDetector';
 
 const WINDSURF_AUTH_BASE_URL = 'https://www.windsurf.com';
 const WINDSURF_REGISTER_API_BASE_URL = 'https://register.windsurf.com';
@@ -40,13 +41,13 @@ function buildAuthUrl(redirectUri: string, state: string): string {
 }
 
 function successHtml(): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Windsurf 授权成功</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${getIdeDisplayName()} 授权成功</title>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f172a;color:#e2e8f0}.box{max-width:460px;padding:24px;border-radius:12px;background:#111827;border:1px solid #1f2937;text-align:center}h1{color:#22c55e;margin:0 0 10px;font-size:24px}p{margin:0;opacity:.9}</style></head>
-<body><div class="box"><h1>授权成功</h1><p>可以关闭此页面，返回 Windsurf 号池管理。</p></div></body></html>`;
+<body><div class="box"><h1>授权成功</h1><p>可以关闭此页面，返回 ${getIdeDisplayName()} 号池管理。</p></div></body></html>`;
 }
 
 function failHtml(message: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Windsurf 授权失败</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${getIdeDisplayName()} 授权失败</title>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f172a;color:#e2e8f0}.box{max-width:520px;padding:24px;border-radius:12px;background:#111827;border:1px solid #1f2937;text-align:center}h1{color:#ef4444;margin:0 0 10px;font-size:24px}p{margin:0;opacity:.9;word-break:break-word}</style></head>
 <body><div class="box"><h1>授权失败</h1><p>${message.replace(/[<>&]/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch] || ch))}</p></div></body></html>`;
 }
@@ -127,7 +128,7 @@ function createOAuthCallbackServer(): Promise<{ authUrl: string; tokenPromise: P
       }
       const callbackUrl = `http://127.0.0.1:${addr.port}/windsurf-auth-callback`;
       const authUrl = buildAuthUrl(callbackUrl, state);
-      timer = setTimeout(() => finish(new Error('等待 Windsurf OAuth 授权超时')), OAUTH_TIMEOUT_MS);
+      timer = setTimeout(() => finish(new Error(`等待 ${getIdeDisplayName()} OAuth 授权超时`)), OAUTH_TIMEOUT_MS);
       resolve({ authUrl, tokenPromise, close });
     });
   });

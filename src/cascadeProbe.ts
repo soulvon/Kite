@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as net from 'net';
 import { execSync, spawn, ChildProcess } from 'child_process';
+import { getIdeVersion, getExtensionsDirBase } from './ideDetector';
 
 // ── LS 发现缓存 ──
 export interface LsInfo {
@@ -334,16 +335,17 @@ function findLsBinary(): string {
     candidates.push(
       path.join(execDir, 'resources', 'app', 'extensions', 'windsurf', 'bin', binName),
     );
-    // 常见安装路径兜底
+    // 常见安装路径兜底（Devin + Windsurf）
     const localAppData = process.env.LOCALAPPDATA || '';
     if (localAppData) {
       candidates.push(
+        path.join(localAppData, 'Programs', 'Devin', 'resources', 'app', 'extensions', 'windsurf', 'bin', binName),
         path.join(localAppData, 'Programs', 'Windsurf', 'resources', 'app', 'extensions', 'windsurf', 'bin', binName),
         path.join(localAppData, 'Programs', 'Windsurf - Next', 'resources', 'app', 'extensions', 'windsurf', 'bin', binName),
       );
     }
   } else if (platform === 'darwin') {
-    // /Applications/Windsurf.app/Contents/MacOS/Electron → …/Contents/Resources/app/extensions/…
+    // /Applications/Devin.app/Contents/MacOS/Electron → …/Contents/Resources/app/extensions/…
     const contentsDir = execDir.replace(/\/MacOS$/, '').replace(/\/Frameworks\/.+$/, '');
     // 新命名 + 旧命名兜底
     const altBins = arch === 'arm64'
@@ -352,8 +354,10 @@ function findLsBinary(): string {
     const extDirs = ['windsurf', 'windsurf-next'];
     const appBases = [
       contentsDir,
+      '/Applications/Devin.app/Contents',
       '/Applications/Windsurf.app/Contents',
       '/Applications/Windsurf - Next.app/Contents',
+      path.join(process.env.HOME || os.homedir(), 'Applications', 'Devin.app', 'Contents'),
       path.join(process.env.HOME || os.homedir(), 'Applications', 'Windsurf.app', 'Contents'),
       path.join(process.env.HOME || os.homedir(), 'Applications', 'Windsurf - Next.app', 'Contents'),
     ];
@@ -377,8 +381,11 @@ function findLsBinary(): string {
     candidates.push(
       path.join(execDir, 'resources', 'app', 'extensions', 'windsurf', 'bin', binName),
     );
-    // 常见安装路径兜底
+    // 常见安装路径兜底（Devin + Windsurf）
     candidates.push(
+      `/usr/share/devin/resources/app/extensions/windsurf/bin/${binName}`,
+      `/opt/devin/resources/app/extensions/windsurf/bin/${binName}`,
+      path.join(process.env.HOME || '', '.local', 'share', 'devin', 'resources', 'app', 'extensions', 'windsurf', 'bin', binName),
       `/usr/share/windsurf/resources/app/extensions/windsurf/bin/${binName}`,
       `/opt/windsurf/resources/app/extensions/windsurf/bin/${binName}`,
       path.join(process.env.HOME || '', '.local', 'share', 'windsurf', 'resources', 'app', 'extensions', 'windsurf', 'bin', binName),
@@ -389,7 +396,7 @@ function findLsBinary(): string {
     if (fs.existsSync(c)) return c;
   }
 
-  throw new Error(`找不到 Windsurf LS 二进制文件，已尝试路径: ${candidates.join(', ')}`);
+  throw new Error(`找不到 IDE LS 二进制文件，已尝试路径: ${candidates.join(', ')}`);
 }
 
 async function getIsolatedLsInfo(): Promise<LsInfo> {
@@ -423,13 +430,14 @@ async function getIsolatedLsInfo(): Promise<LsInfo> {
     '--workspace_id', 'windsurf_pool_isolated_probe',
     '--sentry_telemetry',
     '--sentry_environment', 'stable',
-    '--extensions_dir', path.join(homeDir, '.windsurf', 'extensions'),
-    '--windsurf_version', '2.2.17',
+    '--extensions_dir', getExtensionsDirBase(homeDir),
+    '--windsurf_version', getIdeVersion(),
     '--detect_proxy=false',
   ];
 
+  const ideVersion = getIdeVersion();
   const proc = spawn(bin, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] });
-  _isolatedLs = { port, csrf, ideVersion: '2.2.17', ts: Date.now(), isolated: true, root, proc };
+  _isolatedLs = { port, csrf, ideVersion, ts: Date.now(), isolated: true, root, proc };
   proc.on('exit', () => {
     if (_isolatedLs?.proc === proc) _isolatedLs = null;
   });
@@ -603,12 +611,13 @@ async function spawnOneLs(): Promise<LsInfo> {
     '--workspace_id', `windsurf_pool_ls_pool_${port}`,
     '--sentry_telemetry',
     '--sentry_environment', 'stable',
-    '--extensions_dir', path.join(homeDir, '.windsurf', 'extensions'),
-    '--windsurf_version', '2.2.17',
+    '--extensions_dir', getExtensionsDirBase(homeDir),
+    '--windsurf_version', getIdeVersion(),
     '--detect_proxy=false',
   ];
+  const ideVersion = getIdeVersion();
   const proc = spawn(bin, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] });
-  const ls: LsInfo = { port, csrf, ideVersion: '2.2.17', ts: Date.now(), isolated: true, root, proc };
+  const ls: LsInfo = { port, csrf, ideVersion, ts: Date.now(), isolated: true, root, proc };
   proc.on('exit', () => {
     recycleLs(ls); // 统一走 recycleLs（幂等，不会重复 splice/kill）
   });

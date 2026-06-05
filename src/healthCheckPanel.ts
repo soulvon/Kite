@@ -12,6 +12,7 @@ import { getPoolRoot, ensureDir } from './utils';
 import { injectSession, getLastInjectFailure } from './sessionInjector';
 import { acquireLock, releaseLock } from './accountLock';
 import * as usageDiskCache from './usageDiskCache';
+import { getStateDbPath, getIdeDisplayName } from './ideDetector';
 
 let _panel: vscode.WebviewPanel | undefined;
 let _abortController: AbortController | undefined;
@@ -572,7 +573,7 @@ export async function testSingleAccount(ctx: vscode.ExtensionContext, email: str
  * 返回 { label, uid } 数组，label 与 Windsurf 下拉一致
  */
 async function readModelsFromStateDb(): Promise<Array<{ label: string; uid: string }>> {
-  const dbPath = path.join(process.env.APPDATA || '', 'Windsurf/User/globalStorage/state.vscdb');
+  const dbPath = getStateDbPath();
   const sqlitePath = path.join(vscode.env.appRoot, 'node_modules/@vscode/sqlite3');
 
   const raw: string | null = await new Promise((resolve, reject) => {
@@ -860,7 +861,7 @@ export async function resetMachineId(): Promise<void> {
       ? path.join(process.env.HOME || '', 'Library', 'Application Support')
       : path.join(process.env.HOME || '', '.config');
 
-  const versions = ['Windsurf', 'Windsurf - Next'];
+  const versions = ['Devin', 'Windsurf', 'Windsurf - Next'];
   const storagePaths = versions
     .map(v => path.join(configDir, v, 'User', 'globalStorage', 'storage.json'))
     .filter(p => fs.existsSync(p));
@@ -874,12 +875,12 @@ export async function resetMachineId(): Promise<void> {
     : [];
 
   if (storagePaths.length === 0 && machineIdPaths.length === 0 && installerIdPaths.length === 0) {
-    vscode.window.showErrorMessage('未找到 Windsurf 配置文件，请确认 Windsurf 已安装。');
+    vscode.window.showErrorMessage(`未找到 ${getIdeDisplayName()} 配置文件，请确认已安装。`);
     return;
   }
 
   const confirm = await vscode.window.showWarningMessage(
-    '即将重置 Windsurf 全部设备指纹（machineId / macMachineId / sqmId / devDeviceId / machineid / .installerId）。\n⚠️ 请先关闭所有 Windsurf 窗口，否则退出时会覆盖回旧值。',
+    `即将重置 ${getIdeDisplayName()} 全部设备指纹（machineId / macMachineId / sqmId / devDeviceId / machineid / .installerId）。\n⚠️ 请先关闭所有 ${getIdeDisplayName()} 窗口，否则退出时会覆盖回旧值。`,
     { modal: true },
     '重置并备份'
   );
@@ -947,7 +948,7 @@ export async function resetMachineId(): Promise<void> {
       devDeviceId: newDevDeviceId,
     });
     vscode.window.showInformationMessage(
-      `已重置 ${resetCount} 个文件的设备指纹（含 macMachineId / machineid${installerIdPaths.length ? ' / .installerId' : ''}），原文件已备份。\n请完全关闭 Windsurf 后重新打开生效。`
+      `已重置 ${resetCount} 个文件的设备指纹（含 macMachineId / machineid${installerIdPaths.length ? ' / .installerId' : ''}），原文件已备份。\n请完全关闭 ${getIdeDisplayName()} 后重新打开生效。`
     );
   }
 }
@@ -963,7 +964,7 @@ export async function silentResetMachineId(): Promise<boolean> {
       ? path.join(process.env.HOME || '', 'Library', 'Application Support')
       : path.join(process.env.HOME || '', '.config');
 
-  const versions = ['Windsurf', 'Windsurf - Next'];
+  const versions = ['Devin', 'Windsurf', 'Windsurf - Next'];
   const storagePaths = versions
     .map(v => path.join(configDir, v, 'User', 'globalStorage', 'storage.json'))
     .filter(p => fs.existsSync(p));
@@ -975,7 +976,7 @@ export async function silentResetMachineId(): Promise<boolean> {
     : [];
 
   if (storagePaths.length === 0 && machineIdPaths.length === 0 && installerIdPaths.length === 0) {
-    console.log('[silentResetMachineId] 未找到 Windsurf 配置文件');
+    console.log(`[silentResetMachineId] 未找到 ${getIdeDisplayName()} 配置文件`);
     return false;
   }
 

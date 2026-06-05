@@ -207,11 +207,8 @@
       anomalyBadgeCount.textContent = count > 99 ? '99+' : count;
       anomalyBadgeBtn.title = '异常监控：发现 ' + count + ' 个异常，点击查看详情';
     } else {
-      // 无异常时也显示，但用绿色
-      anomalyBadgeBtn.hidden = false;
-      anomalyBadgeBtn.classList.add('is-ok');
-      anomalyBadgeCount.textContent = '✓';
-      anomalyBadgeBtn.title = '异常监控：未发现异常';
+      // 无异常时隐藏徽章，仅在发现异常时才显示（避免正常状态的视觉噪音）
+      anomalyBadgeBtn.hidden = true;
     }
   }
 
@@ -250,6 +247,8 @@
   const enhBubblesTheme = $('#enhBubblesTheme');
   const enhBubblesShape = $('#enhBubblesShape');
   const enhLocalizationEnabled = $('#enhLocalizationEnabled');
+  // ACP 智能体解锁（仅 Devin）
+  const enhAcpUnlock = $('#enhAcpUnlock');
   // 侧栏面板：是否显示测活面板入口（默认关闭）
   const enhShowHealthPanel = $('#enhShowHealthPanel');
   // 底部状态栏设置
@@ -3720,6 +3719,8 @@
       if (enhBubblesTheme) enhBubblesTheme.value = s.bubblesTheme || 'emerald';
       if (enhBubblesShape) enhBubblesShape.value = s.bubblesShape || 'rounded';
       if (enhLocalizationEnabled) enhLocalizationEnabled.checked = s.localizationEnabled !== false;
+      // ACP 智能体解锁（仅 Devin，Windsurf 无此 DOM 元素）
+      if (enhAcpUnlock) enhAcpUnlock.checked = s.acpUnlock !== false;
 
       // 侧栏面板：显示测活面板（默认 false）
       const showHc = s.showHealthPanel === true;
@@ -3886,6 +3887,7 @@
       bubblesTheme: enhBubblesTheme ? enhBubblesTheme.value : 'emerald',
       bubblesShape: enhBubblesShape ? enhBubblesShape.value : 'rounded',
       localizationEnabled: enhLocalizationEnabled ? enhLocalizationEnabled.checked : true,
+      acpUnlock: enhAcpUnlock ? enhAcpUnlock.checked : true,
       showHealthPanel: enhShowHealthPanel ? enhShowHealthPanel.checked : false,
       statusBar: {
         enabled: enhStatusBarEnabled ? enhStatusBarEnabled.checked : true,
@@ -5800,7 +5802,7 @@
 
     // ── 守护面板 + 长任务面板的所有勾选/输入 ──
     const enhSettingsEls = [
-      enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled,
+      enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled, enhAcpUnlock,
       enhShowHealthPanel,
       enhStatusBarEnabled, enhStatusBarPosition, enhStatusBarStyle, enhSbShowPool, enhSbShowAutoSwitch, enhSbShowInstance,
       // 守护模式

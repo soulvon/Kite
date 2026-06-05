@@ -13,7 +13,6 @@
   let contextMonitor = null;
   let allSummary = {};
   let currentEmail = '';
-  let activeEmails = []; // 所有实例当前使用中的邮箱（心跳存活）
   let filterEmail = '';
   let timeRange = '24h';
   let searchQuery = '';       // 搜索关键词
@@ -298,7 +297,6 @@
       contextMonitor = msg.contextMonitor || null;
       allSummary = msg.summary || {};
       currentEmail = msg.currentEmail || '';
-      activeEmails = msg.activeEmails || [];
 
       // 构建 email -> tags 映射、标签列表、所有邮箱列表
       emailTagMap = {};
@@ -321,7 +319,7 @@
       renderDiagnostic();
       renderContext();
       renderFooter();
-      // 若当前在异常监控页，数据刷新后重新检测（使用最新 activeEmails，避免陈旧快照误报）
+      // 若当前在异常监控页，数据刷新后重新检测（使用最新 heldByPool 标记数据）
       if (activeTab === 'anomaly' && typeof runAnomalyCheck === 'function') {
         runAnomalyCheck();
       }
@@ -1236,176 +1234,75 @@
       return;
     }
 
-    // 2. 构建切号事件列表：{ts, srcEmail, dstEmail}
-    // 日志格式：[M/D HH:MM:SS][auto] srcEmail(配额) reason → dstEmail(配额)
-    const switchEvents = []; // {ts, src, dst}
+    // 2. 检测异常：监控账号配额减少，但记录时无任何号池实例持有该账号锁
+    //    heldByPool 由后端在配额记录时即时打标（来自 accountLock 锁文件，atomic、跨实例可靠）
+    //    取代旧的"切号日志重建活跃性"方案，根除 globalState 不同步 / 引用计数失真问题
     const now = new Date();
     const nowTs = now.getTime();
-    const thisYear = now.getFullYear();
-
-    function parseSwitchLogTime(log) {
-      // 尝试解析新格式 [M/D HH:MM:SS]
-      let m = log.match(/\[(\d{1,2})\/(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\]/);
-      if (m) {
-        const t = new Date(thisYear, parseInt(m[1]) - 1, parseInt(m[2]),
-          parseInt(m[3]), parseInt(m[4]), parseInt(m[5]));
-        if (t.getTime() > nowTs + 86400000) t.setFullYear(thisYear - 1);
-        return t.getTime();
-      }
-      // 旧格式 [HH:MM:SS]
-      m = log.match(/\[(\d{2}):(\d{2}):(\d{2})\]/);
-      if (m) {
-        const t = new Date();
-        t.setHours(parseInt(m[1]), parseInt(m[2]), parseInt(m[3]), 0);
-        if (t.getTime() > nowTs) t.setDate(t.getDate() - 1);
-        return t.getTime();
-      }
-      return null;
-    }
-
-    allSwitchLogs.forEach(log => {
-      if (!log.includes('→')) return;
-      const ts = parseSwitchLogTime(log);
-      if (!ts) return;
-
-      // 处理启动日志：[start] (实例启动) → xxx@gmail.com
-      if (log.includes('[start]')) {
-        const dstMatch = log.match(/→\s*(\S+@\S+)/);
-        if (dstMatch) {
-          const dst = dstMatch[1].replace(/\(.*$/, '');
-          switchEvents.push({ ts, src: null, dst }); // 只有切入，没有切出
-        }
-        return;
-      }
-
-      // 处理退出日志：[exit] xxx@gmail.com → (实例关闭)
-      if (log.includes('[exit]')) {
-        const srcMatch = log.match(/(\S+@\S+)/);
-        if (srcMatch) {
-          const src = srcMatch[1].replace(/\(.*$/, '');
-          switchEvents.push({ ts, src, dst: null }); // 只有切出，没有切入
-        }
-        return;
-      }
-
-      // 正常切号日志：从 → 分割提取源邮箱和目标邮箱
-      const parts = log.split('→');
-      if (parts.length < 2) return;
-      const srcMatch = parts[0].match(/(\S+@\S+)/);
-      const dstMatch = parts[1].match(/(\S+@\S+)/);
-      if (!dstMatch) return;
-
-      const dst = dstMatch[1].replace(/\(.*$/, '');
-      const src = srcMatch ? srcMatch[1].replace(/\(.*$/, '') : null;
-
-      switchEvents.push({ ts, src, dst });
-    });
-    switchEvents.sort((a, b) => a.ts - b.ts);
-
-    // 计算切号日志覆盖的时间范围
-    const switchLogMinTs = switchEvents.length > 0 ? switchEvents[0].ts : nowTs;
-
-    // 辅助函数：判断某账号是否"仍在使用中"（最后一条相关日志是切入/启动）
-    // 如果最后一次出现是 dst（切入/启动），则认为仍在使用，未被切出
-    const lastEventMap = {}; // email -> 'in' | 'out'
-    switchEvents.forEach(ev => {
-      if (ev.dst) lastEventMap[ev.dst] = 'in';
-      if (ev.src) lastEventMap[ev.src] = 'out';
-    });
-
-    // 辅助函数：用引用计数判断时间 T 时某账号是否活跃（支持多实例）
-    // 切入(dst) → refCount++，切出(src) → refCount--，实例关闭(exit) → refCount--
-    function isActiveAt(email, t) {
-      // 当前账号或任何实例正在使用的账号 → 视为活跃
-      if (email === currentEmail) return true;
-      if (activeEmails.includes(email)) return true;
-      // 最后一条日志是切入且无切出 → 视为仍在使用（兜底）
-      if (lastEventMap[email] === 'in') return true;
-      let count = 0;
-      for (const ev of switchEvents) {
-        if (ev.ts > t) break;
-        if (ev.dst === email) count++;
-        if (ev.src === email) count = Math.max(0, count - 1);
-      }
-      return count > 0;
-    }
-
-    // 3. 检测异常：有消耗但本机当时没有使用该账号（支持多实例并行）
-    const anomalies = [];
-    let prevQuotaMap = {}; // email -> {daily, weekly, balance, ts}
 
     // 只检测最近 24 小时内的异常（避免历史累积过多）
     const checkWindowMs = 24 * 60 * 60 * 1000;
-    const checkMinTs = Math.max(switchLogMinTs, nowTs - checkWindowMs);
+    const checkMinTs = nowTs - checkWindowMs;
 
-    // 消耗阈值：日配额减少 ≥ 2% 或 周配额减少 ≥ 2% 才算有意义的消耗
+    // 消耗阈值：日/周配额减少 ≥ 2% 或 付费余额减少 才算有意义的消耗
     const DAILY_THRESHOLD = -2;
     const WEEKLY_THRESHOLD = -2;
-    // 相邻记录最大间隔：超过则视为数据不连续（累积差值无法可靠归因到单一时刻），跳过检测
+    // 相邻记录最大间隔：超过则消耗可能发生在中途的持有时段，无法可靠归因到记录时刻，跳过
     const MAX_GAP_MS = 3 * 60 * 60 * 1000;
 
     // 按时间排序配额历史
     const sortedQuota = [...allQuotaEntries].sort((a, b) => a.ts - b.ts);
 
-    let checkedCount = 0;
+    const anomalies = [];
+    const prevQuotaMap = {}; // email -> 上一条 entry
+    let recordCount = 0;     // 监控账号的配额记录总数
+    let checkedCount = 0;    // 通过过滤、带 heldByPool 标记的消耗事件数
+
     sortedQuota.forEach(entry => {
       if (!monitoredEmails.has(entry.email)) return;
-
+      recordCount++;
       const prev = prevQuotaMap[entry.email];
-      if (prev) {
-        const dailyDelta = entry.daily - prev.daily;
-        const weeklyDelta = entry.weekly - prev.weekly;
-        const balanceDelta = (entry.balance || 0) - (prev.balance || 0);
+      prevQuotaMap[entry.email] = entry;
+      if (!prev) return;
+      if (entry.ts < checkMinTs) return;
+      // 老数据没有 heldByPool 标记 → 无法可靠判断，跳过（同时清除历史脏数据的误报）
+      if (typeof entry.heldByPool !== 'boolean') return;
 
-        // 有意义的消耗：超过阈值
-        const hasConsumption = dailyDelta <= DAILY_THRESHOLD || weeklyDelta <= WEEKLY_THRESHOLD || balanceDelta < 0;
-        // 数据连续性：相邻记录间隔过大时累积差值无法可靠归因，跳过
-        const isContinuous = (entry.ts - prev.ts) <= MAX_GAP_MS;
-        if (hasConsumption && isContinuous && entry.ts >= checkMinTs) {
-          checkedCount++;
-          // 检查配额减少时，本机是否正在使用该账号（多实例：引用计数 > 0）
-          const wasActive = isActiveAt(entry.email, entry.ts);
+      const dailyDelta = entry.daily - prev.daily;
+      const weeklyDelta = entry.weekly - prev.weekly;
+      const balanceDelta = entry.bDelta || 0;
+      const hasConsumption = dailyDelta <= DAILY_THRESHOLD || weeklyDelta <= WEEKLY_THRESHOLD || balanceDelta < 0;
+      if (!hasConsumption) return;
+      // 间隔过大时消耗无法可靠归因到记录时刻的持有状态，跳过
+      if ((entry.ts - prev.ts) > MAX_GAP_MS) return;
 
-          if (!wasActive) {
-            anomalies.push({
-              email: entry.email,
-              ts: entry.ts,
-              dailyBefore: prev.daily,
-              dailyAfter: entry.daily,
-              weeklyBefore: prev.weekly,
-              weeklyAfter: entry.weekly,
-              balanceDelta: balanceDelta,
-              reason: '本机无使用记录'
-            });
-          }
-        }
-      }
+      checkedCount++;
+      // 记录时被任意号池实例持有 → 号池内正常使用，非异常
+      if (entry.heldByPool) return;
 
-      prevQuotaMap[entry.email] = {
-        daily: entry.daily,
-        weekly: entry.weekly,
-        balance: entry.balance || 0,
-        ts: entry.ts
-      };
+      anomalies.push({
+        email: entry.email,
+        ts: entry.ts,
+        dailyBefore: prev.daily,
+        dailyAfter: entry.daily,
+        weeklyBefore: prev.weekly,
+        weeklyAfter: entry.weekly,
+        balanceDelta: balanceDelta,
+        reason: '号池外消耗'
+      });
     });
 
-    // 4. 渲染结果
+    // 3. 渲染结果
     if (anomalySummaryEl) anomalySummaryEl.hidden = false;
-
-    if (switchEvents.length === 0) {
-      anomalyStatsEl.innerHTML = renderSummaryCards(monitoredEmails.size, 0, 0, 0);
-      anomalyBodyEl.innerHTML = '';
-      anomalyEmptyEl.innerHTML = '<div class="lp-anomaly-empty-icon">⚠️</div><div>无切号日志，无法检测异常<br><span class="lp-anomaly-empty-sub">请先使用一段时间后再检测</span></div>';
-      anomalyEmptyEl.hidden = false;
-      vscode.postMessage({ type: 'anomalyCheckDone', count: 0 });
-      return;
-    }
-
-    anomalyStatsEl.innerHTML = renderSummaryCards(monitoredEmails.size, switchEvents.length, checkedCount, anomalies.length);
+    anomalyStatsEl.innerHTML = renderSummaryCards(monitoredEmails.size, recordCount, checkedCount, anomalies.length);
 
     if (anomalies.length === 0) {
       anomalyBodyEl.innerHTML = '';
-      anomalyEmptyEl.innerHTML = '<div class="lp-anomaly-empty-icon">✅</div><div>未发现异常<br><span class="lp-anomaly-empty-sub">所有配额变动都有对应的本机使用记录</span></div>';
+      if (checkedCount === 0) {
+        anomalyEmptyEl.innerHTML = '<div class="lp-anomaly-empty-icon">⏳</div><div>暂无可检测的新数据<br><span class="lp-anomaly-empty-sub">升级后会在配额刷新时逐步采集带标记的数据，请稍后再来</span></div>';
+      } else {
+        anomalyEmptyEl.innerHTML = '<div class="lp-anomaly-empty-icon">✅</div><div>未发现异常<br><span class="lp-anomaly-empty-sub">所有配额消耗都发生在号池使用期间</span></div>';
+      }
       anomalyEmptyEl.hidden = false;
       vscode.postMessage({ type: 'anomalyCheckDone', count: 0 });
       return;
@@ -1480,10 +1377,10 @@
       + '<div class="lp-anom-stat-label">监控账号</div></div>'
       + '<div class="lp-anom-stat-card">'
       + '<div class="lp-anom-stat-num">' + logs + '</div>'
-      + '<div class="lp-anom-stat-label">日志条数</div></div>'
+      + '<div class="lp-anom-stat-label">配额记录</div></div>'
       + '<div class="lp-anom-stat-card">'
       + '<div class="lp-anom-stat-num">' + changes + '</div>'
-      + '<div class="lp-anom-stat-label">配额变动</div></div>'
+      + '<div class="lp-anom-stat-label">已检消耗</div></div>'
       + '<div class="lp-anom-stat-card ' + (isOk ? 'is-ok' : 'is-danger') + '">'
       + '<div class="lp-anom-stat-num">' + anomalies + '</div>'
       + '<div class="lp-anom-stat-label">' + (isOk ? '✓ 无异常' : '⚠ 异常') + '</div></div>';

@@ -5,7 +5,6 @@ import * as accountStore from './accountStore';
 import { requestSyncLogs, onBridgeResult, getBridgeInfo } from './bridgeServer';
 import { getBridgeRelayScript } from './signalBridge';
 import { getContextMonitorSnapshot } from './contextMonitor';
-import { getAllLockedEmails } from './accountLock';
 
 let _panel: vscode.WebviewPanel | undefined;
 let _listenerDisposable: { dispose(): void } | undefined;
@@ -156,13 +155,9 @@ async function pushAllData(ctx: vscode.ExtensionContext, tracker: UsageTracker, 
     });
   } catch {}
 
-  // 获取所有活跃实例正在使用的邮箱（基于心跳，90s 过期 + PID 判活）
-  const activeEmails = getAllLockedEmails();
-
   webview.postMessage({
     type: 'allData', currentEmail, quotaEntries, quotaEmails,
     switchLogs, recoveryLogs, diagnoseLogs, diagnosticLogs, summary, accountOverview, contextMonitor,
-    activeEmails,
   });
 }
 

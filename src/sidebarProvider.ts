@@ -18,6 +18,7 @@ import { getOtherLockedEmails, getOtherLockedEmailsMap, acquireLock, releaseLock
 import { UsageTracker } from './usageTracker';
 import { getHealthCheckCache, testSingleAccount, setTagColors, clearHealthResult, resetMachineId } from './healthCheckPanel';
 import { getContextMonitorSnapshot } from './contextMonitor';
+import { getStateDbPath, getIdeDisplayName, detectIdeFlavor } from './ideDetector';
 import { testModelAccess, ProbeModelInfo, setCascadeProbeEnabled } from './usageService';
 import { stopIsolatedCascadeProbeLs } from './cascadeProbe';
 import { scheduleAcpConnectionRecovery } from './acpRecovery';
@@ -29,7 +30,7 @@ import { loginByWindsurfOAuth } from './windsurfOAuthService';
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _disposables: vscode.Disposable[] = [];
-  private _output = vscode.window.createOutputChannel('Windsurf 号池');
+  private _output = vscode.window.createOutputChannel(`${getIdeDisplayName()} 号池`);
   onManualSwitch?: () => void;
   private _startTs = Date.now();
   private _healthCheckAbort?: AbortController;
@@ -397,7 +398,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private _readStateDbKey(key: string): Promise<string | null> {
-    const dbPath = path.join(process.env.APPDATA || '', 'Windsurf/User/globalStorage/state.vscdb');
+    const dbPath = getStateDbPath();
     const sqlitePath = path.join(vscode.env.appRoot, 'node_modules/@vscode/sqlite3');
     return new Promise((resolve, reject) => {
       try {
@@ -439,7 +440,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private _writeStateDbKey(key: string, value: string): Promise<void> {
-    const dbPath = path.join(process.env.APPDATA || '', 'Windsurf/User/globalStorage/state.vscdb');
+    const dbPath = getStateDbPath();
     const sqlitePath = path.join(vscode.env.appRoot, 'node_modules/@vscode/sqlite3');
     return new Promise((resolve, reject) => {
       try {
@@ -1570,8 +1571,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._pushEnhancementStatus();
         const label = next ? '已启用' : '已关闭';
         const msg = fileChanged
-          ? `Windsurf 增强${label}，需要重载窗口才能生效。`
-          : `Windsurf 增强${label}。`;
+          ? `${getIdeDisplayName()} 增强${label}，需要重载窗口才能生效。`
+          : `${getIdeDisplayName()} 增强${label}。`;
         const action = await vscode.window.showInformationMessage(msg, '立即重载');
         if (action === '立即重载') {
           vscode.commands.executeCommand('workbench.action.reloadWindow');
@@ -2061,6 +2062,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    * 生成 webview HTML
    */
   private _getHtmlForWebview(webview: vscode.Webview): string {
+    const ideName = getIdeDisplayName();
+    const isDevin = detectIdeFlavor() === 'devin';
     const extVersion = vscode.extensions.getExtension('local.windsurf-pool')?.packageJSON?.version || '0.0.0';
     const cssUri = `${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.css'))}?v=${extVersion}`;
     const jsUri = `${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.js'))}?v=${extVersion}`;
@@ -2080,7 +2083,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       <details class="enhance-details" id="enhanceDetails">
         <summary class="enhance-summary">
           <svg class="enhance-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          <span class="enhance-title">Windsurf 增强</span>
+          <span class="enhance-title">${ideName} 增强</span>
           <span class="enhance-arrow"></span>
           <button class="enhance-toggle-btn" id="enhanceToggleBtn">未启用</button>
         </summary>
@@ -2131,7 +2134,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <div>
             <div class="v2-section-title">回复建议提示</div>
             <div class="v2-note" style="margin:4px 0 10px;padding:8px 12px;background:var(--vscode-textBlockQuote-background,rgba(127,127,127,.1));border-radius:6px;font-size:12px;line-height:1.6;color:var(--vscode-descriptionForeground,#888)">
-              <b>⚠️ 使用前提：</b>需要在 Windsurf 的 <b>Global Rules</b>（全局提示词）中添加气泡规则，AI 才会在回复末尾输出 <code>:::bubbles</code> 标记。<br>
+              <b>⚠️ 使用前提：</b>需要在 ${ideName} 的 <b>Global Rules</b>（全局提示词）中添加气泡规则，AI 才会在回复末尾输出 <code>:::bubbles</code> 标记。<br>
               点击上方「修改提示词」即可一键注入规则到全局提示词文件（<code>~/.windsurfrules</code>）。
             </div>
             <div class="v2-strip">
@@ -2191,11 +2194,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <div class="v2-strip-band c-blue"></div>
             <div class="v2-strip-info">
               <span class="v2-strip-name">启用界面汉化</span>
-              <span class="v2-strip-desc">将 Windsurf 英文界面翻译为中文</span>
+              <span class="v2-strip-desc">将 ${ideName} 英文界面翻译为中文</span>
             </div>
             <div class="v2-mini-toggle is-on" id="enhLocalizationEnabledToggle" data-target="enhLocalizationEnabled"></div>
             <input type="checkbox" id="enhLocalizationEnabled" checked hidden>
           </div>
+
+          ${isDevin ? `
+          <div class="v2-divider"></div>
+
+          <!-- ACP 智能体解锁（仅 Devin） -->
+          <div class="v2-strip">
+            <div class="v2-strip-band c-purple"></div>
+            <div class="v2-strip-info">
+              <span class="v2-strip-name">解锁 ACP 智能体</span>
+              <span class="v2-strip-desc">绕过 Devin 对第三方 ACP 智能体的限制，启用 Claude/Codex/Cline 等所有智能体</span>
+            </div>
+            <div class="v2-mini-toggle is-on" id="enhAcpUnlockToggle" data-target="enhAcpUnlock"></div>
+            <input type="checkbox" id="enhAcpUnlock" checked hidden>
+          </div>
+          ` : ''}
 
           <div class="v2-divider"></div>
 

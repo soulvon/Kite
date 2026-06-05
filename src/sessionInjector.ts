@@ -6,6 +6,8 @@ import { writeFileWithElevation, copyFileWithElevation, ElevationError } from '.
 import { scheduleAcpConnectionRecovery } from './acpRecovery';
 import { checkCascadeSendReady, DEFAULT_CASCADE_CHECK_MODEL } from './usageService';
 import { stripEmailEntrySuffix } from './accountStore';
+import { getIdeDisplayName, detectIdeFlavor } from './ideDetector';
+import { readEnhSettings } from './enhSettingsStore';
 
 /**
  * Session 注入器
@@ -24,8 +26,8 @@ const EXPORT_CMD = 'windsurf.exportCurrentSessionWithShit';
 
 const I18N_RULES: [string, string][] = [
   ["Surf's up, ", "欢迎回来, "],
-  ["Surf's up! You are currently on a two-week Windsurf Pro trial.", "🎉 已开启 Windsurf Pro 两周试用。"],
-  ["Surf's up! You have ", "🎉 你的 Windsurf Pro 试用还有 "],
+  ["Surf's up! You are currently on a two-week Windsurf Pro trial.", `🎉 已开启 ${getIdeDisplayName()} Pro 两周试用。`],
+  ["Surf's up! You have ", `🎉 你的 ${getIdeDisplayName()} Pro 试用还有 `],
   [" remaining in your Windsurf Pro trial.", " 到期。"],
   ['"1 day"', '"1 天"'],
   [" days`", " 天`"]
@@ -84,8 +86,8 @@ function injectExportCmd(content: string): { content: string; changed: boolean }
     nsCommands = m[1];
     providerObj = m[3];
   } else {
-    // 未补丁：直接定位原 handleAuthToken 命令注册
-    const oriRe = /(\w)\.commands\.registerCommand\((\w)\.PROVIDE_AUTH_TOKEN_TO_AUTH_PROVIDER,async (\w)=>\{[^]*?await (\w)\.handleAuthToken\(\3\)/;
+    // 未补丁：直接定位原 handleAuthToken 命令注册（兼容 Devin 的 PROVIDE_WINDSURF_ 常量名）
+    const oriRe = /(\w)\.commands\.registerCommand\((\w)\.PROVIDE_(?:WINDSURF_)?AUTH_TOKEN_TO_AUTH_PROVIDER,async (\w)=>\{[^]*?await (\w)\.handleAuthToken\(\3\)/;
     m = content.match(oriRe);
     if (!m) return { content, changed: false };
     nsCommands = m[1];
@@ -135,6 +137,59 @@ export function applyI18nOnly(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * 对 extension.js 内容应用/回退 ACP 智能体解锁补丁（仅 Devin）
+ * @param content extension.js 文件内容
+ * @param enable true=应用解锁补丁，false=回退到原始逻辑
+ * @returns { content, changed } — changed 表示是否有修改
+ */
+function applyAcpUnlockPatches(content: string, enable: boolean): { content: string; changed: boolean } {
+  let changed = false;
+
+  // Patch A: acp-custom-enabled feature flag 函数
+  // 已解锁形态: function l(){return!0}
+  // 原始形态:   function l(){const A=B.UnleashProvider.getInstance();return(0,C.isWindsurfInsiders)()||(0,C.isWindsurfNext)()||(0,I.hasDevExtension)()||(0,E.isDevelopment)()||A.isEnabled("acp-custom-enabled")}
+  if (enable) {
+    const acpFlagRe = /function\s+(\w+)\s*\(\)\s*\{const\s+\w+\s*=\s*\w+\.UnleashProvider\.getInstance\(\)\s*;return\s*\(0,\w+\.isWindsurfInsiders\)\(\)\s*\|\|\s*\(0,\w+\.isWindsurfNext\)\(\)\s*\|\|\s*\(0,\w+\.hasDevExtension\)\(\)\s*\|\|\s*\(0,\w+\.isDevelopment\)\(\)\s*\|\|\w+\.isEnabled\("acp-custom-enabled"\)\}/;
+    const m = content.match(acpFlagRe);
+    if (m) {
+      content = content.replace(m[0], `function ${m[1]}(){return!0}`);
+      changed = true;
+    }
+  } else {
+    // 回退：查找已解锁形态并还原（需要从备份或原始文件恢复，此处简化处理）
+    // 由于原始代码已被替换无法精确还原，回退时提示用户需重新安装
+    // 实际上用户关闭 acpUnlock 后重新 applyPatch 时，如果 extension.js 被 Devin 更新覆盖，
+    // 原始代码会恢复，此时 enable=false 不会匹配已解锁形态，也就不会修改
+  }
+
+  // Patch B: register() 中跳过 custom agent 的守卫
+  // 已解锁形态: if(!1)return void 0
+  // 原始形态:   if(!e&&"custom"===D(A.id)&&!w())return void u.acpOutputChannel.info(...)
+  if (enable) {
+    const acpRegRe = /if\(!\w+&&"custom"===\w+\(\w+\.id\)&&!\w+\(\)\)return\s+void\s+\w+\.\w+\.\w+\(`Skipping custom agent "\$\{\w+\.id\}" — acp-custom-enabled is disabled`\)/;
+    const m = content.match(acpRegRe);
+    if (m) {
+      content = content.replace(m[0], 'if(!1)return void 0');
+      changed = true;
+    }
+  }
+
+  // Patch C: isAgentEnabled() 中 custom family 检查
+  // 已解锁形态: function m(A,e){if(!1)return!1;
+  // 原始形态:   function m(A,e){if("custom"===D(A)&&!w())return!1;
+  if (enable) {
+    const acpEnableRe = /function\s+(\w+)\s*\(\s*\w+\s*,\s*\w+\s*\)\s*\{\s*if\s*\(\s*"custom"\s*===\s*\w+\(\s*\w+\s*\)\s*&&\s*!\s*\w+\(\s*\)\s*\)\s*return\s*!\s*1\s*;/;
+    const m = content.match(acpEnableRe);
+    if (m) {
+      content = content.replace(m[0], `function ${m[1]}(A,e){if(!1)return!1;`);
+      changed = true;
+    }
+  }
+
+  return { content, changed };
 }
 
 /**
@@ -243,7 +298,7 @@ export async function injectSession(
 
   if (!cmdReady) {
     const waitMs = Date.now() - t0;
-    console.warn(`[injectSession][#${seqNo}] ✗ 补丁命令未就绪 (等了 ${waitMs}ms), Windsurf 可能还没启动好`);
+    console.warn(`[injectSession][#${seqNo}] ✗ 补丁命令未就绪 (等了 ${waitMs}ms), ${getIdeDisplayName()} 可能还没启动好`);
     // 命令不存在 — 检查文件是否已打补丁
     const targetPath = getWindsurfExtensionJsPath();
     let alreadyPatched = false;
@@ -272,19 +327,19 @@ export async function injectSession(
       if (silent) {
         // 启动时静默失败，不弹窗不重启
         console.warn('[windsurf-pool] Patch exists but command not loaded after ' + maxWait + 's, skipping auto-switch.');
-        setInjectFailure(account.email, 'Windsurf 补丁命令尚未加载', 'error');
+        setInjectFailure(account.email, `${getIdeDisplayName()} 补丁命令尚未加载`, 'error');
         return false;
       }
       // 用户手动切号 — 提示重启
       vscode.window.showWarningMessage(
-        '切换失败：补丁已写入但未生效，请重启 Windsurf。',
+        '切换失败：补丁已写入但未生效，请重启 ' + getIdeDisplayName() + '。',
         '立即重启'
       ).then(action => {
         if (action === '立即重启') {
           vscode.commands.executeCommand('workbench.action.reloadWindow');
         }
       });
-      setInjectFailure(account.email, '补丁已写入但未生效，请重启 Windsurf', 'error');
+      setInjectFailure(account.email, `补丁已写入但未生效，请重启 ${getIdeDisplayName()}`, 'error');
       return false;
     }
 
@@ -299,7 +354,7 @@ export async function injectSession(
     }
     if (!silent) {
       vscode.window.showWarningMessage(
-        '补丁已应用，需要重启 Windsurf 后才能切换账号。',
+        '补丁已应用，需要重启 ' + getIdeDisplayName() + ' 后才能切换账号。',
         '立即重启'
       ).then(action => {
         if (action === '立即重启') {
@@ -307,7 +362,7 @@ export async function injectSession(
         }
       });
     }
-    setInjectFailure(account.email, '补丁已应用，需重启 Windsurf 后再切换', 'error');
+    setInjectFailure(account.email, `补丁已应用，需重启 ${getIdeDisplayName()} 后再切换`, 'error');
     return false;
   }
 
@@ -372,7 +427,7 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
   try {
     const targetPath = getWindsurfExtensionJsPath();
     if (!targetPath) {
-      vscode.window.showWarningMessage('未找到 Windsurf 内置扩展 extension.js');
+      vscode.window.showWarningMessage(`未找到 ${getIdeDisplayName()} 内置扩展 extension.js`);
       return false;
     }
 
@@ -411,7 +466,18 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
         }
       }
 
-      if (i18nResult.changed || exportAdded || persistAdded) {
+      // ACP 智能体解锁补丁（仅 Devin，根据 acpUnlock 设置决定应用或回退）
+      let acpChanged = false;
+      if (detectIdeFlavor() === 'devin') {
+        const acpUnlock = readEnhSettings().acpUnlock !== false;
+        const acpResult = applyAcpUnlockPatches(content, acpUnlock);
+        if (acpResult.changed) {
+          content = acpResult.content;
+          acpChanged = true;
+        }
+      }
+
+      if (i18nResult.changed || exportAdded || persistAdded || acpChanged) {
         const backupPath = targetPath + '.backup_' + Date.now();
         copyFileWithElevation(targetPath, backupPath);
         writeFileWithElevation(targetPath, content, 'utf8');
@@ -419,6 +485,7 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
         if (i18nResult.changed) parts.push('已更新欢迎语汉化');
         if (exportAdded) parts.push('已添加当前账户导出命令');
         if (persistAdded) parts.push('已添加登录状态持久化');
+        if (acpChanged) parts.push('已更新 ACP 智能体解锁');
         vscode.window.showInformationMessage('补丁已存在，' + parts.join('、') + '（重启后生效）');
       } else {
         vscode.window.showInformationMessage('补丁已存在，无需重复应用');
@@ -427,13 +494,15 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
     }
 
     // ---- Patch 1: 添加 handleAuthTokenWithShit 方法 ----
-    // 匹配原始 handleAuthToken 的完整签名（适配不同变量名）
-    const handleAuthRe = /async handleAuthToken\((\w)\)\{const (\w)=await\(0,(\w)\.registerUser\)\(\1\),\{apiKey:(\w),name:(\w)\}=\2,(\w)=\(0,(\w)\.getApiServerUrl\)\(\2\.apiServerUrl\)/;
+    // 匹配原始基于 registerUser 的认证方法签名（适配不同变量名）
+    // 旧版 Windsurf 方法名为 handleAuthToken；新版 Devin 重构为按类型分发，
+    // 等价方法重命名为 handleCodeiumAuthToken（方法体结构不变）。
+    const handleAuthRe = /async handle(?:Codeium)?AuthToken\((\w)\)\{const (\w)=await\(0,(\w)\.registerUser\)\(\1\),\{apiKey:(\w),name:(\w)\}=\2,(\w)=\(0,(\w)\.getApiServerUrl\)\(\2\.apiServerUrl\)/;
     const match = content.match(handleAuthRe);
 
     if (!match) {
       vscode.window.showWarningMessage(
-        '未找到 handleAuthToken 方法签名，可能 Windsurf 版本已更新。'
+        '未找到 handleAuthToken/handleCodeiumAuthToken 方法签名，可能 Windsurf/Devin 版本已更新。'
       );
       return false;
     }
@@ -447,19 +516,24 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
     const ids = { paramA, varE, modW, varT, varI, varN, modH };
     for (const [name, val] of Object.entries(ids)) {
       if (!VALID_ID.test(val)) {
-        vscode.window.showWarningMessage(`补丁中止：提取到非法标识符 ${name}="${val.substring(0, 20)}"，Windsurf 版本可能有变化`);
+        vscode.window.showWarningMessage(`补丁中止：提取到非法标识符 ${name}="${val.substring(0, 20)}"，${getIdeDisplayName()} 版本可能有变化`);
         return false;
       }
     }
 
     const handleAuthIdx = content.indexOf(fullMatch);
 
-    // 找到 handleAuthToken 方法体结尾 — 搜索 sessionChangeEmitter.fire 闭合
-    // 注意：变量 o 是 session 对象的局部变量名，可能因混淆变化，先用宽松正则定位
-    const fireRe = new RegExp(`this\\._sessionChangeEmitter\\.fire\\(\\{added:\\[(\\w)\\],removed:\\[\\],changed:\\[\\]\\}\\),\\1\\}`);
-    const fireMatch = content.substring(handleAuthIdx).match(fireRe);
+    // 找到方法体结尾 — 定位 session 对象返回处的闭合。
+    // 旧版 Windsurf: this._sessionChangeEmitter.fire({added:[o]...}),o}
+    // 新版 Devin:    return await this.persistSessionAndRestart(o,n),o}
+    // 变量 o/n 是局部变量名，可能因混淆变化，用宽松正则定位。
+    // 分两段匹配，避免正则交替分支 + 反向引用的不可靠行为。
+    const tail = content.substring(handleAuthIdx);
+    const fireReEmitter = /this\._sessionChangeEmitter\.fire\(\{added:\[(\w)\],removed:\[\],changed:\[\]\}\),\1\}/;
+    const fireRePersist = /await this\.persistSessionAndRestart\((\w),\w\),\1\}/;
+    const fireMatch = tail.match(fireReEmitter) || tail.match(fireRePersist);
     if (!fireMatch) {
-      vscode.window.showWarningMessage('未能定位 handleAuthToken 方法体结尾');
+      vscode.window.showWarningMessage('未能定位认证方法体结尾');
       return false;
     }
     const fireIdx = handleAuthIdx + fireMatch.index!;
@@ -468,7 +542,7 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
     // 复制原方法体的"剩余部分"：从 if(!t)throw... 到 ,o} 结束
     const bodyStart = content.indexOf(`if(!${varT})`, handleAuthIdx);
     if (bodyStart < 0 || bodyStart >= insertPoint) {
-      vscode.window.showWarningMessage('未能定位 handleAuthToken 方法体起点');
+      vscode.window.showWarningMessage('未能定位认证方法体起点');
       return false;
     }
     const bodyEnd = insertPoint;
@@ -495,9 +569,10 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
     content = content.substring(0, insertPoint) + fullPatchedMethod + content.substring(insertPoint);
 
     // ---- Patch 2: 注册 provideAuthTokenToAuthProviderWithShit 命令 ----
-    // 原版命令注册形如: <ns>.commands.registerCommand(<ns2>.PROVIDE_AUTH_TOKEN_TO_AUTH_PROVIDER,async A=>{...await <obj>.handleAuthToken(A)...})
+    // 原版命令注册形如: <ns>.commands.registerCommand(<ns2>.PROVIDE_[WINDSURF_]AUTH_TOKEN_TO_AUTH_PROVIDER,async A=>{...await <obj>.handleAuthToken(A)...})
+    // 新版 Devin 常量名为 PROVIDE_WINDSURF_AUTH_TOKEN_TO_AUTH_PROVIDER，调用仍为 handleAuthToken（分发器）
     // 用包含 handleAuthToken(A) 的 registerCommand 调用作为定位点
-    const cmdRe = /(\w)\.commands\.registerCommand\((\w)\.PROVIDE_AUTH_TOKEN_TO_AUTH_PROVIDER,async (\w)=>\{[^]*?await (\w)\.handleAuthToken\(\3\)/;
+    const cmdRe = /(\w)\.commands\.registerCommand\((\w)\.PROVIDE_(?:WINDSURF_)?AUTH_TOKEN_TO_AUTH_PROVIDER,async (\w)=>\{[^]*?await (\w)\.handleAuthToken\(\3\)/;
     const cmdMatch = content.match(cmdRe);
 
     if (cmdMatch) {
@@ -517,9 +592,9 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
 
       if (cmdEnd > 0) {
         const cmdSegment = content.substring(cmdStart, cmdEnd);
-        // 替换：常量引用 PROVIDE_AUTH_TOKEN_TO_AUTH_PROVIDER → 字符串字面量；handleAuthToken → handleAuthTokenWithShit
+        // 替换：常量引用 PROVIDE_[WINDSURF_]AUTH_TOKEN_TO_AUTH_PROVIDER → 字符串字面量；handleAuthToken → handleAuthTokenWithShit
         const newCmdSegment = cmdSegment
-          .replace(/\w+\.PROVIDE_AUTH_TOKEN_TO_AUTH_PROVIDER/, `"${PATCHED_CMD}"`)
+          .replace(/\w+\.PROVIDE_(?:WINDSURF_)?AUTH_TOKEN_TO_AUTH_PROVIDER/, `"${PATCHED_CMD}"`)
           .replace(/\.handleAuthToken\b/, `.${PATCHED_METHOD}`);
 
         // 在原命令后面插入新命令（用逗号分隔）
@@ -535,11 +610,24 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
     const exportRes = injectExportCmd(content);
     if (exportRes.changed) content = exportRes.content;
 
+    // ---- Patch 4: ACP 自定义智能体解锁（仅 Devin） ----
+    // 参考: 07-ACP-Agent-Architecture-and-Unlock-Plan.md 方案 A
+    if (detectIdeFlavor() === 'devin') {
+      const acpUnlock = readEnhSettings().acpUnlock !== false;
+      const acpResult = applyAcpUnlockPatches(content, acpUnlock);
+      if (acpResult.changed) {
+        content = acpResult.content;
+        console.log('[windsurf-pool] ACP custom agent unlock patches applied');
+      } else if (acpUnlock) {
+        console.warn('[windsurf-pool] ACP unlock: no matching patterns found in extension.js (Devin version may have changed)');
+      }
+    }
+
     // 写回文件
     writeFileWithElevation(targetPath, content, 'utf8');
 
     vscode.window.showInformationMessage(
-      `补丁已应用成功！备份保存在: ${path.basename(backupPath)}。请重启 Windsurf 使补丁生效。`
+      `补丁已应用成功！备份保存在: ${path.basename(backupPath)}。请重启 ${getIdeDisplayName()} 使补丁生效。`
     );
     return true;
   } catch (err) {

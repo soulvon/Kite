@@ -17,6 +17,7 @@ import { UsageSnapshot } from './types';
 import { readEnhSettings } from './enhSettingsStore';
 import { getCurrentInstanceName } from './instanceManager';
 import { readAccountsSync } from './accountStore';
+import { getIdeDisplayName } from './ideDetector';
 
 /**
  * 状态栏左段样式（参考 vscode-antigravity-cockpit 的 statusBarFormat）
@@ -101,7 +102,7 @@ export class StatusBarManager implements vscode.Disposable {
           { label: autoLabel, description: '切换自动切号开关', action: 'toggle' },
           { label: '$(preview) 打开号池面板', action: 'open' },
         ];
-        const sel = await vscode.window.showQuickPick(picks, { placeHolder: 'Windsurf 号池' });
+        const sel = await vscode.window.showQuickPick(picks, { placeHolder: `${getIdeDisplayName()} 号池` });
         if (!sel) return;
         switch (sel.action) {
           case 'switch':
@@ -281,7 +282,7 @@ export class StatusBarManager implements vscode.Disposable {
     const md = new vscode.MarkdownString();
     md.isTrusted = true;
     if (!email) {
-      md.appendMarkdown('**未登录 Windsurf**\n\n点击打开号池面板登录账号');
+      md.appendMarkdown(`**未登录 ${getIdeDisplayName()}**\n\n点击打开号池面板登录账号`);
       return md;
     }
     md.appendMarkdown(`**${email}**\n\n`);

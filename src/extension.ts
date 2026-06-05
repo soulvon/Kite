@@ -23,6 +23,7 @@ import { openHealthCheckPanel } from './healthCheckPanel';
 import { setExtensionPath } from './cascadeProbe';
 import { warmupSoundPlayer } from './soundPlayer';
 import { reloadWindsurfAcpConnections, scheduleAcpAgentRepair, scheduleAcpConnectionRecovery } from './acpRecovery';
+import { getIdeDisplayName, getIdeExeName } from './ideDetector';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
@@ -141,7 +142,8 @@ export function activate(context: vscode.ExtensionContext) {
     if (ok) {
       vscode.window.showInformationMessage('已刷新 Cascade 连接');
     } else {
-      vscode.window.showWarningMessage('刷新 Cascade 连接失败，请查看 Windsurf 日志');
+      const ideName = getIdeDisplayName();
+      vscode.window.showWarningMessage(`刷新 Cascade 连接失败，请查看 ${ideName} 日志`);
     }
   });
   context.subscriptions.push(recoverCascadeInputCmd);
@@ -312,8 +314,9 @@ export function activate(context: vscode.ExtensionContext) {
   try {
     const result = ensureEnhancement();
     if (result.needRestart) {
+      const ideNameEnh = getIdeDisplayName();
       vscode.window.showInformationMessage(
-        'Windsurf 增强已更新，重启后生效。',
+        `${ideNameEnh} 增强已更新，重启后生效。`,
         '立即重启'
       ).then(action => {
         if (action === '立即重启') {
@@ -338,7 +341,8 @@ export function activate(context: vscode.ExtensionContext) {
         if (action === '重试（需点击"是"）') {
           vscode.commands.executeCommand('workbench.action.reloadWindow');
         } else if (action === '以管理员身份运行') {
-          vscode.env.clipboard.writeText('Start-Process windsurf -Verb RunAs');
+          const psCmd = getIdeExeName().replace(/\.exe$/i, '');
+          vscode.env.clipboard.writeText(`Start-Process ${psCmd} -Verb RunAs`);
           vscode.window.showInformationMessage('PowerShell 命令已复制到剪贴板，请在终端中粘贴运行。');
         }
       });
@@ -472,8 +476,9 @@ export function activate(context: vscode.ExtensionContext) {
     // 增强开关被用户关闭时，ensureEnhancement 会直接 return 且无 error，友好提示而非报"未知错误"
     const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
     if (!enabled) {
+      const ideNameRe = getIdeDisplayName();
       const action = await vscode.window.showWarningMessage(
-        'Windsurf 增强已关闭，无法注入。是否立即启用？',
+        `${ideNameRe} 增强已关闭，无法注入。是否立即启用？`,
         '立即启用', '取消'
       );
       if (action === '立即启用') {

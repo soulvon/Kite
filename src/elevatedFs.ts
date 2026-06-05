@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { execSync } from 'child_process';
+import { getIdeDisplayName } from './ideDetector';
 
 /**
  * 提权文件操作工具
@@ -95,7 +96,7 @@ function runElevatedScript(scriptContent: string): void {
     // 校验哨兵文件
     if (!fs.existsSync(sentinelPath)) {
       throw new ElevationError(
-        'Windsurf 安装目录写入失败：提权脚本未正常完成，请尝试以管理员身份运行 Windsurf。',
+        `${getIdeDisplayName()} 安装目录写入失败：提权脚本未正常完成，请尝试以管理员身份运行 ${getIdeDisplayName()}。`,
         false
       );
     }
@@ -103,7 +104,7 @@ function runElevatedScript(scriptContent: string): void {
     if (err instanceof ElevationError) throw err;
     if (isUacDenied(err)) {
       throw new ElevationError(
-        'Windsurf 安装在受保护目录（如 Program Files），需要管理员权限。请在弹出的权限对话框中点击「是」，或以管理员身份运行 Windsurf。',
+        `${getIdeDisplayName()} 安装在受保护目录（如 Program Files），需要管理员权限。请在弹出的权限对话框中点击「是」，或以管理员身份运行 ${getIdeDisplayName()}。`,
         true
       );
     }

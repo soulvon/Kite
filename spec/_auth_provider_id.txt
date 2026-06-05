@@ -1,0 +1,6 @@
+codeium.windsurf = 1
+codeium.devin = 0
+authProviderId = 4
+
+Context around authProviderId:
+lationEmitter.event).promise}static instance;constructor(A){this.context=A,this._disposable=s.Disposable.from(s.authentication.registerAuthenticationProvider(l.WindsurfExtensionMetadata.getInstance().authProviderId,"Devin Auth",this,{supportsMultipleAccounts:!1}),s.window.registerUriHandler(this._uriHandler),this._uriHandler.event(A=>{"/refresh-authentication-session"===A.path?(0,M.refreshAuthenticationSession)():this._loginInProgress||this.maybeHandleUriWithToken(A)}),A.secrets.onDidChange(A=>t

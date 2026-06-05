@@ -3,7 +3,7 @@ import * as accountStore from './accountStore';
 import { fetchUsage } from './usageService';
 import { StoredAccount, UsageSnapshot } from './types';
 import { getCurrentInstanceTag } from './instanceManager';
-import { getOtherLockedEmails, acquireLock, releaseLock } from './accountLock';
+import { getOtherLockedEmails, acquireLock, releaseLock, isEmailLocked } from './accountLock';
 import * as diskCache from './usageDiskCache';
 import { UsageTracker } from './usageTracker';
 import { clearHealthResult, silentResetMachineId } from './healthCheckPanel';
@@ -433,7 +433,9 @@ export class AutoSwitcher implements vscode.Disposable {
       this._didUpdate.fire();
       // 记录用量统计（含 resetAt 用于配额变动历史）
       if (snapshot) {
-        this._tracker.recordUsage(acct.email, snapshot.dailyRemainingPercent, snapshot.weeklyRemainingPercent, snapshot.dailyResetAtUnix, snapshot.weeklyResetAtUnix, snapshot.overageBalanceMicros);
+        // 记录时即时打标：该账号此刻是否被任意号池实例持有锁（异常监控用，跨实例可靠）
+        const heldByPool = isEmailLocked(acct.email);
+        this._tracker.recordUsage(acct.email, snapshot.dailyRemainingPercent, snapshot.weeklyRemainingPercent, snapshot.dailyResetAtUnix, snapshot.weeklyResetAtUnix, snapshot.overageBalanceMicros, heldByPool);
       }
       this._tracker.recordRefresh();
     } finally {

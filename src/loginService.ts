@@ -1,6 +1,7 @@
 import { LoginResult } from './types';
 import { post } from './httpClient';
 import { FIREBASE_API_KEY } from './config';
+import { getIdeDisplayName } from './ideDetector';
 
 /** 安全解析 JSON，失败返回 null（避免 502 HTML 错误页抛 Unexpected token） */
 function safeJsonParse<T = any>(s: string): T | null {
@@ -194,7 +195,7 @@ async function loginBySessionToken(sessionToken: string): Promise<LoginResult> {
     );
 
     if (ur.status === 401) {
-      return { ok: false, error: 'Session Token 已失效或不适用于 Windsurf API (401)' };
+      return { ok: false, error: `Session Token 已失效或不适用于 ${getIdeDisplayName()} API (401)` };
     }
     if (ur.status === 403) {
       return { ok: false, error: 'Session Token 无权限或账号受限 (403)' };

@@ -29,6 +29,7 @@ export interface QuotaHistoryEntry {
   resetAt: number;     // earlier reset unix timestamp
   balance?: number;    // overageBalanceMicros (付费余额，单位: 微美元)
   bDelta?: number;     // balance change (micros, negative = 消耗付费余额)
+  heldByPool?: boolean; // 记录时该账号是否被任意号池实例持有锁（异常监控用，来自 accountLock）
 }
 
 export type DiagnosticEventSource = 'switch' | 'health';
@@ -165,7 +166,7 @@ export class UsageTracker {
     this._debounceSave();
   }
 
-  recordUsage(email: string, dailyRemaining: number, weeklyRemaining: number, dailyResetAt?: number, weeklyResetAt?: number, balance?: number): void {
+  recordUsage(email: string, dailyRemaining: number, weeklyRemaining: number, dailyResetAt?: number, weeklyResetAt?: number, balance?: number, heldByPool?: boolean): void {
     this._maybeResetDaily();
     const acct = this._ensureAccount(email);
     acct.dailyUsedPct = Math.max(0, 100 - dailyRemaining);
@@ -202,6 +203,7 @@ export class UsageTracker {
         resetAt: resetAt === Infinity ? 0 : resetAt,
         balance,
         bDelta,
+        heldByPool,
       });
       if (this._quotaHistory.length > MAX_HISTORY) {
         this._quotaHistory.splice(0, this._quotaHistory.length - MAX_HISTORY);

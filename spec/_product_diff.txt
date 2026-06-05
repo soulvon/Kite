@@ -1,0 +1,78 @@
+=== Properties only in Devin ===
+  oldDataFolderName = .windsurf
+  oldNameShort = Windsurf
+  snapName = windsurf
+  oldUrlProtocol = windsurf
+
+=== Properties only in Windsurf ===
+
+=== Properties with different values ===
+  nameShort
+    Devin:   "Devin"
+    Windsurf: "Windsurf"
+  nameLong
+    Devin:   "Devin"
+    Windsurf: "Windsurf"
+  applicationName
+    Devin:   "devin-desktop"
+    Windsurf: "windsurf"
+  dataFolderName
+    Devin:   ".devin"
+    Windsurf: ".windsurf"
+  win32MutexName
+    Devin:   "devin-desktop"
+    Windsurf: "windsurf"
+  serverApplicationName
+    Devin:   "devin-server"
+    Windsurf: "windsurf-server"
+  serverDataFolderName
+    Devin:   ".devin-server"
+    Windsurf: ".windsurf-server"
+  tunnelApplicationName
+    Devin:   "devin-tunnel"
+    Windsurf: "windsurf-tunnel"
+  win32DirName
+    Devin:   "Devin"
+    Windsurf: "Windsurf"
+  win32NameVersion
+    Devin:   "Devin"
+    Windsurf: "Windsurf"
+  win32RegValueName
+    Devin:   "Devin"
+    Windsurf: "Windsurf"
+  win32ShellNameShort
+    Devin:   "Devin"
+    Windsurf: "Windsurf"
+  win32TunnelServiceMutex
+    Devin:   "devin-tunnelservice"
+    Windsurf: "windsurf-tunnelservice"
+  win32TunnelMutex
+    Devin:   "devin-tunnel"
+    Windsurf: "windsurf-tunnel"
+  linuxIconName
+    Devin:   "devin-desktop"
+    Windsurf: "windsurf"
+  urlProtocol
+    Devin:   "devin"
+    Windsurf: "windsurf"
+  crashReporter
+    Devin:   {"productName":"Devin","companyName":"Exafunction"}
+    Windsurf: {"productName":"Windsurf","companyName":"Exafunction"}
+  codeiumCommit
+    Devin:   "a335ac3d8c6b04d563d8bd757cadc86d305e3b12"
+    Windsurf: "c46c49e94b4d3f41181204d59809d8f1b2c48d68"
+  windsurfVersion
+    Devin:   "3.0.12"
+    Windsurf: "2.3.15"
+  commit
+    Devin:   "a335ac3d8c6b04d563d8bd757cadc86d305e3b12"
+    Windsurf: "c46c49e94b4d3f41181204d59809d8f1b2c48d68"
+  date
+    Devin:   "2026-06-02T17:49:35.887Z"
+    Windsurf: "2026-05-27T02:08:16.904Z"
+  checksums
+    Devin:   {"vs/base/parts/sandbox/electron-browser/preload.js":"pEnkU8mcIZ0DvnCkVCVdSC12xeGMu3MUXKKluNx/Lnk","vs/workbench/workbench.desktop.main.js":"XF6xGiXHu0cw/mGPJrunEoHAwBegXO1C+Bio0sPfTyI","vs/workbench/workbench.desktop.main.css":"W1RHnX+7kfoBXYWJglvJuYWBOxCfVZeE/nfani59PnU","vs/workbench/api/node/extensionHostProcess.js":"sppcTiAoo2MaU0lMV4tsjc4/8PgpLxIAjeCX36L7pLs","vs/code/electron-browser/workbench/workbench.html":"s+JK8lyziSceLS63P8I6mZO4lpzStVHgBF1ToEKouxk","vs/code/electron-browser/workbench/workbench.js":"HY1LdA6RjZj7nGW+cC1yhBSkk7IQgLqa2BMWAaFsXws","vs/sessions/sessions.desktop.main.js":"5U+UyD5rzTRaAUIFcGJ/96UE0LivEqebiCOyNUGqzk0","vs/sessions/sessions.desktop.main.css":"mjmGsknw0QX8sJPF/UuSrLDBxr74TqijqVVoV5gDaYg","vs/sessions/electron-browser/sessions.html":"E7G1WDIp18oXl7+RfWD25Comd2sLIzHH/e1x6h7gZSM","vs/sessions/electron-browser/sessions.js":"ruWfunclU4mLaNWIoO5WfUrov4IDVbbEPCDcWsT0Nrc"}
+    Windsurf: {"vs/base/parts/sandbox/electron-browser/preload.js":"pEnkU8mcIZ0DvnCkVCVdSC12xeGMu3MUXKKluNx/Lnk","vs/workbench/workbench.desktop.main.js":"nJWO7E5FqPa+cmrJ2MEwwsTTeJBJ1Fx5+6nXn7fB+QM","vs/workbench/workbench.desktop.main.css":"Eczy+fTXm4JFIMHyGy7mSbJYSWPX4Q/cdmc5y0bYR0Y","vs/workbench/api/node/extensionHostProcess.js":"q3zwdIdIxrOhVsOpt2C+6s1sSlcWxYlhD2xRYUH6ElQ","vs/code/electron-browser/workbench/workbench.html":"p4tBbMUvDgfaVrrDG69mq9Qd5O9YXv/IDuTxuCLqAws","vs/code/electron-browser/workbench/workbench.js":"IDvtDOxoYFQEphymOnsiqLKnDcdOriTlV0qQgHp6oWE","vs/sessions/sessions.desktop.main.js":"iKoEcZPxiLelCmDpZg78WZz/FCKqyAzFiZjpDv6R5/Y","vs/sessions/sessions.desktop.main.css":"4nzUMR6FK+koGUAU+DvIE3MWV6yeYOP1zdRzH5Paufw","vs/sessions/electron-browser/sessions.html":"E7G1WDIp18oXl7+RfWD25Comd2sLIzHH/e1x6h7gZSM","vs/sessions/electron-browser/sessions.js":"4wrdW0QDTh/sFAtij+3Dd53DukC8Dn6QWcb9b1hsG58"}
+  target
+    Devin:   "user"
+    Windsurf: "system"

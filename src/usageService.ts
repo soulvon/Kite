@@ -1,6 +1,7 @@
 import { StoredAccount, UsageSnapshot } from './types';
 import { post } from './httpClient';
 import { cascadeProbe, LsInfo } from './cascadeProbe';
+import { getIdeDisplayName } from './ideDetector';
 
 /** Cascade canary probe 开关。现在走隔离 LS，不写入桌面 Windsurf 会话目录。 */
 let _cascadeProbeEnabled = false;
@@ -100,20 +101,20 @@ function parseRateLimitBody(body: string): { ok: boolean; reason?: string; remai
     return {
       ok: false,
       reason: reset
-        ? `${isModelLimit ? 'Windsurf 官方模型额度限制' : 'Windsurf 官方消息频率限制'}，约 ${reset} 后恢复${resetEta}`
+        ? `${isModelLimit ? getIdeDisplayName() + ' 官方模型额度限制' : getIdeDisplayName() + ' 官方消息频率限制'}，约 ${reset} 后恢复${resetEta}`
         : isModelLimit
-          ? `Windsurf 官方模型额度已达上限${upgradeHint ? '，可换模型或等待刷新' : ''}（服务端未返回恢复时间）`
-          : 'Windsurf 官方消息频率限制（服务端未返回恢复时间）',
+          ? `${getIdeDisplayName()} 官方模型额度已达上限${upgradeHint ? '，可换模型或等待刷新' : ''}（服务端未返回恢复时间）`
+          : `${getIdeDisplayName()} 官方消息频率限制（服务端未返回恢复时间）`,
       remaining: 0,
     };
   }
 
   if (d.hasCapacity === false) {
-    return { ok: false, reason: 'Windsurf 官方消息额度已用尽', remaining: 0 };
+    return { ok: false, reason: `${getIdeDisplayName()} 官方消息额度已用尽`, remaining: 0 };
   }
 
   if (typeof d.messagesRemaining === 'number') {
-    if (d.messagesRemaining === 0) return { ok: false, reason: 'Windsurf 官方消息额度剩余 0 条', remaining: 0 };
+    if (d.messagesRemaining === 0) return { ok: false, reason: `${getIdeDisplayName()} 官方消息额度剩余 0 条`, remaining: 0 };
     return { ok: true, remaining: d.messagesRemaining };
   }
 
@@ -132,10 +133,10 @@ function formatProbeLimitReason(tag: string, planName: string, probe: {
   const label = kind === 'overall'
     ? (hasReset ? '官方临时限流' : '官方全局限制/长期不可用')
     : kind === 'model'
-      ? 'Windsurf 官方模型限流'
+      ? `${getIdeDisplayName()} 官方模型限流`
       : kind === 'message'
-        ? 'Windsurf 官方消息限流'
-        : 'Windsurf 官方频率限制';
+        ? `${getIdeDisplayName()} 官方消息限流`
+        : `${getIdeDisplayName()} 官方频率限制`;
   const parts = [`${tag}${label} [${plan}]`];
   if (kind === 'overall') {
     parts.push('overall message rate limit');

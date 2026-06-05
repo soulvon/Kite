@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { readEnhSettings } from './enhSettingsStore';
 import { writeFileWithElevation, copyFileWithElevation } from './elevatedFs';
+import { getEnhancementScriptName } from './ideDetector';
 
 const MARKER_PREFIX = '<!-- ws-better-v';
 const MARKER_SUFFIX = ' -->';
@@ -137,13 +138,14 @@ function getWorkbenchHtmlPath(): string | null {
   return null;
 }
 
-// 缓存 windsurf-better.js 内容（启动后不变）
+// 缓存 windsurf-better.js / devin-better.js 内容（启动后不变）
 let _scriptCache: string | null = null;
 function getScriptContent(): string | null {
   if (_scriptCache !== null) return _scriptCache;
   const ext = vscode.extensions.getExtension('local.windsurf-pool');
   if (!ext) return null;
-  const scriptPath = path.join(ext.extensionPath, 'resources', 'windsurf-better.js');
+  const scriptName = getEnhancementScriptName();
+  const scriptPath = path.join(ext.extensionPath, 'resources', scriptName);
   if (!fs.existsSync(scriptPath)) return null;
   _scriptCache = fs.readFileSync(scriptPath, 'utf8');
   return _scriptCache;

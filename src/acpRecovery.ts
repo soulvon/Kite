@@ -127,12 +127,18 @@ export function scheduleAcpAgentRepair(reason: string, delayMs = 3500): void {
 export async function reloadWindsurfAcpConnections(reason = 'manual'): Promise<boolean> {
   try {
     const commands = await vscode.commands.getCommands(true);
-    if (!commands.includes('windsurf.reloadAcpConnections')) {
+    // Devin 使用 devin.reloadAcpConnections，Windsurf 使用 windsurf.reloadAcpConnections
+    const cmdId = commands.includes('devin.reloadAcpConnections')
+      ? 'devin.reloadAcpConnections'
+      : commands.includes('windsurf.reloadAcpConnections')
+        ? 'windsurf.reloadAcpConnections'
+        : null;
+    if (!cmdId) {
       console.warn(`[acpRecovery] reload ACP command is not registered yet (${reason})`);
       return false;
     }
-    await vscode.commands.executeCommand('windsurf.reloadAcpConnections');
-    console.log(`[acpRecovery] reloaded ACP connections (${reason})`);
+    await vscode.commands.executeCommand(cmdId);
+    console.log(`[acpRecovery] reloaded ACP connections via ${cmdId} (${reason})`);
     return true;
   } catch (err) {
     console.warn(`[acpRecovery] reload ACP connections failed (${reason}):`, err);

@@ -1,0 +1,11 @@
+windsurf.login => Log in [Devin]
+windsurf.logout => Log Out [Devin]
+windsurf.loginWithAuthToken => Provide Devin auth token (backup login) [Devin]
+devin.login => Log in [Devin]
+devin.logout => Log Out [Devin]
+devin.loginWithAuthToken => Provide Devin auth token (backup login) [Devin]
+
+=== OLD WINDSURF ===
+windsurf.login => Log in [Windsurf]
+windsurf.logout => Log Out [Windsurf]
+windsurf.loginWithAuthToken => Provide Auth Token (Backup Login) [Windsurf]
