@@ -1,11 +1,11 @@
 /**
- * Windsurf Better v1.0.0
+ * Devin Better v1.0.0
  * 整合版：回复建议提示 + 汉化
  */
 (function () {
 	'use strict';
-	const VERSION = '1.4.1';
-	const LOG_PREFIX = '[WS-Better]';
+	const VERSION = '1.0.0';
+	const LOG_PREFIX = '[Devin-Better]';
 
 	// ========== Trusted Types 兼容（Windsurf 新版启用了 require-trusted-types-for 'script'） ==========
 	// CSP 里已由扩展的 enhancementInjector.ts 注入 'abBubbles' policy 名
@@ -50,7 +50,7 @@
 		bubblesShape: 'rounded',
 		// 汉化设置
 		localizationEnabled: true,
-		// ACP 智能体解锁（仅 Devin，Windsurf 不使用此设置）
+		// ACP 智能体解锁（仅 Devin）
 		acpUnlock: true,
 		// 自动操作
 		continueMode: 'simple',  // 'simple' | 'smart' | 'brainless' | 'off'（默认 simple = 错误图标触发）
@@ -1048,7 +1048,7 @@
 	const TRANSLATIONS = new Map([
 		// ========== Section 标题 ==========
 		['User Interface', '用户界面'],
-		['Windsurf Tab', 'Windsurf 补全'],
+		['Devin Tab', 'Devin 补全'],
 		['Shortcuts', '快捷键'],
 		['Advanced', '高级'],
 		['General', '通用'],
@@ -1083,11 +1083,11 @@
 		['Tab to Import', 'Tab 导入'],
 		['Quickly add and update imports with a tab keypress', '按 Tab 快速添加和更新导入语句'],
 		['Clipboard Context', '剪贴板上下文'],
-		['When enabled, Windsurf will use the clipboard as context for completions', '启用后，Windsurf 将使用剪贴板内容作为补全的上下文'],
+		['When enabled, Devin will use the clipboard as context for completions', '启用后，Devin 将使用剪贴板内容作为补全的上下文'],
 		['Auto-Generate Memories', '自动生成记忆'],
 		['When enabled, Cascade will autonomously generate memories to remember important context. When disabled, Cascade will only create memories when you explicitly ask', '启用后，Cascade 将自动生成记忆以记住重要上下文。禁用后，Cascade 仅在你明确要求时创建记忆'],
 		['Allow Cascade in Background', '允许 Cascade 在后台运行'],
-		['When enabled, Windsurf will allow Cascade to run in the background. When disabled, switching conversations will stop Cascade. Terminal commands may run in the background depending on your Terminal Auto Execution setting', '启用后，Windsurf 允许 Cascade 在后台运行。禁用后，切换对话将停止 Cascade。终端命令可能根据你的终端自动执行设置在后台运行'],
+		['When enabled, Devin will allow Cascade to run in the background. When disabled, switching conversations will stop Cascade. Terminal commands may run in the background depending on your Terminal Auto Execution setting', '启用后，Devin 允许 Cascade 在后台运行。禁用后，切换对话将停止 Cascade。终端命令可能根据你的终端自动执行设置在后台运行'],
 		['Auto-Continue', '自动继续'],
 		['Controls whether Cascade automatically continues when it reaches the invocation limit. When on, Cascade continues indefinitely without prompting. When off, Cascade stops at the invocation limit and asks you to continue', '控制 Cascade 达到调用限制时是否自动继续。开启时，Cascade 无限期继续而无需提示。关闭时，Cascade 在调用限制处停止并询问你是否继续'],
 		['Disable Fast Context Agent', '禁用快速上下文智能体'],
@@ -1108,7 +1108,7 @@
 		['Allow Cascade, tab, and supercomplete to view and edit the files in .gitignore', '允许 Cascade、tab 和 supercomplete 查看和编辑 .gitignore 中的文件'],
 		['Cascade Auto-Fix Lints', 'Cascade 自动修复 Lint 错误'],
 		['When enabled, Cascade is given awareness of lint errors created by its edits and may fix them without explicit user prompting. Note that this may increase Cascade\'s tool usage', '启用后，Cascade 会感知自身编辑引发的 lint 错误，并可能自动修复。注意：这可能会增加工具调用次数'],
-		['Windsurf Preview', 'Windsurf 预览'],
+		['Devin Preview', 'Devin 预览'],
 		['When enabled, Cascade will be able to open local browser previews of sites running on development servers that Cascade has started. These browser previews provide special functionalities to integrate Cascade more tightly in the development cycle', '启用后，Cascade 可以打开其启动的开发服务器的本地浏览器预览，让 Cascade 更深度参与开发流程'],
 		['Auto Execution', '自动执行'],
 		['Disabled - All terminal commands require manual approval', '已禁用 - 所有终端命令需要手动批准'],
@@ -1117,22 +1117,22 @@
 		
 		// ========== Advanced 设置 ==========
 		['Search Max Workspace File Count', '最大工作区文件搜索数'],
-		['Windsurf will attempt to compute embeddings for workspaces up to this many files. This file count ignores .gitignore and binary files. Raising this limit from the default value may lead to performance issues. Values 0 or below will be treated as unlimited', 'Windsurf 会对不超过此文件数的工作区生成索引（不含 .gitignore 和二进制文件）。调高此值可能影响性能，设为 0 或负数表示无限制'],
+		['Devin will attempt to compute embeddings for workspaces up to this many files. This file count ignores .gitignore and binary files. Raising this limit from the default value may lead to performance issues. Values 0 or below will be treated as unlimited', 'Devin 会对不超过此文件数的工作区生成索引（不含 .gitignore 和二进制文件）。调高此值可能影响性能，设为 0 或负数表示无限制'],
 		['Open Editor Settings', '打开编辑器设置'],
 		['For general editor settings, visit the Editor Settings Page', '对于常规编辑器设置，请访问编辑器设置页面'],
 		['Customize Application Icon', '自定义应用图标'],
-		['Choose your Windsurf Application Icon among a few custom presets', '从几个自定义预设中选择你的 Windsurf 应用图标'],
+		['Choose your Devin Application Icon among a few custom presets', '从几个自定义预设中选择你的 Devin 应用图标'],
 		['Enable ACP', '启用 ACP'],
 		['Enable or disable ACP (Agent Client Protocol) entirely. When off, no agents are instantiated', '完全启用或禁用 ACP（代理客户端协议）。关闭时，不会实例化任何代理'],
 		['Marketplace Extension Gallery Service URL', 'Marketplace 扩展库服务 URL'],
-		['Change the base URL for marketplace search results. You must restart Windsurf to use the new marketplace after changing the value', '更改 marketplace 搜索结果的基础 URL。更改值后必须重启 Windsurf 才能使用新的 marketplace'],
+		['Change the base URL for marketplace search results. You must restart Devin to use the new marketplace after changing the value', '更改 marketplace 搜索结果的基础 URL。更改值后必须重启 Devin 才能使用新的 marketplace'],
 		['Marketplace Gallery Item URL', 'Marketplace 库项目 URL'],
-		['Changes the base URL on each extension page. You must restart Windsurf to use the new marketplace after changing this value', '更改每个扩展页面的基础 URL。更改值后必须重启 Windsurf 才能使用新的 marketplace'],
+		['Changes the base URL on each extension page. You must restart Devin to use the new marketplace after changing this value', '更改每个扩展页面的基础 URL。更改值后必须重启 Devin 才能使用新的 marketplace'],
 		
 		// ========== Shortcuts 设置 ==========
 		['Open Command', '打开命令'],
 		['Open Chat with Cascade', '打开 Cascade 聊天'],
-		['View All Windsurf shortcuts', '查看所有 Windsurf 快捷键'],
+		['View All Devin shortcuts', '查看所有 Devin 快捷键'],
 		['Open Command Palette', '打开命令面板'],
 		['Change keybindings', '修改快捷键'],
 		['Keyboard Shortcuts', '键盘快捷键'],
@@ -1302,8 +1302,8 @@
 		// ========== 其他界面文本 ==========
 		['Search settings...', '搜索设置...'],
 		['Search settings', '搜索设置'],
-		['Log in to Windsurf', '登录 Windsurf'],
-		['Getting started with Windsurf', '开始使用 Windsurf'],
+		['Log in to Devin', '登录 Devin'],
+		['Getting started with Devin', '开始使用 Devin'],
 		['Code with Cascade', '使用 Cascade 编码'],
 		['Edit code inline', '内联编辑代码'],
 		['Open Agent Window', '打开智能体窗口'],
@@ -1321,7 +1321,7 @@
 		['Cmd', 'Cmd'],
 		['Win', 'Win'],
 		['Detect Proxy', '自动检测代理'],
-		['Enable automatic proxy detection. Toggling this will force Windsurf to reload', '启用自动代理检测。切换此选项将强制 Windsurf 重新加载'],
+		['Enable automatic proxy detection. Toggling this will force Devin to reload', '启用自动代理检测。切换此选项将强制 Devin 重新加载'],
 
 		// ========== MCP 相关 ==========
 		['MCP Servers', 'MCP 服务器'],
@@ -1410,7 +1410,7 @@
 
 		// ========== Configuration 设置（截图3: 描述文本） ==========
 		['Configuration', '配置'],
-		['When enabled, Windsurf will allow Cascade to run in the background. When disabled, switching conversations will stop Cascade. Terminal commands may run in the background depending on your Terminal Auto Execution setting.', '启用后，Windsurf 允许 Cascade 在后台运行。禁用后，切换对话将停止 Cascade。终端命令可能根据你的终端自动执行设置在后台运行。'],
+		['When enabled, Devin will allow Cascade to run in the background. When disabled, switching conversations will stop Cascade. Terminal commands may run in the background depending on your Terminal Auto Execution setting.', '启用后，Devin 允许 Cascade 在后台运行。禁用后，切换对话将停止 Cascade。终端命令可能根据你的终端自动执行设置在后台运行。'],
 		['When enabled, Arena mode sessions will automatically open in the editor tab for a side-by-side view.', '启用后，Arena 模式会话将自动在编辑器标签页中打开以进行并排视图。'],
 		['Show Allowlist', '显示允许列表'],
 		['Disabled - All terminal commands require manual approval.', '已禁用 - 所有终端命令需要手动批准。'],
@@ -1455,14 +1455,14 @@
 		['Open config.json in editor', '在编辑器中打开 config.json'],
 
 		// ========== 截图6: 高级页 ==========
-		['Enable automatic proxy detection. Toggling this will force Windsurf to reload.', '启用自动代理检测。切换此选项将强制 Windsurf 重新加载。'],
-		['Windsurf will attempt to compute embeddings for workspaces up to this many files. This file count ignores .gitignore and binary files. Raising this limit from the default value may lead to performance issues. Values 0 or below will be treated as unlimited.', 'Windsurf 会对不超过此文件数的工作区生成索引（不含 .gitignore 和二进制文件）。调高此值可能影响性能，设为 0 或负数表示无限制。'],
+		['Enable automatic proxy detection. Toggling this will force Devin to reload.', '启用自动代理检测。切换此选项将强制 Devin 重新加载。'],
+		['Devin will attempt to compute embeddings for workspaces up to this many files. This file count ignores .gitignore and binary files. Raising this limit from the default value may lead to performance issues. Values 0 or below will be treated as unlimited.', 'Devin 会对不超过此文件数的工作区生成索引（不含 .gitignore 和二进制文件）。调高此值可能影响性能，设为 0 或负数表示无限制。'],
 		['Enable or disable ACP (Agent Client Protocol) entirely. When off, no agents are instantiated.', '完全启用或禁用 ACP（代理客户端协议）。关闭时，不会实例化任何代理。'],
 
 		// ========== 截图2: 设置页描述文本 ==========
-		['Change the base URL for marketplace search results. You must restart Windsurf to use the new marketplace after changing the value.', '更改 Marketplace 搜索结果的基础 URL。更改值后必须重启 Windsurf 才能使用新的 Marketplace。'],
+		['Change the base URL for marketplace search results. You must restart Devin to use the new marketplace after changing the value.', '更改 Marketplace 搜索结果的基础 URL。更改值后必须重启 Devin 才能使用新的 Marketplace。'],
 		['Available marketplace options.', '可用的 Marketplace 选项。'],
-		['Changes the base URL on each extension page. You must restart Windsurf to use the new marketplace after changing this value.', '更改每个扩展页面的基础 URL。更改值后必须重启 Windsurf 才能使用新的 Marketplace。'],
+		['Changes the base URL on each extension page. You must restart Devin to use the new marketplace after changing this value.', '更改每个扩展页面的基础 URL。更改值后必须重启 Devin 才能使用新的 Marketplace。'],
 		['Available options.', '可用选项。'],
 		['Browse and install MCP servers from the Cascade MCP store. Manage installed MCPs including enabling or disabling them at both server and individual tool level.', '从 Cascade MCP 商店浏览并安装 MCP 服务器。管理已安装的 MCP，包括在服务器和单个工具级别启用或禁用它们。'],
 
@@ -1639,7 +1639,7 @@
 		['These settings only apply to Devin for Terminal and are saved to', '这些设置仅适用于 Devin 终端，并保存到'],
 
 		// ========== Windsurf Tab 描述带句号版（截图3） ==========
-		['When enabled, Windsurf will use the clipboard as context for completions.', '启用后，Windsurf 将使用剪贴板内容作为补全的上下文。'],
+		['When enabled, Devin will use the clipboard as context for completions.', '启用后，Devin 将使用剪贴板内容作为补全的上下文。'],
 		['Quickly add and update imports with a tab keypress.', '按 Tab 快速添加和更新导入语句。'],
 		['Predict the location of your next edit and navigates you there with a tab keypress.', '预测下一个编辑位置，按 Tab 跳转到该位置。'],
 		['Controls how proactively Supercomplete suggests edits near your cursor.', '控制 Supercomplete 在光标附近主动建议编辑的频率。'],
@@ -1659,7 +1659,7 @@
 		// ========== 底部栏 ==========
 		['Reject all', '全部拒绝'],
 		['Accept all', '全部接受'],
-		['Windsurf - Settings', 'Windsurf - 设置'],
+		['Devin - Settings', 'Devin - 设置'],
 
 		// ========== Cascade 状态文本 ==========
 		['Surfing..', '驰骋中..'],
@@ -1805,10 +1805,10 @@
 		['from recent activity', '根据最近活动'],
 
 		// ========== 设置菜单 ==========
-		['Windsurf Settings', 'Windsurf 设置'],
-		['Windsurf Usage', 'Windsurf 用量'],
+		['Devin Settings', 'Devin 设置'],
+		['Devin Usage', 'Devin 用量'],
 		['Quick Settings Panel', '快捷设置面板'],
-		['Windsurf Account', 'Windsurf 账户'],
+		['Devin Account', 'Devin 账户'],
 		// 'Docs' 不做静态翻译，避免误翻文件夹名（Docs 是常见目录名）
 		['Join the Community', '加入社区'],
 		['Changelog', '更新日志'],
@@ -1958,7 +1958,7 @@
 		[/^Your included daily usage quota is exhausted\.\s*(.+?)\s+to continue using premium models\.\s*(.+)$/i, '您的每日配额已用完。$1以继续使用高级模型。$2'],
 		[/^Enter a starting point for a new codemap\s*\((.+)\)$/i, '输入新代码地图的起点 ($1)'],
 		[/^Enter a starting point for a new codemap$/i, '输入新代码地图的起点'],
-		[/^Windsurf Account\s*\((.+)\)$/i, 'Windsurf 账户 ($1)'],
+		[/^Devin Account\s*\((.+)\)$/i, 'Devin 账户 ($1)'],
 		[/^(\d+)\s+edits?$/i, '$1 处编辑'],
 		[/^Accept File\s+(.+)$/i, '接受文件 $1'],
 		[/^Reject File\s+(.+)$/i, '拒绝文件 $1'],
@@ -2726,8 +2726,8 @@
 		{ pattern: /tool call limit reached/i,                                 category: 'continuationErrors', triggerAction: 'send-continue' },
 
 		// ── 需要用户介入 ──
-		{ pattern: /Windsurf version is out of date/i,                         category: 'userIntervention', hint: '请更新 Windsurf 版本' },
-		{ pattern: /Failed to log in:\s*\[deadline_exceeded\]/i,               category: 'userIntervention', hint: '登录态失效，请重新登录或重启 Windsurf' },
+		{ pattern: /Devin version is out of date/i,                         category: 'userIntervention', hint: '请更新 Devin 版本' },
+		{ pattern: /Failed to log in:\s*\[deadline_exceeded\]/i,               category: 'userIntervention', hint: '登录态失效，请重新登录或重启 Devin' },
 		{ pattern: /Authentication (?:failed|expired)/i,                       category: 'userIntervention', hint: '认证失败，请重新登录' },
 		{ pattern: /unauthorized/i,                                            category: 'userIntervention', hint: '未授权，请重新登录' },
 		{ pattern: /context length exceeded/i,                                 category: 'userIntervention', hint: '上下文超长，请压缩对话或新开会话' },
@@ -4419,7 +4419,7 @@
 		const titleMap = {
 			networkErrors: '网络/超时错误',
 			modelErrors: '模型提供商不可达',
-			quotaErrors: 'Windsurf 官方配额耗尽/限流',
+			quotaErrors: 'Devin 官方配额耗尽/限流',
 			continuationErrors: '工具调用上限',
 			permissionRequests: '权限请求',
 			custom: '自定义规则触发',
@@ -4913,7 +4913,7 @@
 		// sessionStorage 标记：本会话只弹一次
 		try { if (sessionStorage.getItem('ws-bridge-warn-shown') === '1') return; } catch {}
 		_bridgeWarnTs = now;
-		console.warn(LOG_PREFIX + '[Recovery] ⚠ bridge 未就绪，请打开 Windsurf 号池侧栏激活');
+		console.warn(LOG_PREFIX + '[Recovery] ⚠ bridge 未就绪，请打开 Devin 号池侧栏激活');
 		showBridgeNotReadyToast();
 	}
 
@@ -5407,7 +5407,7 @@
 				// 检测 Windsurf 的完成通知（标题含 "Cascade" 或 "完成"）
 				const titleLower = (title || '').toLowerCase();
 				if (titleLower.includes('cascade') || titleLower.includes('完成') || titleLower.includes('complete')) {
-					console.log(LOG_PREFIX + '[Notify] 🎯 拦截到 Windsurf 原生完成通知: ' + title);
+					console.log(LOG_PREFIX + '[Notify] 🎯 拦截到 Devin 原生完成通知: ' + title);
 					triggerNotifySound();
 				}
 				return new OrigNotification(title, options);
@@ -5875,7 +5875,7 @@
 
 	// ========== 初始化 ==========
 	function init() {
-		console.log('🚀 Windsurf Better v' + VERSION + ' 初始化');
+		console.log('🚀 Devin Better v' + VERSION + ' 初始化');
 		// Settings UI moved to sidebar panel; only inject styles for bubbles
 		injectBubblesStyles();
 		dismissCorruptWarning();
