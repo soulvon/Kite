@@ -4,6 +4,7 @@
  */
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 
 // 缓存检测结果（process.execPath 不会变，无需重复计算）
 let _cachedFlavor: 'devin' | 'windsurf' | null = null;
@@ -39,17 +40,29 @@ export function getIdeDisplayName(flavor?: 'devin' | 'windsurf'): string {
 }
 
 /**
- * 获取 IDE 可执行文件名（Windows）
+ * 获取 IDE 可执行文件名（跨平台）
+ * Windows: Devin.exe / Windsurf.exe
+ * macOS:   Electron (inside .app bundle)
+ * Linux:   devin / windsurf
  */
 export function getIdeExeName(flavor?: 'devin' | 'windsurf'): string {
-  return (flavor || detectIdeFlavor()) === 'devin' ? 'Devin.exe' : 'Windsurf.exe';
+  const f = flavor || detectIdeFlavor();
+  const isDevin = f === 'devin';
+  if (process.platform === 'win32') return isDevin ? 'Devin.exe' : 'Windsurf.exe';
+  if (process.platform === 'darwin') return 'Electron'; // macOS: all Electron-based IDEs
+  return isDevin ? 'devin' : 'windsurf';
 }
 
 /**
- * 获取 IDE 进程名列表（用于进程搜索，大小写不敏感匹配）
+ * 获取 IDE 进程名列表（跨平台，用于进程搜索）
+ * Windows: Devin.exe / Windsurf.exe
+ * macOS:   Electron (inside .app bundle, matched by path)
+ * Linux:   devin / windsurf
  */
 export function getIdeProcessNames(): string[] {
-  return ['Devin.exe', 'Windsurf.exe'];
+  if (process.platform === 'win32') return ['Devin.exe', 'Windsurf.exe'];
+  if (process.platform === 'darwin') return ['Electron']; // macOS: distinguish by path, not process name
+  return ['devin', 'windsurf'];
 }
 
 export interface UserDataDirCandidate {
@@ -58,16 +71,33 @@ export interface UserDataDirCandidate {
 }
 
 /**
- * 获取 userDataDir 候选路径列表
+ * 获取跨平台应用数据基目录
+ * Windows: %APPDATA%
+ * macOS:   ~/Library/Application Support
+ * Linux:   $XDG_CONFIG_HOME or ~/.config
+ */
+function getAppDataBaseDir(): string {
+  if (process.platform === 'win32') {
+    return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+  }
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support');
+  }
+  // Linux
+  return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+}
+
+/**
+ * 获取 userDataDir 候选路径列表（跨平台）
  * 当前 IDE 类型优先排在前面
  */
 export function getUserDataDirCandidates(): UserDataDirCandidate[] {
-  const appData = process.env.APPDATA || '';
+  const baseDir = getAppDataBaseDir();
   const current = detectIdeFlavor();
   const all: UserDataDirCandidate[] = [
-    { path: `${appData}\\Devin`, flavor: 'devin' as const },
-    { path: `${appData}\\Windsurf`, flavor: 'windsurf' as const },
-    { path: `${appData}\\Windsurf - Next`, flavor: 'windsurf' as const },
+    { path: path.join(baseDir, 'Devin'), flavor: 'devin' as const },
+    { path: path.join(baseDir, 'Windsurf'), flavor: 'windsurf' as const },
+    { path: path.join(baseDir, 'Windsurf - Next'), flavor: 'windsurf' as const },
   ];
   // 当前 IDE 类型优先
   all.sort((a, b) => {
@@ -79,20 +109,20 @@ export function getUserDataDirCandidates(): UserDataDirCandidate[] {
 }
 
 /**
- * 获取 state.vscdb 路径
+ * 获取 state.vscdb 路径（跨平台）
  * 优先当前 IDE 类型对应的路径；如不存在则回退到另一个
  */
 export function getStateDbPath(): string {
-  const appData = process.env.APPDATA || '';
+  const baseDir = getAppDataBaseDir();
   const current = detectIdeFlavor();
   const candidates = current === 'devin'
     ? [
-        `${appData}\\Devin\\User\\globalStorage\\state.vscdb`,
-        `${appData}\\Windsurf\\User\\globalStorage\\state.vscdb`,
+        path.join(baseDir, 'Devin', 'User', 'globalStorage', 'state.vscdb'),
+        path.join(baseDir, 'Windsurf', 'User', 'globalStorage', 'state.vscdb'),
       ]
     : [
-        `${appData}\\Windsurf\\User\\globalStorage\\state.vscdb`,
-        `${appData}\\Devin\\User\\globalStorage\\state.vscdb`,
+        path.join(baseDir, 'Windsurf', 'User', 'globalStorage', 'state.vscdb'),
+        path.join(baseDir, 'Devin', 'User', 'globalStorage', 'state.vscdb'),
       ];
   for (const c of candidates) {
     if (fs.existsSync(c)) {
@@ -129,7 +159,11 @@ export function getExtensionsDirBase(homeDir: string): string {
 export function getIdeVersion(): string {
   try {
     const execDir = path.dirname(process.execPath);
-    const pkgPath = path.join(execDir, 'resources', 'app', 'package.json');
+    // macOS: Electron binary is in .app/Contents/MacOS/, package.json is in .app/Contents/Resources/app/
+    const macPkgPath = path.join(execDir, '..', 'Resources', 'app', 'package.json');
+    const pkgPath = process.platform === 'darwin' && fs.existsSync(macPkgPath)
+      ? macPkgPath
+      : path.join(execDir, 'resources', 'app', 'package.json');
     if (fs.existsSync(pkgPath)) {
       return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || '2.2.17';
     }
