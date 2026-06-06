@@ -2,7 +2,7 @@
   "name": "windsurf-pool",
   "displayName": "IDE 号池管理（Windsurf/Devin）",
   "description": "无感换号：一键切换多账号，多实例分身，自动注入会话，实时显示每日/每周配额，免退出、免重启。兼容 Windsurf 与 Devin。",
-  "version": "7.10.3",
+  "version": "8.0.0",
   "publisher": "local",
   "repository": {
     "type": "git",

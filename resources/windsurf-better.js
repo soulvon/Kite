@@ -1302,6 +1302,8 @@
 		// ========== 其他界面文本 ==========
 		['Search settings...', '搜索设置...'],
 		['Search settings', '搜索设置'],
+		['General editor preferences open in a separate page', '常规编辑器偏好设置在单独的页面中打开'],
+		['My Team', '我的团队'],
 		['Log in to Windsurf', '登录 Windsurf'],
 		['Getting started with Windsurf', '开始使用 Windsurf'],
 		['Code with Cascade', '使用 Cascade 编码'],
@@ -1312,6 +1314,11 @@
 		['Analyzed content', '已分析内容'],
 		// 'tasks done' 由正则 "N tasks done" 处理；单独出现见下方 1235 行
 		// 'chunks' 不做静态翻译，避免误翻文件夹名
+		['Predicts your next edit location and jumps there when you press tab', '预测您的下一个编辑位置，并在您按下 Tab 时跳转到该位置'],
+		['Automatically detect a network proxy. Changing this reloads Windsurf', '自动检测网络代理。修改此项将重新加载并重启 Windsurf'],
+		['No agents available', '暂无可用智能体'],
+		['Currently: Cascade — cannot switch agents during an active session', '当前：Cascade — 活跃会话期间无法切换智能体'],
+		['When enabled, messages will automatically include your recent coding history for better context awareness.', '启用后，消息将自动包含您最近的编码历史记录，以获取更好的上下文感知。'],
 		['Failed to fetch document content at', '无法获取文档内容：'],
 		['Markdown', 'Markdown'],
 		['UTF-8', 'UTF-8'],
@@ -1461,9 +1468,13 @@
 
 		// ========== 截图2: 设置页描述文本 ==========
 		['Change the base URL for marketplace search results. You must restart Windsurf to use the new marketplace after changing the value.', '更改 Marketplace 搜索结果的基础 URL。更改值后必须重启 Windsurf 才能使用新的 Marketplace。'],
+		['Base URL for marketplace search results. Restart Windsurf to use the new marketplace', 'Marketplace 搜索结果的基础 URL。重启 Windsurf 以使用新的 Marketplace'],
 		['Available marketplace options.', '可用的 Marketplace 选项。'],
+		['Available marketplace options', '可用的 Marketplace 选项'],
 		['Changes the base URL on each extension page. You must restart Windsurf to use the new marketplace after changing this value.', '更改每个扩展页面的基础 URL。更改值后必须重启 Windsurf 才能使用新的 Marketplace。'],
+		['Base URL on each extension page. Restart Windsurf to use the new marketplace', '每个扩展页面的基础 URL。重启 Windsurf 以使用新的 Marketplace'],
 		['Available options.', '可用选项。'],
+		['Available options', '可用选项'],
 		['Browse and install MCP servers from the Cascade MCP store. Manage installed MCPs including enabling or disabling them at both server and individual tool level.', '从 Cascade MCP 商店浏览并安装 MCP 服务器。管理已安装的 MCP，包括在服务器和单个工具级别启用或禁用它们。'],
 
 		// ========== 截图3: 面板设置 ==========
@@ -1910,6 +1921,8 @@
 		[/^Quota resets daily\/weekly\.\s*Plan ends in (\d+) days$/i, '配额每日/每周重置。套餐剩余 $1 天'],
 		[/^Quota resets daily\/weekly$/i, '配额每日/每周重置'],
 		[/^Plan ends in (\d+) days\s*\((.+)\)$/i, '套餐剩余 $1 天 ($2)'],
+		[/\bPlan ends in (\d+) days\b/i, '套餐剩余 $1 天'],
+		[/\b(\d+)% used\b/i, '$1% 已使用'],
 		[/^These settings only apply to Devin for Terminal and are saved to\s*(.+)$/i, '这些设置仅适用于 Devin 终端，并保存到 $1'],
 		[/^These settings only apply to Devin CLI and are saved to\s*(.+)$/i, '这些设置仅适用于 Devin CLI，并保存至 $1'],
 		[/^Plan ends in (\d+) days$/i, '计划在 $1 天内结束'],
