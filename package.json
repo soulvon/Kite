@@ -1,8 +1,8 @@
 {
   "name": "windsurf-pool",
-  "displayName": "Kite",
-  "description": "Kite 是面向 Windsurf / Devin 的 AI IDE 增强套件：界面增强、多实例分身、BYOK 自带 Key、多账号号池、自动恢复与长任务自动化。",
-  "version": "8.4.34",
+  "displayName": "IDE 增强助手",
+  "description": "IDE 增强助手是面向 Windsurf / Devin 的 AI IDE 增强套件：界面增强、多实例分身、BYOK（开发中）自带 Key、多账号号池、自动恢复与长任务自动化。",
+  "version": "8.5.0",
   "publisher": "local",
   "repository": {
     "type": "git",
@@ -25,7 +25,7 @@
       "activitybar": [
         {
           "id": "windsurfPool",
-          "title": "Kite",
+          "title": "IDE 增强助手",
           "icon": "resources/icon.svg"
         }
       ]
@@ -44,129 +44,129 @@
       {
         "command": "windsurfPool.openSidebar",
         "title": "打开换号侧栏",
-        "category": "Kite",
+        "category": "IDE 增强助手",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "windsurfPool.applyPatch",
         "title": "应用 IDE 注入补丁",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.showLog",
         "title": "显示日志面板",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.openLogFile",
         "title": "打开日志文件",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.addAccount",
         "title": "添加账号",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.switchAccount",
         "title": "切换账号（弹窗列表）",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.switchNextAccount",
         "title": "切换下一个账号",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.removeAccount",
         "title": "删除账号",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.showStatus",
         "title": "账号状态",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.checkForUpdates",
         "title": "检查更新",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.restoreWorkbench",
         "title": "恢复原始 Workbench",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.reinjectEnhancement",
         "title": "重新注入 IDE 增强",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.injectBubbleRules",
         "title": "注入智能建议规则",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.removeBubbleRules",
         "title": "移除智能建议规则",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.injectScriptDisciplineRules",
         "title": "注入脚本纪律规则",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.removeScriptDisciplineRules",
         "title": "移除脚本纪律规则",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.fixChecksums",
         "title": "修复 product.json 校验值（消除\"已损坏\"提示）",
-        "category": "Kite"
+        "category": "IDE 增强助手"
       },
       {
         "command": "windsurfPool.openLogPanel",
         "title": "打开统计面板",
-        "category": "Kite",
+        "category": "IDE 增强助手",
         "icon": "$(graph)"
       },
       {
         "command": "windsurfPool.openHealthCheck",
         "title": "打开测活面板",
-        "category": "Kite",
+        "category": "IDE 增强助手",
         "icon": "$(pulse)"
       },
       {
         "command": "windsurfPool.recoverCascadeInput",
         "title": "恢复 Cascade 输入",
-        "category": "Kite",
+        "category": "IDE 增强助手",
         "icon": "$(debug-restart)"
       },
       {
         "command": "windsurfPool.byokStart",
-        "title": "启动 BYOK Sidecar",
-        "category": "Kite",
+        "title": "启动 BYOK Sidecar（开发中）",
+        "category": "IDE 增强助手",
         "icon": "$(play)"
       },
       {
         "command": "windsurfPool.byokStop",
         "title": "停止 BYOK Sidecar",
-        "category": "Kite",
+        "category": "IDE 增强助手",
         "icon": "$(debug-stop)"
       },
       {
         "command": "windsurfPool.byokApplyPatch",
-        "title": "应用 BYOK Patch",
-        "category": "Kite",
+        "title": "应用 BYOK Patch（开发中）",
+        "category": "IDE 增强助手",
         "icon": "$(plug)"
       },
       {
         "command": "windsurfPool.byokRestorePatch",
         "title": "恢复 BYOK Patch",
-        "category": "Kite",
+        "category": "IDE 增强助手",
         "icon": "$(debug-reverse-continue)"
       }
     ],
@@ -185,7 +185,7 @@
       }
     ],
     "configuration": {
-      "title": "Kite 设置",
+      "title": "IDE 增强助手设置",
       "properties": {
         "windsurfPool.refreshOnSwitch": {
           "type": "boolean",

@@ -25,6 +25,7 @@ import { warmupSoundPlayer } from './soundPlayer';
 import { reloadWindsurfAcpConnections, scheduleAcpAgentRepair, scheduleAcpConnectionRecovery } from './acpRecovery';
 import { getIdeDisplayName, getIdeExeName } from './ideDetector';
 import { ByokProxyManager } from './byokProxyManager';
+import { BYOK_DEVELOPMENT_NOTICE, BYOK_FEATURE_IN_DEVELOPMENT } from './byokFeatureGate';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
@@ -155,6 +156,10 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(recoverCascadeInputCmd);
 
   const byokStartCmd = vscode.commands.registerCommand('windsurfPool.byokStart', async () => {
+    if (BYOK_FEATURE_IN_DEVELOPMENT) {
+      vscode.window.showInformationMessage(BYOK_DEVELOPMENT_NOTICE);
+      return;
+    }
     await byokProxyManager.start();
     vscode.window.showInformationMessage('BYOK sidecar 已启动');
   });
@@ -167,6 +172,10 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(byokStopCmd);
 
   const byokApplyPatchCmd = vscode.commands.registerCommand('windsurfPool.byokApplyPatch', async () => {
+    if (BYOK_FEATURE_IN_DEVELOPMENT) {
+      vscode.window.showInformationMessage(BYOK_DEVELOPMENT_NOTICE);
+      return;
+    }
     await byokProxyManager.applyPatch();
     vscode.window.showInformationMessage('BYOK patch 已应用，重启窗口后生效。', '立即重启').then(action => {
       if (action === '立即重启') vscode.commands.executeCommand('workbench.action.reloadWindow');

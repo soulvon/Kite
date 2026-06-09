@@ -2,11 +2,11 @@
 
 # Kite — AI IDE 增强套件
 
-**面向 Windsurf / Devin 的界面增强、多实例、BYOK 与多账号号池工具**
+**面向 Windsurf / Devin 的界面增强、多实例、BYOK（开发中）与多账号号池工具**
 
-界面增强 · BYOK 自带 Key · 多实例分身 · 多账号号池 · 自动恢复 · 长任务自动化
+界面增强 · BYOK（开发中）自带 Key · 多实例分身 · 多账号号池 · 自动恢复 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-8.4.31-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-8.5.0-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -130,6 +130,9 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
+
+### v8.5.0
+- **BYOK 改为开发中状态**：侧栏与命令面板标记 BYOK 开发中；暂停新增配置、启动 Sidecar 和应用 Patch，保留停止 Sidecar / 恢复 Patch 以便清理旧状态。
 
 ### v8.4.31
 - **自动化页交互与视觉修复**：修复左侧「长任务」入口与内部分段状态不同步的问题，优化自动化总开关对齐，并统一左侧子导航、分段控件和轻拟物小卡片的视觉风格。

@@ -4512,6 +4512,20 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
     background: rgba(139, 139, 139, 0.15);
     color: var(--muted);
 }
+.byok-overview-status.is-dev {
+    background: rgba(245, 158, 11, 0.16);
+    color: var(--ac-amber);
+}
+.byok-dev-note {
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border: 1px solid rgba(245, 158, 11, 0.24);
+    border-radius: var(--radius-md);
+    background: rgba(245, 158, 11, 0.08);
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.45;
+}
 .byok-metrics {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -6507,5 +6521,1033 @@ body.vscode-light .search-bar {
         animation-iteration-count: 1 !important;
         scroll-behavior: auto !important;
         transition-duration: 0.001ms !important;
+    }
+}
+
+/* UI polish: horizontal sub tabs, no left highlight bars */
+:root {
+    --ui-tab-accent: var(--ac-emerald);
+    --ui-tab-accent-2: #14b8a6;
+    --ui-tab-icon: var(--ac-emerald);
+    --ui-status-dot-idle: color-mix(in srgb, var(--vscode-foreground) 46%, transparent);
+}
+
+/* Keep inner section icons in the same green-cyan family as the top tabs. */
+.list-icon,
+.inst-icon,
+.as-top-icon,
+.enhance-icon,
+.byok-icon,
+.summary-stat-icon,
+.usage-stats-summary svg,
+.health-panel-summary svg,
+.byok-overview > svg,
+.byok-subtab svg,
+.split-content-header svg {
+    color: var(--ui-tab-icon) !important;
+}
+
+.app-tab.active {
+    background: linear-gradient(135deg, var(--ui-tab-accent), var(--ui-tab-accent-2) 62%, #22d3ee) !important;
+    border-color: color-mix(in srgb, var(--ui-tab-accent) 56%, transparent) !important;
+}
+
+/* Enhance and automation panes use a top tab strip instead of left-nav/details split. */
+#tab-enhance .split-card,
+#tab-automation .split-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+}
+
+#tab-enhance .split-sidebar,
+#tab-automation .split-sidebar {
+    width: 100% !important;
+    max-width: 100%;
+    min-width: 0;
+    margin: 0 0 2px !important;
+    padding: 0 !important;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+}
+
+#tab-enhance .split-sidebar::-webkit-scrollbar,
+#tab-automation .split-sidebar::-webkit-scrollbar {
+    display: none;
+}
+
+#tab-enhance .split-sidebar-item,
+#tab-automation .split-sidebar-item {
+    width: auto !important;
+    flex: 0 0 auto;
+    min-height: 31px;
+    padding: 6px 11px !important;
+    gap: 5px;
+    border: 1px solid var(--ui-border) !important;
+    border-left: 1px solid var(--ui-border) !important;
+    border-radius: 8px !important;
+    background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent) !important;
+    color: var(--muted);
+    box-shadow: var(--ui-shadow-soft);
+}
+
+#tab-enhance .split-sidebar-item::before,
+#tab-automation .split-sidebar-item::before {
+    display: none !important;
+}
+
+#tab-enhance .split-sidebar-item:hover,
+#tab-automation .split-sidebar-item:hover {
+    color: var(--vscode-foreground);
+    background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent) !important;
+    border-color: var(--ui-border-strong) !important;
+}
+
+#tab-enhance .split-sidebar-item.active,
+#tab-automation .split-sidebar-item.active {
+    color: #fff !important;
+    border-color: color-mix(in srgb, var(--ui-tab-accent) 58%, transparent) !important;
+    background: linear-gradient(135deg, var(--ui-tab-accent), var(--ui-tab-accent-2)) !important;
+    box-shadow: var(--ui-shadow-active);
+}
+
+#tab-enhance .split-sidebar-item svg,
+#tab-automation .split-sidebar-item svg {
+    color: currentColor !important;
+    opacity: 0.86;
+}
+
+#tab-enhance .split-sidebar-item.active svg,
+#tab-automation .split-sidebar-item.active svg {
+    color: currentColor !important;
+    opacity: 1;
+}
+
+#tab-enhance .split-content,
+#tab-automation .split-content {
+    width: 100%;
+}
+
+/* Left color bars are replaced by compact status dots. */
+.v2-strip {
+    padding: 8px 12px !important;
+    gap: 9px;
+}
+
+.v2-strip-band {
+    width: 7px !important;
+    height: 7px !important;
+    min-width: 7px;
+    border-radius: 999px !important;
+    opacity: 0.9;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 13%, transparent);
+    transition: opacity 0.15s, transform 0.15s;
+}
+
+.v2-strip:hover .v2-strip-band {
+    width: 7px !important;
+    transform: scale(1.08);
+}
+
+.v2-strip-band.c-emerald,
+.v2-strip-band.c-green { background: var(--ac-emerald); color: var(--ac-emerald); }
+.v2-strip-band.c-blue,
+.v2-strip-band.c-cyan { background: var(--ui-tab-accent-2); color: var(--ui-tab-accent-2); }
+.v2-strip-band.c-violet,
+.v2-strip-band.c-purple { background: #8b5cf6; color: #8b5cf6; }
+.v2-strip-band.c-amber { background: var(--ac-amber); color: var(--ac-amber); }
+.v2-strip-band.c-orange { background: var(--ac-orange); color: var(--ac-orange); }
+.v2-strip-band.c-red { background: var(--ac-red); color: var(--ac-red); }
+
+/* Inline hint accents should not reintroduce left bars. */
+#acPanelSimple > div[style*="border-left"] {
+    border-left: 0 !important;
+    padding-left: 10px !important;
+}
+
+/* Instance state uses a dot instead of a vertical rail. */
+.inst-card {
+    padding-left: 24px !important;
+}
+
+.inst-card::before {
+    left: 10px !important;
+    top: 18px !important;
+    bottom: auto !important;
+    width: 7px !important;
+    height: 7px !important;
+    border-radius: 999px !important;
+    background: var(--ui-status-dot-idle) !important;
+    opacity: 0.62;
+    box-shadow: none !important;
+}
+
+.inst-card.running::before,
+.inst-card.current::before {
+    background: var(--ui-tab-accent) !important;
+    opacity: 1;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-tab-accent) 18%, transparent) !important;
+}
+
+.inst-card:hover::before {
+    width: 7px !important;
+    opacity: 1;
+}
+
+/* BYOK model rows also avoid vertical brand rails. */
+.ms-current,
+.model-priority-item {
+    padding-left: 26px;
+}
+
+.ms-current::before,
+.model-priority-item::before {
+    left: 10px !important;
+    top: 16px !important;
+    bottom: auto !important;
+    width: 7px !important;
+    height: 7px !important;
+    border-radius: 999px !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ms-brand, var(--ui-tab-accent)) 14%, transparent);
+}
+
+/* Reduce nested frames: sections keep one shell, inner rows become lists/forms. */
+:root {
+    --ui-row-divider: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+    --ui-field-bg: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+    --ui-field-bg-hover: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+    --ui-field-border: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+    --ui-section-bg: color-mix(in srgb, var(--vscode-foreground) 2.8%, transparent);
+}
+
+#tab-enhance .split-content > .enhance-card,
+#tab-automation .split-content > .auto-switch-card {
+    border: 1px solid var(--ui-border) !important;
+    border-radius: 10px !important;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, #fff 4%, transparent), transparent),
+        var(--ui-section-bg) !important;
+    box-shadow: var(--ui-shadow-soft) !important;
+    overflow: hidden;
+}
+
+#tab-enhance .enhance-body,
+#tab-automation .as-body,
+#tab-automation .ac-body {
+    padding: 12px !important;
+}
+
+#tab-enhance .enhance-body > div[style*="display:flex"],
+#tab-enhance .enhance-body > div:not([style]),
+#tab-automation .as-body > div:not(.v2-hint):not([style*="background"]),
+#tab-automation .ac-section-panel {
+    min-width: 0;
+}
+
+.v2-status-row,
+.v2-opt-row,
+.v2-param-cell,
+.v2-strip,
+.byok-metric,
+.byok-status-cell {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+}
+
+.v2-status-row,
+.v2-strip {
+    padding: 8px 0 !important;
+}
+
+.v2-status-row + .v2-status-row,
+.v2-strip + .v2-strip {
+    border-top: 1px solid var(--ui-row-divider) !important;
+}
+
+.v2-strip:hover {
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+}
+
+.v2-strip-name {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.v2-strip-desc {
+    font-size: 10.5px;
+    opacity: 0.86;
+}
+
+.v2-opt-row {
+    min-height: 34px;
+    margin: 0 !important;
+    padding: 7px 0 !important;
+}
+
+.v2-opt-row + .v2-opt-row,
+.v2-param-grid + .v2-opt-row,
+.v2-opt-row + .v2-param-grid {
+    border-top: 1px solid var(--ui-row-divider) !important;
+}
+
+.v2-opt-label,
+.v2-param-label,
+.v2-status-label {
+    min-width: 58px;
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 500;
+}
+
+.v2-param-grid {
+    gap: 0 14px !important;
+}
+
+.v2-param-grid.cols-3 {
+    gap: 0 12px !important;
+}
+
+.v2-param-cell {
+    min-height: 34px;
+    padding: 7px 0 !important;
+}
+
+.v2-param-cell + .v2-param-cell {
+    border-top: 0 !important;
+}
+
+.v2-param-grid input[type="number"],
+.v2-param-val {
+    width: 50px !important;
+    min-height: 24px !important;
+    padding: 2px 6px !important;
+    border: 1px solid var(--ui-field-border) !important;
+    border-radius: 6px !important;
+    background: var(--ui-field-bg) !important;
+    text-align: center !important;
+    box-shadow: none !important;
+}
+
+.v2-sel,
+.group-select,
+.as-select,
+.page-size-select,
+.enhance-select,
+.byok-input,
+.v2-input-field,
+.v2-queue-text,
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+    border-color: var(--ui-field-border) !important;
+    background-color: var(--ui-field-bg) !important;
+    box-shadow: none !important;
+}
+
+.v2-sel:hover,
+.group-select:hover,
+.as-select:hover,
+.page-size-select:hover,
+.enhance-select:hover,
+.byok-input:hover,
+.v2-input-field:hover,
+.v2-queue-text:hover,
+input:not([type="checkbox"]):not([type="radio"]):hover,
+textarea:hover,
+select:hover {
+    background-color: var(--ui-field-bg-hover) !important;
+}
+
+input[type="hidden"] {
+    display: none !important;
+}
+
+.v2-status-row {
+    font-size: 11.5px;
+}
+
+.enhance-value {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    font-size: 11px;
+}
+
+.enhance-value::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--ui-status-dot-idle);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-status-dot-idle) 12%, transparent);
+}
+
+.enhance-value.is-ok::before {
+    background: var(--ui-tab-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-tab-accent) 16%, transparent);
+}
+
+.enhance-value.is-err::before {
+    background: var(--ac-red);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac-red) 14%, transparent);
+}
+
+.enhance-value.is-ok {
+    color: var(--ui-tab-accent) !important;
+}
+
+.enhance-value.is-err {
+    color: var(--ac-red) !important;
+}
+
+.v2-hint {
+    padding: 7px 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+/* Account page tool area: one quiet search field, lightweight controls below. */
+.search-bar {
+    min-height: 32px;
+    padding: 6px 10px !important;
+    border: 1px solid var(--ui-field-border) !important;
+    border-radius: 8px !important;
+    background: var(--ui-field-bg) !important;
+    box-shadow: none !important;
+}
+
+.search-bar:focus-within {
+    border-color: color-mix(in srgb, var(--ui-tab-accent) 55%, transparent) !important;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-tab-accent) 12%, transparent) !important;
+}
+
+.search-input {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.toolbar-bar {
+    gap: 5px !important;
+    padding: 1px 0 2px !important;
+}
+
+.filter-trigger,
+.sort-direction-btn,
+.toolbar-icon-btn,
+.balance-filter-btn,
+.group-select-mode-btn,
+.page-size-select,
+.preflight-toggle-btn {
+    height: 26px;
+    border-color: var(--ui-field-border) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.filter-trigger:hover,
+.sort-direction-btn:hover,
+.toolbar-icon-btn:hover,
+.balance-filter-btn:hover,
+.group-select-mode-btn:hover,
+.page-size-select:hover,
+.preflight-toggle-btn:hover {
+    background: var(--ui-field-bg-hover) !important;
+}
+
+.preflight-toggle-btn {
+    margin-left: auto;
+    color: var(--muted);
+}
+
+/* BYOK status blocks read as one status area instead of three small cards. */
+.byok-metrics {
+    gap: 0 14px !important;
+    padding: 9px 12px;
+    border: 1px solid var(--ui-border);
+    border-radius: 10px;
+    background: var(--ui-section-bg);
+}
+
+.byok-metric {
+    padding: 0 !important;
+}
+
+.byok-status-cell {
+    padding: 6px 0 !important;
+}
+
+@media (max-width: 340px) {
+    .byok-metrics {
+        grid-template-columns: 1fr !important;
+        gap: 8px !important;
+    }
+
+    .byok-metric + .byok-metric {
+        padding-top: 8px !important;
+        border-top: 1px solid var(--ui-row-divider) !important;
+    }
+}
+
+body.vscode-light {
+    --ui-row-divider: rgba(15, 23, 42, 0.09);
+    --ui-field-bg: rgba(15, 23, 42, 0.035);
+    --ui-field-bg-hover: rgba(15, 23, 42, 0.055);
+    --ui-field-border: rgba(15, 23, 42, 0.13);
+    --ui-section-bg: rgba(15, 23, 42, 0.025);
+}
+
+/* Final sidebar polish: flatter hierarchy, fewer nested frames. */
+.app-tab {
+    padding-inline: 12px !important;
+}
+
+#tab-enhance .split-sidebar,
+#tab-automation .split-sidebar {
+    gap: 4px !important;
+    padding: 0 1px 3px !important;
+}
+
+#tab-enhance .split-sidebar-item,
+#tab-automation .split-sidebar-item {
+    min-height: 30px;
+    padding: 6px 10px !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+#tab-enhance .split-sidebar-item:hover,
+#tab-automation .split-sidebar-item:hover {
+    background: var(--ui-field-bg-hover) !important;
+}
+
+#tab-enhance .split-sidebar-item.active,
+#tab-automation .split-sidebar-item.active {
+    background: linear-gradient(135deg, var(--ui-tab-accent), var(--ui-tab-accent-2)) !important;
+    box-shadow: 0 5px 14px color-mix(in srgb, var(--ui-tab-accent) 18%, transparent) !important;
+}
+
+#tab-enhance .split-content,
+#tab-automation .split-content {
+    background: transparent !important;
+}
+
+#tab-enhance .split-content > .enhance-card,
+#tab-automation .split-content > .auto-switch-card,
+#tab-automation .auto-switch-card,
+#tab-automation .ac-root {
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+}
+
+#tab-enhance .enhance-summary,
+#tab-automation .as-top-summary {
+    min-height: 36px;
+    padding: 7px 3px 9px !important;
+    border-bottom: 1px solid var(--ui-row-divider) !important;
+    background: transparent !important;
+}
+
+#tab-enhance .enhance-summary:hover,
+#tab-automation .as-top-summary:hover {
+    background: transparent !important;
+}
+
+#tab-enhance .enhance-body,
+#tab-automation .as-body,
+#tab-automation .ac-body {
+    padding: 6px 3px 0 !important;
+}
+
+#tab-enhance .v2-divider,
+#tab-automation .v2-divider {
+    margin: 8px 0 !important;
+    background: var(--ui-row-divider) !important;
+}
+
+#enhanceSplitCard .enhance-body > .v2-divider {
+    display: none !important;
+}
+
+#tab-automation .ac-off-state {
+    padding: 16px 0 !important;
+}
+
+#tab-automation .ac-glass-card {
+    padding: 18px 8px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+#tab-automation .v2-engine {
+    margin-top: 8px;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+}
+
+#tab-automation .v2-engine-head {
+    padding: 10px 0 !important;
+    border-top: 1px solid var(--ui-row-divider);
+}
+
+#tab-automation .v2-engine-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--ac-amber) 12%, transparent) !important;
+}
+
+#tab-automation .v2-engine-rules {
+    gap: 0 !important;
+    padding: 0 !important;
+    border-top: 1px solid var(--ui-row-divider) !important;
+}
+
+#tab-automation .v2-engine-rules .v2-strip {
+    margin-bottom: 0 !important;
+}
+
+#tab-automation .v2-rule-details {
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+#tab-automation .v2-rule-details + .v2-rule-details {
+    border-top: 1px solid var(--ui-row-divider) !important;
+}
+
+#tab-automation .v2-rule-row {
+    padding: 8px 0 !important;
+    border-radius: 0 !important;
+}
+
+#tab-automation .v2-rule-content {
+    padding: 4px 0 10px 14px !important;
+}
+
+#tab-automation .v2-queue-item {
+    padding: 7px 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+#tab-automation .v2-queue-item + .v2-queue-item {
+    border-top: 1px solid var(--ui-row-divider) !important;
+}
+
+.v2-strip {
+    align-items: center !important;
+}
+
+.as-switch {
+    width: 34px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 !important;
+}
+
+.as-switch-track,
+.v2-mini-toggle,
+.preflight-switch {
+    position: relative;
+    display: inline-block;
+    box-sizing: border-box;
+    border-radius: 999px !important;
+    vertical-align: middle;
+}
+
+.as-switch-track {
+    width: 32px !important;
+    height: 18px !important;
+}
+
+.v2-mini-toggle {
+    width: 28px !important;
+    height: 16px !important;
+    align-self: center;
+}
+
+.preflight-switch {
+    width: 22px !important;
+    height: 12px !important;
+}
+
+.as-switch-thumb,
+.v2-mini-toggle::after,
+.preflight-switch-thumb {
+    top: 50% !important;
+    left: 2px !important;
+    transform: translateY(-50%) !important;
+}
+
+.as-switch-thumb {
+    width: 14px !important;
+    height: 14px !important;
+}
+
+.v2-mini-toggle::after {
+    width: 12px !important;
+    height: 12px !important;
+}
+
+.preflight-switch-thumb {
+    left: 1px !important;
+    width: 10px !important;
+    height: 10px !important;
+}
+
+.as-switch input:checked + .as-switch-track .as-switch-thumb {
+    transform: translate(14px, -50%) !important;
+}
+
+.v2-mini-toggle.is-on::after {
+    transform: translate(12px, -50%) !important;
+}
+
+.preflight-toggle-btn.is-active .preflight-switch-thumb {
+    transform: translate(10px, -50%) !important;
+}
+
+.search-bar {
+    background: var(--ui-field-bg) !important;
+}
+
+.search-bar .search-input {
+    min-height: 0 !important;
+    height: 20px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    outline: 0 !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+}
+
+/* Account search should feel like a compact toolbar field, not another card. */
+#tab-account .search-bar {
+    min-height: 28px !important;
+    height: 28px !important;
+    margin: 2px 0 4px !important;
+    padding: 0 8px !important;
+    gap: 6px !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--ui-row-divider) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+#tab-account .search-bar:focus-within {
+    border-bottom-color: color-mix(in srgb, var(--ui-tab-accent) 70%, transparent) !important;
+    box-shadow: none !important;
+}
+
+#tab-account .search-icon {
+    width: 13px;
+    height: 13px;
+    color: var(--muted) !important;
+    opacity: 0.72;
+}
+
+#tab-account .search-input {
+    height: 26px !important;
+    font-size: 12px !important;
+}
+
+#tab-account .search-clear {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+}
+
+/* BYOK editor side-panel adaptation.
+   The editor lives inside a narrow webview, so the shell owns scrolling while
+   the header/footer stay outside the scroll region. This prevents grid rows
+   from squeezing form sections into each other. */
+.byok-editor-overlay {
+    overflow: hidden !important;
+}
+
+.byok-editor-modal {
+    height: 100vh;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+
+@supports (height: 100dvh) {
+    .byok-editor-modal {
+        height: 100dvh;
+    }
+}
+
+.byok-editor-header,
+.byok-editor-footer {
+    position: relative !important;
+    flex: 0 0 auto;
+    z-index: 3;
+}
+
+.byok-editor-body {
+    flex: 1 1 auto;
+    min-height: 0 !important;
+    align-content: start;
+    grid-auto-rows: max-content;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    scrollbar-gutter: stable;
+}
+
+.byok-editor-panel {
+    min-height: auto !important;
+    overflow: visible;
+}
+
+.byok-catalog-panel {
+    overflow: hidden;
+}
+
+.byok-panel-head,
+.byok-panel-search,
+.byok-model-filter,
+.byok-custom-model-row,
+.byok-slot-config {
+    flex: 0 0 auto;
+}
+
+.byok-field,
+.byok-catalog-main,
+.byok-catalog-text,
+.byok-editor-heading,
+.byok-editor-status {
+    min-width: 0;
+}
+
+.byok-model-filter {
+    min-height: 44px;
+    align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+}
+
+.byok-model-filter::-webkit-scrollbar {
+    display: none;
+}
+
+.byok-model-filter button {
+    flex: 0 0 auto;
+}
+
+.byok-provider-editor .byok-selected-models {
+    min-height: 44px;
+    max-height: 120px;
+    padding-right: 2px;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.byok-provider-editor .byok-model-catalog {
+    flex: 0 0 auto;
+    min-height: 172px;
+    max-height: min(34vh, 280px);
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.byok-catalog-item,
+.byok-selected-model-row {
+    min-width: 0;
+}
+
+.byok-catalog-item .byok-inline-actions,
+.byok-selected-model-row .byok-inline-actions,
+.byok-catalog-tags {
+    flex: 0 0 auto;
+}
+
+.byok-selected-model-row .byok-inline-actions {
+    justify-content: flex-end;
+}
+
+.byok-provider-editor .byok-selected-model-row {
+    min-height: 40px;
+    padding: 6px 8px;
+}
+
+.byok-provider-editor .byok-selected-model-row .byok-catalog-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+}
+
+.byok-provider-editor .byok-selected-model-row .byok-catalog-meta {
+    display: none;
+}
+
+.byok-provider-editor .byok-selected-model-row .byok-mini-btn,
+.byok-provider-editor .byok-selected-model-row .byok-row-badge {
+    min-height: 22px;
+    padding: 2px 6px;
+}
+
+.byok-editor-footer {
+    min-height: 54px;
+}
+
+@media (min-width: 980px) {
+    .byok-editor-body {
+        grid-auto-rows: minmax(0, 1fr);
+    }
+
+    .byok-provider-editor .byok-catalog-panel,
+    .byok-slot-editor .byok-catalog-panel,
+    .byok-injected-editor .byok-catalog-panel {
+        min-height: 0 !important;
+    }
+
+    .byok-provider-editor .byok-model-catalog,
+    .byok-slot-editor .byok-slot-catalog,
+    .byok-slot-editor .byok-mapping-catalog,
+    .byok-injected-editor .byok-injected-list {
+        flex: 1 1 auto;
+        max-height: none;
+    }
+}
+
+@media (max-width: 760px) {
+    .byok-editor-header {
+        gap: 8px;
+    }
+
+    .byok-editor-brand {
+        max-width: 34%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .byok-editor-body {
+        padding: 10px 12px 12px;
+        gap: 10px;
+    }
+
+    .byok-provider-editor .byok-editor-panel {
+        padding: 12px;
+    }
+
+    .byok-provider-editor .byok-catalog-panel {
+        padding: 0;
+    }
+}
+
+@media (min-width: 641px) and (max-width: 979px) {
+    .byok-provider-editor .byok-editor-body > .byok-editor-panel:not(.byok-catalog-panel) {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: start;
+        gap: 8px 10px;
+    }
+
+    .byok-provider-editor .byok-field:has(#byokProviderKey),
+    .byok-provider-editor .byok-editor-check,
+    .byok-provider-editor .byok-selected-head,
+    .byok-provider-editor .byok-selected-models {
+        grid-column: 1 / -1;
+    }
+
+    .byok-provider-editor .byok-selected-models {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+        max-height: 104px;
+    }
+}
+
+@media (max-width: 640px) {
+    .byok-editor-header,
+    .byok-editor-footer {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .byok-editor-brand {
+        display: none;
+    }
+
+    .byok-editor-heading,
+    .byok-editor-actions,
+    .byok-editor-status {
+        width: 100%;
+    }
+
+    .byok-editor-heading {
+        justify-content: space-between;
+    }
+
+    .byok-editor-title {
+        flex: 1 1 auto;
+        text-align: right;
+    }
+
+    .byok-editor-actions .v2-btn {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    .byok-panel-head {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .byok-panel-head .v2-btn,
+    .byok-custom-model-row .v2-btn {
+        width: 100%;
+    }
+
+    .byok-custom-model-row {
+        flex-direction: column;
+    }
+
+    .byok-selected-model-row,
+    .byok-catalog-item {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .byok-selected-model-row .byok-inline-actions,
+    .byok-catalog-tags {
+        justify-content: flex-start;
     }
 }

@@ -179,7 +179,7 @@ function buildHtml(cssUri: string, jsUri: string, version: string, initialTab: s
   <header class="lp-header">
     <div class="lp-header-left">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      <span class="lp-title">WINDSURF POOL 统计面板</span>
+      <span class="lp-title">统计面板</span>
       <span class="lp-version">v${version}</span>
     </div>
     <div class="lp-header-right">

@@ -41,6 +41,19 @@
   let preflightEnabled = true; // 切号预检开关（由扩展端推送）
   let byokState = null;
   let byokSelectedProviderId = '';
+  const byokFeatureInDevelopment = !!window.__BYOK_FEATURE_IN_DEVELOPMENT__;
+  const byokDevelopmentNotice = window.__BYOK_DEVELOPMENT_NOTICE__ || 'BYOK 功能正在开发中。';
+  const byokDevelopmentBlockedMessages = new Set([
+    'byokStart',
+    'byokSaveProvider',
+    'byokDeleteProvider',
+    'byokTestProvider',
+    'byokSaveSlot',
+    'byokSaveModelMapSettings',
+    'byokSaveInjected',
+    'byokDeleteSlot',
+    'byokApplyPatch',
+  ]);
 
   // ── 标签颜色系统 ──
   const TAG_PALETTE = [
@@ -226,8 +239,6 @@
   const $ = (sel) => document.querySelector(sel);
   const accountGrid = $('#accountGrid');
   const gridCount = $('.grid-count');
-  const tabAccountCount = $('#tabAccountCount');
-  const tabInstanceCount = $('#tabInstanceCount');
   const emptyState = $('#emptyState');
   const asEnabledEl = $('#asEnabled');
   const asThresholdEl = $('#asThreshold');
@@ -238,10 +249,6 @@
   const anomalyBadgeCount = $('#anomalyBadgeCount');
 
   function updateAppTabCounts() {
-    if (tabAccountCount) tabAccountCount.textContent = accounts.length > 999 ? '999+' : String(accounts.length);
-    if (tabInstanceCount && Array.isArray(window._instances)) {
-      tabInstanceCount.textContent = window._instances.length ? String(window._instances.length) : '';
-    }
   }
 
   function switchAppTab(tab, persist = true) {
@@ -296,7 +303,7 @@
       const contents = Array.from(card.querySelectorAll('.split-content[data-pane-content]'));
       if (!items.length || !contents.length) return;
 
-      const showPane = (pane) => {
+      const showPane = (pane, scrollToTarget = false) => {
         const contentPane = pane === 'long-task' || pane === 'guardian' ? 'auto-continue' : pane;
         items.forEach(item => item.classList.toggle('active', item.dataset.pane === pane));
         const hasTargetContent = contents.some(content => content.dataset.paneContent === contentPane);
@@ -308,6 +315,16 @@
           if (active) content.removeAttribute('hidden');
           else content.setAttribute('hidden', '');
         });
+
+        if (card.id === 'enhanceSplitCard') {
+          const activePage = pane || 'core';
+          card.dataset.currentPane = activePage;
+          card.querySelectorAll('[data-enhance-page]').forEach(page => {
+            const active = page.dataset.enhancePage === activePage;
+            if (active) page.removeAttribute('hidden');
+            else page.setAttribute('hidden', '');
+          });
+        }
 
         const tabMap = {
           'auto-continue': 'acTabSimple',
@@ -322,10 +339,21 @@
             try { switchAcTab(radio.value || radioId.replace('acTab', '').toLowerCase()); } catch {}
           }
         }
+
+        if (scrollToTarget) {
+          const activeItem = items.find(item => item.dataset.pane === pane);
+          const targetId = activeItem?.dataset.scrollTarget || '';
+          const target = targetId ? document.getElementById(targetId) : null;
+          if (target) {
+            requestAnimationFrame(() => {
+              target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+            });
+          }
+        }
       };
 
-      items.forEach(item => item.addEventListener('click', () => showPane(item.dataset.pane || '')));
-      showPane(items.find(item => item.classList.contains('active'))?.dataset.pane || items[0].dataset.pane || '');
+      items.forEach(item => item.addEventListener('click', () => showPane(item.dataset.pane || '', true)));
+      showPane(items.find(item => item.classList.contains('active'))?.dataset.pane || items[0].dataset.pane || '', false);
     });
   }
 
@@ -3060,6 +3088,10 @@
 
   // ==================== 消息发送 ====================
   function postMsg(type, data = {}) {
+    if (byokFeatureInDevelopment && byokDevelopmentBlockedMessages.has(type)) {
+      showToast(byokDevelopmentNotice, 'warning', 3600, 'byok-development');
+      return;
+    }
     vscode.postMessage({ type, ...data });
   }
 
@@ -4453,6 +4485,42 @@
     }
   }
 
+  function applyByokDevelopmentUi(state) {
+    if (!byokFeatureInDevelopment) return;
+    const running = !!state?.running;
+    const patch = state?.patch || {};
+    if (byokStatusPill) {
+      byokStatusPill.textContent = '开发中';
+      byokStatusPill.className = 'byok-overview-status is-dev';
+    }
+    setByokStatusValue(byokProxyStatus, running ? '旧进程运行中' : '暂停开放', running ? 'warn' : '');
+    setByokStatusValue(byokPatchStatus, patch.exists ? '旧补丁可恢复' : '暂停开放', patch.exists ? 'warn' : '');
+    setByokStatusValue(byokPortStatus, '-', '');
+    renderByokStats(null);
+    [
+      byokStartBtn,
+      byokApplyPatchBtn,
+      byokNewProviderBtn,
+      byokOpenMapSettingsBtn,
+      byokOpenInjectedBtn,
+      byokNewSlotBtn,
+      byokFetchModelsBtn,
+      byokSaveProviderBtn,
+      byokTestProviderBtn,
+      byokDeleteProviderBtn,
+      byokSaveSlotBtn,
+      byokDeleteSlotBtn,
+      byokMapSettingsSaveBtn,
+      byokFailoverAddBtn,
+      byokFailoverSaveBtn,
+      byokInjectedSaveBtn,
+    ].forEach(btn => {
+      if (btn) btn.disabled = true;
+    });
+    if (byokStopBtn) byokStopBtn.disabled = !running;
+    if (byokRestorePatchBtn) byokRestorePatchBtn.disabled = !patch.exists;
+  }
+
   function updateByokState(state) {
     if (!state) return;
     byokState = state;
@@ -4499,6 +4567,7 @@
     if (!byokInjectedModal?.hidden) {
       renderInjectedEditor();
     }
+    applyByokDevelopmentUi(state);
   }
 
   function initByokPanel() {
@@ -4725,7 +4794,7 @@
         const blob = new Blob([(byokLocalLogs || []).join('\n')], { type: 'text/plain;charset=utf-8' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `kite-byok-logs-${new Date().toISOString().slice(0, 10)}.txt`;
+        link.download = `ide-assistant-byok-logs-${new Date().toISOString().slice(0, 10)}.txt`;
         link.click();
         setTimeout(() => URL.revokeObjectURL(link.href), 1000);
       });

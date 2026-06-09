@@ -24,6 +24,7 @@ import { stopIsolatedCascadeProbeLs } from './cascadeProbe';
 import { scheduleAcpConnectionRecovery } from './acpRecovery';
 import { loginByWindsurfOAuth } from './windsurfOAuthService';
 import { ByokProxyManager } from './byokProxyManager';
+import { BYOK_DEVELOPMENT_NOTICE, BYOK_FEATURE_IN_DEVELOPMENT, isByokDevelopmentBlockedMessage } from './byokFeatureGate';
 
 /**
  * 侧栏 Webview 提供器
@@ -603,9 +604,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this._view = webviewView;
 
-    // 动态设置标题，包含版本号（容器已提供"Windsurf 号池管理:"前缀）
     const extPkg = this._context.extension.packageJSON;
-    webviewView.title = extPkg.version || '';
+    webviewView.title = extPkg.version || '0.0.0';
 
     webviewView.webview.options = {
       enableScripts: true,
@@ -821,6 +821,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    * 处理 webview 消息
    */
   private async handleMessage(message: WebviewMessage): Promise<void> {
+    if (isByokDevelopmentBlockedMessage(message.type)) {
+      this.showAlert('BYOK 开发中', BYOK_DEVELOPMENT_NOTICE, 'info');
+      await this._pushByokState();
+      return;
+    }
+
     switch (message.type) {
       case 'byokLoad': {
         await this._pushByokState();
@@ -2170,6 +2176,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const extVersion = vscode.extensions.getExtension('local.windsurf-pool')?.packageJSON?.version || '0.0.0';
     const cssUri = `${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.css'))}?v=${extVersion}`;
     const jsUri = `${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.js'))}?v=${extVersion}`;
+    const byokBlockedAttrs = BYOK_FEATURE_IN_DEVELOPMENT ? ' disabled aria-disabled="true"' : '';
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -2182,23 +2189,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   <div class="app">
     <div class="app-tabs" id="appTabs" role="tablist">
       <button type="button" class="app-tab active" data-tab="account" role="tab" aria-selected="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        账户 <span class="tab-count" id="tabAccountCount"></span>
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"/><path d="M4 21a8 8 0 0 1 16 0 1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"/></svg>
+        账户
       </button>
       <button type="button" class="app-tab" data-tab="instance" role="tab" aria-selected="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-        实例 <span class="tab-count" id="tabInstanceCount"></span>
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M10 18h4v2h3a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2h3v-2Z"/></svg>
+        实例
       </button>
       <button type="button" class="app-tab" data-tab="automation" role="tab" aria-selected="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="2"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/><path d="M12 3v3"/><circle cx="12" cy="3" r="1"/><path d="M2 13v3"/><path d="M22 13v3"/><path d="M2 16h2"/><path d="M20 16h2"/></svg>
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 2.75a1 1 0 1 1 2 0V5h3a4 4 0 0 1 4 4v7a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V9a4 4 0 0 1 4-4h3V2.75Z"/><path d="M2 12.5a1 1 0 0 1 1 1v3a1 1 0 1 1-2 0v-3a1 1 0 0 1 1-1Zm20 0a1 1 0 0 1 1 1v3a1 1 0 1 1-2 0v-3a1 1 0 0 1 1-1Z"/><path d="M9 13.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Zm6 0a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z" fill="var(--vscode-sideBar-background, #1f1f1f)"/></svg>
         自动化
       </button>
       <button type="button" class="app-tab" data-tab="enhance" role="tab" aria-selected="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.9 2.5 3.7 13.2A1.5 1.5 0 0 0 4.8 15H11l-1 6.2a1 1 0 0 0 1.75.78L21.9 9.8A1.5 1.5 0 0 0 20.75 7H14l1.65-3.45a1 1 0 0 0-1.75-1.05Z"/></svg>
         增强
       </button>
       <button type="button" class="app-tab" data-tab="byok" role="tab" aria-selected="false">
-        <svg viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M469.333333 554.666667a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m-170.666666 0a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m640-384a128 128 0 0 0-128-128H213.333333a128 128 0 0 0-128 128v170.666666a128 128 0 0 0 33.28 85.333334A128 128 0 0 0 85.333333 512v170.666667a128 128 0 0 0 128 128h256v85.333333H128a42.666667 42.666667 0 0 0 0 85.333333h768a42.666667 42.666667 0 1 0 0-85.333333h-341.333333v-85.333333h256a128 128 0 0 0 128-128v-170.666667a128 128 0 0 0-33.28-85.333333A128 128 0 0 0 938.666667 341.333333V170.666667z m-85.333334 512a42.666667 42.666667 0 0 1-42.666666 42.666666H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666666v-170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666667z m0-341.333334a42.666667 42.666667 0 0 1-42.666666 42.666667H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666667V170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666666z m-384-128a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334zM298.666667 213.333333a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334z"></path></svg>
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v5H3V5a2 2 0 0 1 2-2Z"/><path d="M3 12h18v7a2 2 0 0 1-2 2h-5v-3h-4v3H5a2 2 0 0 1-2-2v-7Z"/><path d="M7 7h2v2H7V7Zm4 0h2v2h-2V7Zm-4 9h2v2H7v-2Zm4 0h2v2h-2v-2Z" fill="var(--vscode-sideBar-background, #1f1f1f)"/></svg>
         BYOK
       </button>
     </div>
@@ -2207,23 +2214,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <div class="split-card" id="enhanceSplitCard">
       <div class="split-sidebar">
         <button type="button" class="split-sidebar-item active" data-pane="core">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.9 2.5 3.7 13.2A1.5 1.5 0 0 0 4.8 15H11l-1 6.2a1 1 0 0 0 1.75.78L21.9 9.8A1.5 1.5 0 0 0 20.75 7H14l1.65-3.45a1 1 0 0 0-1.75-1.05Z"/></svg>
           <span>核心增强</span>
         </button>
         <button type="button" class="split-sidebar-item" data-pane="bubble">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3a9 9 0 0 0-7.33 14.22l-.58 2.66a1 1 0 0 0 1.24 1.17l2.56-.74A9 9 0 1 0 12 3Zm4.55 7.95-4.7 4.7a1 1 0 0 1-1.42 0l-2.35-2.36 1.42-1.41 1.64 1.64 3.99-3.99 1.42 1.42Z"/></svg>
           <span>回复建议</span>
         </button>
         <button type="button" class="split-sidebar-item" data-pane="statusbar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="8" width="4" height="13" rx="1"/><rect x="17" y="4" width="4" height="17" rx="1"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 12h3a1 1 0 0 1 1 1v7H3v-7a1 1 0 0 1 1-1Zm7-4h3a1 1 0 0 1 1 1v11h-5V9a1 1 0 0 1 1-1Zm7-4h3a1 1 0 0 1 1 1v15h-5V5a1 1 0 0 1 1-1Z"/></svg>
           <span>状态栏</span>
         </button>
         <button type="button" class="split-sidebar-item" data-pane="notify">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6v3.3c0 2.2-.86 3.75-1.72 4.8A1.2 1.2 0 0 0 5.2 18h13.6a1.2 1.2 0 0 0 .92-1.9C18.86 15.05 18 13.5 18 11.3V8a6 6 0 0 0-6-6Z"/><path d="M9.8 20a2.3 2.3 0 0 0 4.4 0H9.8Z"/></svg>
           <span>完成提醒</span>
         </button>
         <button type="button" class="split-sidebar-item" data-pane="i18n">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4.2 19.5h2l.55-1.75h3.8l.55 1.75h2L9.65 5h-2L4.2 19.5Zm3.05-3.45 1.4-4.55 1.4 4.55h-2.8Z"/><path d="M14 5.5h2.3V4h1.7v1.5h2.7v1.7H18v1.2h3.1v1.75h-.8a8.4 8.4 0 0 1-1.85 3.45 8.2 8.2 0 0 0 2.95 1.3l-.85 1.65a9.9 9.9 0 0 1-3.35-1.72 10.2 10.2 0 0 1-3.45 1.72l-.8-1.6a8.2 8.2 0 0 0 3-1.35 8.5 8.5 0 0 1-1.6-2.35h1.85c.25.47.58.9.98 1.3.46-.52.82-1.1 1.08-1.72H14V8.4h2.3V7.2H14V5.5Z"/></svg>
           <span>界面汉化</span>
         </button>
       </div>
@@ -2232,14 +2239,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <div class="card enhance-card" id="enhanceArea">
       <details class="enhance-details" id="enhanceDetails" open>
         <summary class="enhance-summary">
-          <svg class="enhance-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <svg class="enhance-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.9 2.5 3.7 13.2A1.5 1.5 0 0 0 4.8 15H11l-1 6.2a1 1 0 0 0 1.75.78L21.9 9.8A1.5 1.5 0 0 0 20.75 7H14l1.65-3.45a1 1 0 0 0-1.75-1.05Z"/></svg>
           <span class="enhance-title">${ideName} 增强</span>
           <span class="enhance-arrow"></span>
           <button class="enhance-toggle-btn" id="enhanceToggleBtn">未启用</button>
         </summary>
         <div class="enhance-body">
           <!-- 状态信息 -->
-          <div style="display:flex;flex-direction:column;gap:4px">
+          <div data-enhance-page="core" style="display:flex;flex-direction:column;gap:4px">
             <div class="v2-status-row">
               <span class="v2-status-label">增强脚本</span>
               <span class="v2-status-val" id="enhanceScriptStatus">检测中…</span>
@@ -2255,7 +2262,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           </div>
 
           <!-- 操作按钮 -->
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <div data-enhance-page="core" style="display:flex;gap:6px;flex-wrap:wrap">
             <button class="v2-btn b-blue" id="enhanceReinjectBtn" title="重新注入增强脚本到 workbench.html">重新注入</button>
             <button class="v2-btn b-ghost" id="enhanceInjectRulesBtn" title="修改系统提示词（~/.windsurfrules）">修改提示词</button>
             <button class="v2-btn b-danger-outline" id="enhanceRestoreBtn" title="恢复原始 workbench.html">恢复原始</button>
@@ -2265,7 +2272,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <div class="v2-divider"></div>
 
           <!-- 侧栏面板 -->
-          <div>
+          <div id="enhSectionSidebar" data-enhance-page="core">
             <div class="v2-section-title">侧栏面板</div>
             <div class="v2-strip">
               <div class="v2-strip-band c-blue"></div>
@@ -2281,7 +2288,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <div class="v2-divider"></div>
 
           <!-- 回复建议提示设置 -->
-          <div>
+          <div id="enhSectionBubble" data-enhance-page="bubble" hidden>
             <div class="v2-section-title">回复建议提示</div>
             <div class="v2-note" style="margin:4px 0 10px;padding:8px 12px;background:var(--vscode-textBlockQuote-background,rgba(127,127,127,.1));border-radius:6px;font-size:12px;line-height:1.6;color:var(--vscode-descriptionForeground,#888)">
               <b>⚠️ 使用前提：</b>需要在 ${ideName} 的 <b>Global Rules</b>（全局提示词）中添加气泡规则，AI 才会在回复末尾输出 <code>:::bubbles</code> 标记。<br>
@@ -2340,7 +2347,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <div class="v2-divider"></div>
 
           <!-- 界面汉化 -->
-          <div class="v2-strip">
+          <div class="v2-strip" id="enhSectionI18n" data-enhance-page="i18n" hidden>
             <div class="v2-strip-band c-blue"></div>
             <div class="v2-strip-info">
               <span class="v2-strip-name">启用界面汉化</span>
@@ -2354,7 +2361,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <div class="v2-divider"></div>
 
           <!-- ACP 智能体解锁（仅 Devin） -->
-          <div class="v2-strip">
+          <div class="v2-strip" data-enhance-page="core">
             <div class="v2-strip-band c-purple"></div>
             <div class="v2-strip-info">
               <span class="v2-strip-name">解锁 ACP 智能体</span>
@@ -2368,7 +2375,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <div class="v2-divider"></div>
 
           <!-- 底部状态栏 -->
-          <div>
+          <div id="enhSectionStatusbar" data-enhance-page="statusbar" hidden>
             <div class="v2-section-title">底部状态栏</div>
             <div class="v2-strip">
               <div class="v2-strip-band c-green"></div>
@@ -2446,7 +2453,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <div class="v2-divider"></div>
 
           <!-- 完成提醒 -->
-          <div>
+          <div id="enhSectionNotify" data-enhance-page="notify" hidden>
             <div class="v2-section-title">完成提醒</div>
             <div class="v2-strip">
               <div class="v2-strip-band c-amber"></div>
@@ -2507,9 +2514,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     <div class="tab-page" id="tab-byok" data-tab-page="byok" role="tabpanel">
       <div class="byok-overview">
-        <svg viewBox="0 0 1024 1024" width="16" height="16" fill="currentColor"><path d="M469.333333 554.666667a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m-170.666666 0a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m640-384a128 128 0 0 0-128-128H213.333333a128 128 0 0 0-128 128v170.666666a128 128 0 0 0 33.28 85.333334A128 128 0 0 0 85.333333 512v170.666667a128 128 0 0 0 128 128h256v85.333333H128a42.666667 42.666667 0 0 0 0 85.333333h768a42.666667 42.666667 0 1 0 0-85.333333h-341.333333v-85.333333h256a128 128 0 0 0 128-128v-170.666667a128 128 0 0 0-33.28-85.333333A128 128 0 0 0 938.666667 341.333333V170.666667z m-85.333334 512a42.666667 42.666667 0 0 1-42.666666 42.666666H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666666v-170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666667z m0-341.333334a42.666667 42.666667 0 0 1-42.666666 42.666667H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666667V170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666666z m-384-128a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334zM298.666667 213.333333a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334z"></path></svg>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v5H3V5a2 2 0 0 1 2-2Z"/><path d="M3 12h18v7a2 2 0 0 1-2 2h-5v-3h-4v3H5a2 2 0 0 1-2-2v-7Z"/><path d="M7 7h2v2H7V7Zm4 0h2v2h-2V7Zm-4 9h2v2H7v-2Zm4 0h2v2h-2v-2Z" fill="var(--vscode-sideBar-background, #1f1f1f)"/></svg>
         <span class="byok-overview-title">BYOK · 自带 Key</span>
-        <span class="byok-overview-status is-stopped" id="byokStatusPill">检测中</span>
+        <span class="byok-overview-status is-dev" id="byokStatusPill">开发中</span>
+      </div>
+
+      <div class="byok-dev-note" id="byokDevNote">
+        BYOK 功能正在开发中，当前版本暂不开放新增配置、启动 Sidecar 或应用 Patch；旧版本已应用的运行状态仍可停止或恢复。
       </div>
 
       <div class="byok-metrics">
@@ -2533,19 +2544,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       <div class="byok-subtabs" id="byokSubtabs">
         <button type="button" class="byok-subtab active" data-byok-subtab="providers">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7h-7"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4a3 3 0 0 0-2.82 2H3a1 1 0 0 0 0 2h1.18A3 3 0 1 0 7 4Zm10 10a3 3 0 0 0-2.82 2H3a1 1 0 1 0 0 2h11.18A3 3 0 1 0 17 14Zm-4-8h8a1 1 0 1 1 0 2h-8a1 1 0 1 1 0-2Z"/></svg>
           供应商 <span class="byok-subtab-count" id="byokCountProviders">0</span>
         </button>
         <button type="button" class="byok-subtab" data-byok-subtab="models">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="20" x2="9" y2="15"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 4h5a1 1 0 0 1 0 2H7.4l4.05 4.05-1.4 1.4L6 7.4V10a1 1 0 1 1-2 0V5a1 1 0 0 1 1-1Zm9 0h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V7.4l-4.05 4.05-1.4-1.4L16.6 6H14a1 1 0 1 1 0-2ZM10.05 12.55l1.4 1.4L7.4 18H10a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v2.6l4.05-4.05Zm3.9 0L18 16.6V14a1 1 0 1 1 2 0v5a1 1 0 0 1-1 1h-5a1 1 0 1 1 0-2h2.6l-4.05-4.05 1.4-1.4Z"/></svg>
           模型映射 <span class="byok-subtab-count" id="byokModelCount">0</span>
         </button>
         <button type="button" class="byok-subtab" data-byok-subtab="patches">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 4h8.8l-2 2H5v13h13v-6.8l2-2V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M18.35 2.65a2.1 2.1 0 0 1 2.98 2.97l-8.7 8.7-4.12 1.17 1.17-4.12 8.67-8.72Z"/></svg>
           补丁 <span class="byok-subtab-count" id="byokCountPatches">0/3</span>
         </button>
         <button type="button" class="byok-subtab" data-byok-subtab="logs">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm7 1.5V9h5.5L13 3.5ZM8 13h8v1.7H8V13Zm0 4h8v1.7H8V17Z"/></svg>
           日志
         </button>
       </div>
@@ -2556,8 +2567,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <div class="byok-toolbar-title">API 供应商</div>
             <div class="byok-toolbar-sub">集中管理 OpenAI Compatible / Anthropic 端点和可用模型</div>
           </div>
-          <button class="v2-btn b-blue" id="byokNewProviderBtn" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          <button class="v2-btn b-blue" id="byokNewProviderBtn" type="button"${byokBlockedAttrs}>
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4Z"/></svg>
             新增供应商
           </button>
         </div>
@@ -2574,10 +2585,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <div class="byok-toolbar-sub">选择 IDE 原生槽位，再映射到供应商模型</div>
           </div>
           <div class="byok-toolbar-actions">
-            <button class="v2-btn b-ghost" id="byokOpenMapSettingsBtn" type="button">显示名</button>
-            <button class="v2-btn b-ghost" id="byokOpenInjectedBtn" type="button">扩展槽位</button>
-            <button class="v2-btn b-blue" id="byokNewSlotBtn" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            <button class="v2-btn b-ghost" id="byokOpenMapSettingsBtn" type="button"${byokBlockedAttrs}>显示名</button>
+            <button class="v2-btn b-ghost" id="byokOpenInjectedBtn" type="button"${byokBlockedAttrs}>扩展槽位</button>
+            <button class="v2-btn b-blue" id="byokNewSlotBtn" type="button"${byokBlockedAttrs}>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4Z"/></svg>
               添加映射
             </button>
           </div>
@@ -2585,7 +2596,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <div class="byok-model-tools">
           <input type="text" class="byok-input" id="byokModelSearchInput" placeholder="搜索显示名 / modelUid / 供应商 / 目标模型">
           <button class="v2-btn b-ghost" id="byokModelRefreshBtn" type="button" title="刷新映射列表">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 5.1A9 9 0 0 0 3.8 8a1 1 0 0 0 1.8.86A7 7 0 0 1 17.48 6.5H15a1 1 0 1 0 0 2h5a1 1 0 0 0 1-1v-5a1 1 0 1 0-2 0v2.6ZM5.1 18.9A9 9 0 0 0 20.2 16a1 1 0 0 0-1.8-.86A7 7 0 0 1 6.52 17.5H9a1 1 0 1 0 0-2H4a1 1 0 0 0-1 1v5a1 1 0 1 0 2 0v-2.6Z"/></svg>
           </button>
         </div>
         <div class="byok-map-summary" id="byokModelSummary"></div>
@@ -2596,10 +2607,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       <div class="byok-subtab-content" data-byok-content="patches">
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="v2-btn b-blue" id="byokStartBtn">启动 Sidecar</button>
+          <button class="v2-btn b-blue" id="byokStartBtn"${byokBlockedAttrs}>启动 Sidecar</button>
           <button class="v2-btn b-ghost" id="byokStopBtn">停止</button>
           <button class="v2-btn b-ghost" id="byokRefreshBtn">刷新</button>
-          <button class="v2-btn b-blue" id="byokApplyPatchBtn">应用 Patch</button>
+          <button class="v2-btn b-blue" id="byokApplyPatchBtn"${byokBlockedAttrs}>应用 Patch</button>
           <button class="v2-btn b-danger-outline" id="byokRestorePatchBtn">恢复 Patch</button>
         </div>
       </div>
@@ -2636,7 +2647,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </button>
             <span class="byok-editor-title" id="byokProviderModalTitle">新增供应商</span>
           </div>
-          <div class="byok-editor-brand">Kite BYOK Control Panel</div>
+          <div class="byok-editor-brand">IDE 增强助手 BYOK</div>
         </div>
         <div class="byok-editor-body byok-editor-body--provider">
           <section class="byok-editor-panel">
@@ -2722,7 +2733,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </button>
             <span class="byok-editor-title" id="byokSlotModalTitle">添加映射</span>
           </div>
-          <div class="byok-editor-brand">Kite BYOK Control Panel</div>
+          <div class="byok-editor-brand">IDE 增强助手 BYOK</div>
         </div>
         <div class="byok-editor-body byok-editor-body--slot">
           <section class="byok-editor-panel byok-catalog-panel">
@@ -2783,7 +2794,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </button>
             <span class="byok-editor-title" id="byokMapSettingsTitle">显示名设置</span>
           </div>
-          <div class="byok-editor-brand">Kite BYOK Control Panel</div>
+          <div class="byok-editor-brand">IDE 增强助手 BYOK</div>
         </div>
         <div class="byok-editor-body byok-editor-body--single">
           <section class="byok-editor-panel">
@@ -2891,21 +2902,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <div class="tab-page" id="tab-automation" data-tab-page="automation" role="tabpanel">
     <div class="split-card" id="autoSplitCard">
       <div class="split-sidebar">
-        <button type="button" class="split-sidebar-item active" data-pane="auto-switch">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        <button type="button" class="split-sidebar-item active" data-pane="auto-switch" data-scroll-target="autoSwitchArea">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.5 4a1 1 0 0 1 1 1v4.5H16a1 1 0 1 1 0-2h1.65A7 7 0 0 0 5.8 8.7a1 1 0 1 1-1.6-1.2A9 9 0 0 1 19.5 5V5a1 1 0 0 1 0-1Z"/><path d="M4.5 20a1 1 0 0 1-1-1v-4.5H8a1 1 0 1 1 0 2H6.35A7 7 0 0 0 18.2 15.3a1 1 0 1 1 1.6 1.2A9 9 0 0 1 4.5 19v.01A1 1 0 0 1 4.5 20Z"/></svg>
           <span>自动切号</span>
         </button>
-        <button type="button" class="split-sidebar-item" data-pane="auto-continue">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M12 17h.01"/></svg>
+        <button type="button" class="split-sidebar-item" data-pane="auto-continue" data-scroll-target="autoContinueArea">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 3h2v3h3a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-6a4 4 0 0 1 4-4h3V3Z"/><path d="M9 13.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Zm6 0a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Zm-4.4 3.3h2.8v-1.6h-2.8v1.6Z" fill="var(--vscode-sideBar-background, #1f1f1f)"/></svg>
           <span>自动继续</span>
-        </button>
-        <button type="button" class="split-sidebar-item" data-pane="long-task">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          <span>长任务</span>
-        </button>
-        <button type="button" class="split-sidebar-item" data-pane="guardian">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
-          <span>守护</span>
         </button>
       </div>
 
@@ -3722,7 +3725,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       </div>
       <!-- 搜索栏 -->
       <div class="search-bar" id="searchBar">
-        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10.8 4a6.8 6.8 0 1 0 4.25 12.12l3.42 3.42a1.2 1.2 0 0 0 1.7-1.7l-3.42-3.42A6.8 6.8 0 0 0 10.8 4Zm0 2.4a4.4 4.4 0 1 1 0 8.8 4.4 4.4 0 0 1 0-8.8Z"/></svg>
         <input type="text" class="search-input" id="searchInput" placeholder="搜索账号..." autocomplete="off">
         <button class="search-clear" id="searchClear" hidden title="清除">×</button>
       </div>
@@ -4113,7 +4116,11 @@ devin-session-token$eyJhbGciOiJIUzI1NiIs...</pre>
   <!-- 全局 Toast 容器（实例操作进度/错误） -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script>const vscode = acquireVsCodeApi();</script>
+  <script>
+    const vscode = acquireVsCodeApi();
+    window.__BYOK_FEATURE_IN_DEVELOPMENT__ = ${BYOK_FEATURE_IN_DEVELOPMENT ? 'true' : 'false'};
+    window.__BYOK_DEVELOPMENT_NOTICE__ = ${JSON.stringify(BYOK_DEVELOPMENT_NOTICE)};
+  </script>
   <script>${getSignalBridgeScript()}</script>
   <script>${getBridgeRelayScript()}</script>
   <script src="${jsUri}"></script>
