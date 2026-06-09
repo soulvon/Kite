@@ -213,7 +213,7 @@
 	const _initTs = Date.now();
 	
 	// ========== 回复建议提示功能 ==========
-	const CHAT_ROOT_SELECTOR = '.chat-client-root';
+	const CHAT_ROOT_SELECTOR = '.chat-container, .chat-client-root';
 	const INPUT_CANDIDATES = [
 		'div[contenteditable="true"][data-lexical-editor="true"]',
 		'div[contenteditable="true"][role="textbox"]',
@@ -290,6 +290,28 @@
 			}
 		} catch {}
 		return null;
+	}
+
+	function findBubbleScanRoots() {
+		const roots = [];
+		const seen = new Set();
+		function addRoot(root) {
+			if (!root || seen.has(root)) return;
+			seen.add(root);
+			roots.push(root);
+		}
+		function collect(doc) {
+			if (!doc) return;
+			doc.querySelectorAll(CHAT_ROOT_SELECTOR).forEach(addRoot);
+		}
+		collect(document);
+		try {
+			for (const f of document.querySelectorAll('iframe')) {
+				try { collect(f.contentDocument); } catch {}
+			}
+		} catch {}
+		if (roots.length === 0 && document.body) addRoot(document.body);
+		return roots;
 	}
 	
 	let _cachedInput = null;
@@ -889,7 +911,10 @@
 	
 	function scanForBubbles(scope) {
 		if (!settings.bubblesEnabled) return;
-		if (!scope) scope = findChatRoot();
+		if (!scope) {
+			findBubbleScanRoots().forEach(root => scanForBubbles(root));
+			return;
+		}
 		if (!scope) return;
 		
 		const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
@@ -970,19 +995,24 @@
 	function startBubblesObserving() {
 		if (bubblesObserver) { bubblesObserver.disconnect(); bubblesObserver = null; }
 		if (!settings.bubblesEnabled) return;
-		const scope = findChatRoot();
-		if (!scope) {
+		const roots = findBubbleScanRoots();
+		if (!roots.length) {
 			logBubbles('聊天根未找到，稍后重试');
 			setTimeout(startBubblesObserving, 2000);
 			return;
 		}
-		logBubbles('✅已找到聊天根，开始监听');
+		logBubbles('✅已找到聊天根，开始监听:', roots.length);
 		bubblesObserver = new MutationObserver(() => {
 			clearTimeout(window._wsBubTimer);
-			window._wsBubTimer = setTimeout(() => scanForBubbles(scope), 500);
+			window._wsBubTimer = setTimeout(() => scanForBubbles(), 500);
 		});
-		bubblesObserver.observe(scope, { childList: true, subtree: true });
-		scanForBubbles(scope);
+		try { if (document.body) bubblesObserver.observe(document.body, { childList: true, subtree: true }); } catch {}
+		roots.forEach(root => {
+			if (root !== document.body) {
+				try { bubblesObserver.observe(root, { childList: true, subtree: true }); } catch {}
+			}
+		});
+		scanForBubbles();
 	}
 	
 	// ========== 汉化功能 ==========
@@ -5128,7 +5158,7 @@
 	let _expectingResponse = false;
 
 	function isAIGenerating() {
-		const chatRoot = document.querySelector('.chat-client-root') || document;
+		const chatRoot = findChatRoot() || document;
 		// 信号1: 输入框旁的停止按钮 → 生成中
 		if (chatRoot.querySelector('svg.lucide-circle-stop, button[aria-label="Stop"] svg, button[aria-label="停止"] svg, button[aria-label="Cancel"] svg')) return true;
 		// 信号2: 操作栏（👍👎📋）数量检测
@@ -5151,7 +5181,7 @@
 
 	// 长任务发送后调用：记录当前 thumbs-up 数量，标记等待新回复
 	function markExpectingNewResponse() {
-		const chatRoot = document.querySelector('.chat-client-root') || document;
+		const chatRoot = findChatRoot() || document;
 		const thumbs = chatRoot.querySelectorAll('svg.lucide-thumbs-up');
 		_lastThumbsCount = thumbs.length;
 		_expectingResponse = true;

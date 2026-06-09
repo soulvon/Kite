@@ -1,12 +1,12 @@
 <div align="center">
 
-# Windsurf Pool — 号池管理
+# Kite — AI IDE 增强套件
 
-**让 AI 编程永不断流的 Windsurf 多账号管理引擎**
+**面向 Windsurf / Devin 的界面增强、多实例、BYOK 与多账号号池工具**
 
-无感换号 · 自动恢复 · 多实例分身 · 智能切号策略 · 界面汉化 · 长任务自动化
+界面增强 · BYOK 自带 Key · 多实例分身 · 多账号号池 · 自动恢复 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-7.7.4-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-8.4.31-blue?style=flat-square)](https://github.com/soulvon/windsurf-pool-releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 </div>
 
@@ -30,7 +30,7 @@
 ## 交流群
 
 <p align="center">
-  <b>Windsurf Pool插件交流群</b>｜群号：<code>1075342078</code><br>
+  <b>Kite 插件交流群</b>｜群号：<code>1075342078</code><br>
 
 </p>
 
@@ -40,7 +40,7 @@
 
 Windsurf 的 AI 配额用完就得等重置，手动切号要退出登录、重启编辑器，**正在进行的对话直接丢失**。多开窗口还会互相踢号。
 
-Windsurf Pool 在 **不退出、不重启、不丢失会话** 的前提下，把多个账号变成一个无限额度的池子：配额快用完 → 自动切到最优账号 → 接着上次进度继续 → 你甚至感知不到发生了什么。
+Kite 在 **不退出、不重启、不丢失会话** 的前提下，把界面增强、BYOK、多实例和多账号能力整合成一个 IDE 增强套件：配额快用完 → 自动切到最优账号 → 接着上次进度继续 → 你甚至感知不到发生了什么。
 
 ## 核心能力
 
@@ -94,7 +94,7 @@ Windsurf Pool 在 **不退出、不重启、不丢失会话** 的前提下，把
 
 1. 下载最新 [`.vsix` 发布包](https://github.com/soulvon/windsurf-pool-releases)
 2. 命令面板 → `Extensions: Install from VSIX...` → 选择文件
-3. 侧栏点击 **Windsurf 号池管理** 图标 → 添加账号（登录 / 批量导入 / 从当前账户一键导入）
+3. 侧栏点击 **Kite** 图标 → 添加账号（登录 / 批量导入 / 从当前账户一键导入）
 4. 点击「切换」或开启自动切号 → 完成
 
 ### 系统要求
@@ -130,6 +130,27 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
+
+### v8.4.31
+- **自动化页交互与视觉修复**：修复左侧「长任务」入口与内部分段状态不同步的问题，优化自动化总开关对齐，并统一左侧子导航、分段控件和轻拟物小卡片的视觉风格。
+
+### v8.4.30
+- **侧栏视觉精简**：账号、实例、自动化、增强等主 Tab 去掉顶层面板背景、外框和大阴影，顶层区域固定展开并隐藏折叠箭头，整体调整为更接近 IDE-BYOK 的简洁科技轻拟物风格。
+
+### v8.4.29
+- **多实例分身界面微调**：去掉多实例分身区域的最外层面板边框、圆角背景和阴影，保留内部实例卡片边框。
+
+### v8.4.28
+- **BYOK 日志界面修复**：日志页增加运行日志标题、条数统计、空状态提示和稳定高度；窄侧栏下筛选/导出/清空按钮改为紧凑栅格，避免只剩一条灰色日志占位。
+
+### v8.4.27
+- **品牌与图标更新**：软件展示统一为 Kite，侧栏、设置页、命令分类和 README 定位文案去掉“IDE增强助手/IDE 号池管理”的旧表达，并换用新版 logo。
+
+### v8.4.26
+- **BYOK 供应商与模型映射交互升级**：供应商添加、模型选择和模型映射改为接近 IDE-BYOK 的全屏编辑体验，支持供应商模型列表、默认模型、映射搜索和清晰的状态反馈。
+- **新增故障转移与扩展槽位管理**：模型映射可配置多目标顺序 failover；扩展槽位可从 Windsurf 模型目录启用，并为注入模型指定供应商、目标模型和图片能力。
+- **新增 BYOK 显示名模板与运行统计**：支持 `{prefix}` / `{label}` / `{provider}` / `{apiModel}` 模板，侧栏显示请求、Token、重试、错误和最近路由。
+- **审查修复**：sidecar 运行时复制会跳过开发用 `node_modules`，避免启动时复制大量无关文件；日志“清空显示”不会被下一次状态同步立即刷回。
 
 ### v7.10.0
 - **♻️ 异常监控核心重构**：用「配额记录时即时打标」取代「切号日志事后重建」，从根上解决多实例误报。
@@ -1051,7 +1072,7 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <div align="center">
 
-**Windsurf Pool** — 一个人的全栈工程，从 Electron 逆向到 DOM 注入到跨进程通信。
+**Kite** — 一个人的全栈工程，从 Electron 逆向到 DOM 注入到跨进程通信。
 
 如果它让你的 AI 编程体验更流畅，Star ⭐ 或赞赏就是最大的动力。
 
@@ -1071,6 +1092,6 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <img src="qqqun.jpg" width="240" alt="QQ 交流群二维码">
 
-**Windsurf 增强插件交流群**｜群号：`1075342078`
+**Kite 插件交流群**｜群号：`1075342078`
 
 </div>

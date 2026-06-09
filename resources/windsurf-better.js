@@ -5128,7 +5128,7 @@
 	let _expectingResponse = false;
 
 	function isAIGenerating() {
-		const chatRoot = document.querySelector('.chat-client-root') || document;
+		const chatRoot = findChatRoot() || document;
 		// 信号1: 输入框旁的停止按钮 → 生成中
 		if (chatRoot.querySelector('svg.lucide-circle-stop, button[aria-label="Stop"] svg, button[aria-label="停止"] svg, button[aria-label="Cancel"] svg')) return true;
 		// 信号2: 操作栏（👍👎📋）数量检测
@@ -5151,7 +5151,7 @@
 
 	// 长任务发送后调用：记录当前 thumbs-up 数量，标记等待新回复
 	function markExpectingNewResponse() {
-		const chatRoot = document.querySelector('.chat-client-root') || document;
+		const chatRoot = findChatRoot() || document;
 		const thumbs = chatRoot.querySelectorAll('svg.lucide-thumbs-up');
 		_lastThumbsCount = thumbs.length;
 		_expectingResponse = true;

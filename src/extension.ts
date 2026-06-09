@@ -24,11 +24,13 @@ import { setExtensionPath } from './cascadeProbe';
 import { warmupSoundPlayer } from './soundPlayer';
 import { reloadWindsurfAcpConnections, scheduleAcpAgentRepair, scheduleAcpConnectionRecovery } from './acpRecovery';
 import { getIdeDisplayName, getIdeExeName } from './ideDetector';
+import { ByokProxyManager } from './byokProxyManager';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
 let statusBar: StatusBarManager;
 let usageTracker: UsageTracker;
+let byokProxyManager: ByokProxyManager;
 let _context: vscode.ExtensionContext;
 
 export function activate(context: vscode.ExtensionContext) {
@@ -67,6 +69,10 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(autoSwitcher);
   autoSwitcher.start();
 
+  // BYOK 本地 sidecar 管理器（按需启动）
+  byokProxyManager = new ByokProxyManager(context);
+  context.subscriptions.push(byokProxyManager);
+
   // 底部状态栏（独立于侧栏面板，启动即显示）
   statusBar = new StatusBarManager(context, autoSwitcher);
   context.subscriptions.push(statusBar);
@@ -85,7 +91,7 @@ export function activate(context: vscode.ExtensionContext) {
   checkInstallPermission(context);
 
   // 创建侧栏提供器
-  sidebarProvider = new SidebarProvider(context.extensionUri, context, autoSwitcher, usageTracker);
+  sidebarProvider = new SidebarProvider(context.extensionUri, context, autoSwitcher, usageTracker, byokProxyManager);
   // 侧栏手动切号成功后立即更新状态栏
   sidebarProvider.onManualSwitch = () => statusBar?.update();
   // 注册到 subscriptions，让 VSCode 在卸载时自动调用 dispose 清理 OutputChannel 和监听器
@@ -147,6 +153,34 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
   context.subscriptions.push(recoverCascadeInputCmd);
+
+  const byokStartCmd = vscode.commands.registerCommand('windsurfPool.byokStart', async () => {
+    await byokProxyManager.start();
+    vscode.window.showInformationMessage('BYOK sidecar 已启动');
+  });
+  context.subscriptions.push(byokStartCmd);
+
+  const byokStopCmd = vscode.commands.registerCommand('windsurfPool.byokStop', async () => {
+    await byokProxyManager.stop();
+    vscode.window.showInformationMessage('BYOK sidecar 已停止');
+  });
+  context.subscriptions.push(byokStopCmd);
+
+  const byokApplyPatchCmd = vscode.commands.registerCommand('windsurfPool.byokApplyPatch', async () => {
+    await byokProxyManager.applyPatch();
+    vscode.window.showInformationMessage('BYOK patch 已应用，重启窗口后生效。', '立即重启').then(action => {
+      if (action === '立即重启') vscode.commands.executeCommand('workbench.action.reloadWindow');
+    });
+  });
+  context.subscriptions.push(byokApplyPatchCmd);
+
+  const byokRestorePatchCmd = vscode.commands.registerCommand('windsurfPool.byokRestorePatch', async () => {
+    await byokProxyManager.restorePatch();
+    vscode.window.showInformationMessage('BYOK patch 已恢复，重启窗口后生效。', '立即重启').then(action => {
+      if (action === '立即重启') vscode.commands.executeCommand('workbench.action.reloadWindow');
+    });
+  });
+  context.subscriptions.push(byokRestorePatchCmd);
 
   const refreshSidebarCmd = vscode.commands.registerCommand('windsurfPool.refreshSidebar', () => {
     sidebarProvider.refresh();
@@ -623,6 +657,7 @@ function autoFixChecksums(): void {
 export async function deactivate(): Promise<void> {
   try { stopHeartbeat(); } catch {}
   try { releaseLock(); } catch {}
+  try { await byokProxyManager?.stop(); } catch {}
   try { stopBridgeServer(); } catch {}
   try { const { shutdownSoundPlayer } = require('./soundPlayer'); shutdownSoundPlayer(); } catch {}
 

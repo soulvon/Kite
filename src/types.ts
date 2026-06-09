@@ -120,7 +120,19 @@ export type WebviewMessageType =
   | 'oauthLogin'
   | 'syncTagColors'
   | 'clearHealthRateLimit'
-  | 'resetMachineId';
+  | 'resetMachineId'
+  | 'byokLoad'
+  | 'byokStart'
+  | 'byokStop'
+  | 'byokSaveProvider'
+  | 'byokDeleteProvider'
+  | 'byokTestProvider'
+  | 'byokSaveSlot'
+  | 'byokSaveModelMapSettings'
+  | 'byokSaveInjected'
+  | 'byokDeleteSlot'
+  | 'byokApplyPatch'
+  | 'byokRestorePatch';
 
 /**
  * Webview 消息
@@ -153,6 +165,11 @@ export interface WebviewMessage {
   settings?: Record<string, any>;
   payload?: Record<string, any>;
   force?: boolean;
+  provider?: Record<string, any>;
+  slot?: Record<string, any>;
+  injected?: Record<string, any>[];
+  providerId?: string;
+  modelUid?: string;
 }
 
 /**
@@ -178,7 +195,10 @@ export type BackendMessageType =
   | 'testModelResult'
   | 'switchResult'
   | 'diagnosticSync'
-  | 'oauthStatus';
+  | 'oauthStatus'
+  | 'byokStateSync'
+  | 'byokLog'
+  | 'byokProviderTestResult';
 
 export interface TestModelResultMessage {
   type: 'testModelResult';

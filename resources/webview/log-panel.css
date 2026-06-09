@@ -3,6 +3,7 @@
   --lp-bg: var(--vscode-editor-background, #1e1e1e);
   --lp-fg: var(--vscode-editor-foreground, #ccc);
   --lp-fg-dim: var(--vscode-descriptionForeground, #8b949e);
+  --lp-fg-mute: var(--lp-fg-dim);
   --lp-accent: var(--vscode-button-background, #0078d4);
   --lp-accent-fg: var(--vscode-button-foreground, #fff);
   --lp-radius: 6px;
@@ -950,4 +951,195 @@ body {
   background: var(--lp-bg);
   border-top: 1px solid var(--lp-border);
   z-index: 10;
+}
+
+/* 8.4.25 Log Panel Polish */
+.lp-app {
+  padding-bottom: 44px;
+}
+
+.lp-header {
+  gap: 12px;
+}
+
+.lp-header-right {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.lp-tabs {
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.lp-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.lp-tab {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border-radius: 8px 8px 0 0;
+  padding: 8px 12px;
+}
+
+.lp-content {
+  padding-bottom: 28px;
+}
+
+.lp-stats-row {
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+}
+
+.lp-stat-card,
+.lp-chart-wrap,
+.lp-table-wrap,
+.lp-context-card,
+.lp-anom-card,
+.lp-anom-stat-card {
+  border-radius: 8px;
+  border-color: color-mix(in srgb, var(--lp-border) 82%, var(--lp-accent) 18%);
+  background: color-mix(in srgb, var(--lp-bg) 96%, var(--lp-fg) 4%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+}
+
+body.vscode-light .lp-stat-card,
+body.vscode-light .lp-chart-wrap,
+body.vscode-light .lp-table-wrap,
+body.vscode-light .lp-context-card,
+body.vscode-light .lp-anom-card,
+body.vscode-light .lp-anom-stat-card {
+  background: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.65);
+}
+
+.lp-table {
+  min-width: 760px;
+}
+
+#lpOverview .lp-table,
+#lpQuota .lp-table,
+#lpContext .lp-table {
+  min-width: 900px;
+}
+
+.lp-table th {
+  background: color-mix(in srgb, var(--lp-bg) 92%, var(--lp-fg) 4%);
+}
+
+.lp-table-wrap {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+}
+
+.lp-btn,
+.lp-btn-sm,
+.lp-quick-btn,
+.lp-page-btn,
+.lp-time-btn,
+.lp-select,
+.lp-search-input,
+.lp-anomaly-tag-input {
+  min-height: 30px;
+  border-radius: 7px;
+}
+
+.lp-btn:hover,
+.lp-btn-sm:hover,
+.lp-quick-btn:hover,
+.lp-page-btn:hover:not(:disabled),
+.lp-time-btn:hover {
+  border-color: color-mix(in srgb, var(--lp-accent) 42%, transparent);
+  background: color-mix(in srgb, var(--lp-accent) 10%, transparent);
+}
+
+.lp-search-input:focus,
+.lp-select:focus,
+.lp-anomaly-tag-input:focus,
+.lp-btn:focus-visible,
+.lp-btn-sm:focus-visible,
+.lp-quick-btn:focus-visible,
+.lp-page-btn:focus-visible,
+.lp-time-btn:focus-visible,
+.lp-tab:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, var(--lp-accent));
+  outline-offset: 2px;
+}
+
+.lp-footer {
+  backdrop-filter: blur(10px);
+}
+
+@media (max-width: 720px) {
+  .lp-app {
+    padding: 10px 12px 44px;
+  }
+
+  .lp-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .lp-header-right {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .lp-stat-card {
+    padding: 12px 10px;
+  }
+
+  .lp-stat-num {
+    font-size: 20px;
+  }
+
+  .lp-chart-wrap {
+    min-height: 190px;
+  }
+
+  .lp-chart {
+    height: 165px;
+  }
+
+  .lp-chart-legend {
+    position: static;
+    transform: none;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 6px 8px 0 38px;
+  }
+}
+
+@media (max-width: 420px) {
+  .lp-stats-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lp-filter-row,
+  .lp-search-row,
+  .lp-anom-filter-row {
+    align-items: stretch;
+  }
+
+  .lp-search-input,
+  .lp-select {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-btn,
+  .lp-btn-sm,
+  .lp-quick-btn,
+  .lp-page-btn,
+  .lp-time-btn,
+  .lp-tab,
+  .lp-mini-fill,
+  .lp-anom-chevron {
+    transition: none;
+  }
 }

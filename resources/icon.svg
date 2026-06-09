@@ -1,5 +1,67 @@
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-<g transform="translate(0, 5.5) scale(0.046875, 0.046875)">
-<path d="M507.28 0.142623H502.4C476.721 0.10263 455.882 20.899 455.882 46.5745V150.416C455.882 171.153 438.743 187.95 418.344 187.95C406.224 187.95 394.125 181.851 386.945 171.613L280.889 20.1391C272.089 7.56133 257.77 0.0626373 242.271 0.0626373C218.091 0.0626373 196.332 20.6191 196.332 45.9946V150.436C196.332 171.173 179.333 187.97 158.794 187.97C146.634 187.97 134.555 181.871 127.375 171.633L8.69966 2.12228C6.01976 -1.71705 0 0.182617 0 4.8618V95.426C0 100.005 1.39995 104.444 4.01984 108.204L120.815 274.995C127.715 284.853 137.895 292.172 149.634 294.831C179.013 301.51 206.052 278.894 206.052 250.079V145.697C206.052 124.961 222.851 108.164 243.59 108.164H243.65C256.15 108.164 267.87 114.263 275.049 124.501L381.125 275.955C389.945 288.552 403.524 296.031 419.724 296.031C444.443 296.031 465.622 275.455 465.622 250.099V145.677C465.622 124.941 482.421 108.144 503.16 108.144H507.3C509.9 108.144 512 106.044 512 103.445V4.8418C512 2.24226 509.9 0.142623 507.3 0.142623H507.28Z" fill="currentColor"/>
-</g>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="blue1" x1="100" y1="100" x2="462" y2="462" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4EA1FF"/>
+      <stop offset="1" stop-color="#1E5BFF"/>
+    </linearGradient>
+
+    <linearGradient id="blue2" x1="562" y1="100" x2="924" y2="462" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#73E4FF"/>
+      <stop offset="1" stop-color="#36BFFF"/>
+    </linearGradient>
+
+    <linearGradient id="blue3" x1="100" y1="562" x2="462" y2="924" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#123E7C"/>
+      <stop offset="1" stop-color="#072A56"/>
+    </linearGradient>
+
+    <linearGradient id="blue4" x1="562" y1="562" x2="924" y2="924" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4D9DFF"/>
+      <stop offset="1" stop-color="#246BFF"/>
+    </linearGradient>
+
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0B1B3A" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <!-- Top Left -->
+  <path
+    d="M 100 60 H 462 Q 502 60 502 100 V 462 Q 502 502 462 462 L 100 100 Q 60 60 100 60 Z"
+    fill="url(#blue1)"
+    filter="url(#shadow)"
+    stroke="#2D6BFF"
+    stroke-width="10"
+    stroke-linejoin="round"
+  />
+
+  <!-- Top Right -->
+  <path
+    d="M 562 60 H 924 Q 964 60 964 100 V 462 Q 964 502 924 462 L 562 100 Q 522 60 562 60 Z"
+    fill="url(#blue2)"
+    filter="url(#shadow)"
+    stroke="#44CCFF"
+    stroke-width="10"
+    stroke-linejoin="round"
+  />
+
+  <!-- Bottom Left -->
+  <path
+    d="M 100 522 H 462 Q 502 522 502 562 V 924 Q 502 964 462 924 L 100 562 Q 60 522 100 522 Z"
+    fill="url(#blue3)"
+    filter="url(#shadow)"
+    stroke="#0D356B"
+    stroke-width="10"
+    stroke-linejoin="round"
+  />
+
+  <!-- Bottom Right -->
+  <path
+    d="M 562 522 H 924 Q 964 522 964 562 V 924 Q 964 964 924 924 L 562 562 Q 522 522 562 522 Z"
+    fill="url(#blue4)"
+    filter="url(#shadow)"
+    stroke="#2E76FF"
+    stroke-width="10"
+    stroke-linejoin="round"
+  />
 </svg>

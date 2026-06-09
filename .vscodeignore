@@ -28,9 +28,14 @@ devin_result.png
 .git/**
 .github/**
 .windsurf/**
+.devin/**
+.playwright-mcp/**
+.claude/**
+.claudeignore
 node_modules/**
 *.vsix
 *.log
+*-preview.png
 
 # 大文件 / 非扩展资源
 *.har
@@ -41,9 +46,15 @@ resources/webview/*.har
 orderProject/**
 docs/**
 cascade-chat-protocol.md
+DEVIN_AUDIT_REPORT*.md
+windsurf-proxy-analysis.md
+spec/**
+newlogo/**
 *.jpg
 *.webp
 resources/wechat-reward.jpg
+resources/byok-sidecar/node_modules/**
+resources/byok-sidecar/package-lock.json
 
 # 开发预览 HTML（不被代码引用）
 resources/webview/*-preview.html
