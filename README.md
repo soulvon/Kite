@@ -131,6 +131,9 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
 
+### v8.6.2
+- **汉化补充**：添加权限请求弹窗的翻译（"Permission required"、"Allow for this session"、"Allow and don't ask again"）。
+
 ### v8.5.0
 - **BYOK 改为开发中状态**：侧栏与命令面板标记 BYOK 开发中；暂停新增配置、启动 Sidecar 和应用 Patch，保留停止 Sidecar / 恢复 Patch 以便清理旧状态。
 

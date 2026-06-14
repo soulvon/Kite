@@ -165,6 +165,18 @@ function applyAcpUnlockPatches(content: string, enable: boolean): { content: str
     // 原始代码会恢复，此时 enable=false 不会匹配已解锁形态，也就不会修改
   }
 
+  // Patch A2: isCustomAcpAgentUnleashEnabled() 导出函数
+  // 新版 Devin 会同时保留 LocalRegistry 内部的 l() 和 AcpRegistry 模块导出的 w()。
+  // l() 控制 registry 加载，w() 控制 register/isAgentEnabled，两个都放行才能避免半解锁。
+  if (enable) {
+    const acpDirectFlagRe = /function\s+(\w+)\s*\(\)\s*\{\s*return\s*!!\s*\(\s*\(0,\w+\.isWindsurfInsiders\)\(\)\s*\|\|\s*\(0,\w+\.isWindsurfNext\)\(\)\s*\|\|\s*\(0,\w+\.hasDevExtension\)\(\)\s*\|\|\s*\(0,\w+\.isDevelopment\)\(\)\s*\)\s*\|\|\s*\w+\.UnleashProvider\.getInstance\(\)\.isEnabled\("acp-custom-enabled"\)\s*\}/;
+    const m = content.match(acpDirectFlagRe);
+    if (m) {
+      content = content.replace(m[0], `function ${m[1]}(){return!0}`);
+      changed = true;
+    }
+  }
+
   // Patch B: register() 中跳过 custom agent 的守卫
   // 已解锁形态: if(!1)return void 0
   // 原始形态:   if(!e&&"custom"===D(A.id)&&!w())return void u.acpOutputChannel.info(...)
@@ -181,15 +193,132 @@ function applyAcpUnlockPatches(content: string, enable: boolean): { content: str
   // 已解锁形态: function m(A,e){if(!1)return!1;
   // 原始形态:   function m(A,e){if("custom"===D(A)&&!w())return!1;
   if (enable) {
-    const acpEnableRe = /function\s+(\w+)\s*\(\s*\w+\s*,\s*\w+\s*\)\s*\{\s*if\s*\(\s*"custom"\s*===\s*\w+\(\s*\w+\s*\)\s*&&\s*!\s*\w+\(\s*\)\s*\)\s*return\s*!\s*1\s*;/;
+    const acpEnableRe = /function\s+(\w+)\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)\s*\{\s*if\s*\(\s*"custom"\s*===\s*\w+\(\s*\2\s*\)\s*&&\s*!\s*\w+\(\s*\)\s*\)\s*return\s*!\s*1\s*;/;
     const m = content.match(acpEnableRe);
     if (m) {
-      content = content.replace(m[0], `function ${m[1]}(A,e){if(!1)return!1;`);
+      content = content.replace(m[0], `function ${m[1]}(${m[2]},${m[3]}){if(!1)return!1;`);
       changed = true;
     }
   }
 
   return { content, changed };
+}
+
+const ACP_FALLBACK_REGISTRY_AGENTS = [
+  {
+    id: 'codex-acp',
+    name: 'Codex',
+    version: '0.15.0',
+    description: 'Codex ACP agent.',
+    authors: ['Zed Industries'],
+    license: 'Apache-2.0',
+    distribution: {
+      npx: {
+        package: '@zed-industries/codex-acp@0.15.0'
+      }
+    },
+    'cognition.ai/featured': true
+  },
+  {
+    id: 'claude-acp',
+    name: 'Claude',
+    version: '0.39.0',
+    description: 'Claude ACP agent.',
+    authors: ['Agent Client Protocol'],
+    license: 'MIT',
+    distribution: {
+      npx: {
+        package: '@agentclientprotocol/claude-agent-acp@0.39.0'
+      }
+    },
+    'cognition.ai/featured': true
+  },
+  {
+    id: 'agoragentic-acp',
+    name: 'Agoragentic',
+    version: '1.3.0',
+    description: 'Agoragentic ACP agent.',
+    authors: ['Agoragentic'],
+    license: 'MIT',
+    distribution: {
+      npx: {
+        package: 'agoragentic-mcp@1.3.0',
+        args: ['--acp']
+      }
+    },
+    'cognition.ai/featured': true
+  }
+];
+
+function getAcpLocalRegistryPath(): string | null {
+  if (detectIdeFlavor() !== 'devin') return null;
+
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming');
+    if (!appData) return null;
+    // Devin 1.110.x 的 getWindsurfConfigDirectory() 当前指向 VS Code User 目录。
+    return path.join(appData, 'Code', 'User', 'acp', 'registry.json');
+  }
+
+  if (process.platform === 'darwin') {
+    const home = process.env.HOME || '';
+    if (!home) return null;
+    return path.join(home, 'Library', 'Application Support', 'Code', 'User', 'acp', 'registry.json');
+  }
+
+  const configHome = process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || '', '.config');
+  if (!configHome) return null;
+  return path.join(configHome, 'Code', 'User', 'acp', 'registry.json');
+}
+
+/**
+ * 确保 Devin 的本地 ACP registry 有最小可用兜底。
+ * 远端 registry 502/超时时，仍能注册 Codex/Claude/Agoragentic。
+ */
+export function ensureAcpLocalRegistryFallback(): boolean {
+  const registryPath = getAcpLocalRegistryPath();
+  if (!registryPath) return false;
+
+  try {
+    let registry: { version?: string; agents?: any[] } = { version: '1.0.0', agents: [] };
+    if (fs.existsSync(registryPath)) {
+      const raw = fs.readFileSync(registryPath, 'utf8').trim();
+      if (raw) registry = JSON.parse(raw);
+    }
+
+    const agents = Array.isArray(registry.agents) ? registry.agents : [];
+    const known = new Set(agents.map(agent => agent?.id).filter(Boolean));
+    const missing = ACP_FALLBACK_REGISTRY_AGENTS.filter(agent => !known.has(agent.id));
+    if (missing.length === 0) return false;
+
+    fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+    const nextRegistry = {
+      version: registry.version || '1.0.0',
+      agents: [...agents, ...missing]
+    };
+    fs.writeFileSync(registryPath, JSON.stringify(nextRegistry, null, 2) + '\n', 'utf8');
+    console.log(`[windsurf-pool] ACP local registry fallback ensured: ${registryPath}`);
+    return true;
+  } catch (err) {
+    console.warn('[windsurf-pool] ACP local registry fallback failed:', err);
+    return false;
+  }
+}
+
+/**
+ * 判断 Devin 内置 extension.js 是否仍有可命中的 ACP 限制逻辑。
+ * 只做纯检测，不写文件；用于侧栏保存设置后自动补一次底层 patch。
+ */
+export function needsAcpUnlockPatch(): boolean {
+  if (detectIdeFlavor() !== 'devin') return false;
+  try {
+    const targetPath = getWindsurfExtensionJsPath();
+    if (!targetPath) return false;
+    const content = fs.readFileSync(targetPath, 'utf8');
+    return applyAcpUnlockPatches(content, true).changed;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -468,12 +597,19 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
 
       // ACP 智能体解锁补丁（仅 Devin，根据 acpUnlock 设置决定应用或回退）
       let acpChanged = false;
+      let acpRegistryEnsured = false;
       if (detectIdeFlavor() === 'devin') {
         const acpUnlock = readEnhSettings().acpUnlock !== false;
         const acpResult = applyAcpUnlockPatches(content, acpUnlock);
         if (acpResult.changed) {
           content = acpResult.content;
           acpChanged = true;
+        }
+        if (acpUnlock) {
+          acpRegistryEnsured = ensureAcpLocalRegistryFallback();
+          if (acpRegistryEnsured) {
+            scheduleAcpConnectionRecovery('acp-local-registry-fallback', 800);
+          }
         }
       }
 
@@ -487,6 +623,8 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
         if (persistAdded) parts.push('已添加登录状态持久化');
         if (acpChanged) parts.push('已更新 ACP 智能体解锁');
         vscode.window.showInformationMessage('补丁已存在，' + parts.join('、') + '（重启后生效）');
+      } else if (acpRegistryEnsured) {
+        vscode.window.showInformationMessage('补丁已存在，已补齐 ACP 本地智能体兜底并重载连接');
       } else {
         vscode.window.showInformationMessage('补丁已存在，无需重复应用');
       }
@@ -612,6 +750,7 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
 
     // ---- Patch 4: ACP 自定义智能体解锁（仅 Devin） ----
     // 参考: 07-ACP-Agent-Architecture-and-Unlock-Plan.md 方案 A
+    let acpRegistryEnsured = false;
     if (detectIdeFlavor() === 'devin') {
       const acpUnlock = readEnhSettings().acpUnlock !== false;
       const acpResult = applyAcpUnlockPatches(content, acpUnlock);
@@ -621,10 +760,16 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
       } else if (acpUnlock) {
         console.warn('[windsurf-pool] ACP unlock: no matching patterns found in extension.js (Devin version may have changed)');
       }
+      if (acpUnlock) {
+        acpRegistryEnsured = ensureAcpLocalRegistryFallback();
+      }
     }
 
     // 写回文件
     writeFileWithElevation(targetPath, content, 'utf8');
+    if (acpRegistryEnsured) {
+      scheduleAcpConnectionRecovery('acp-local-registry-fallback', 800);
+    }
 
     vscode.window.showInformationMessage(
       `补丁已应用成功！备份保存在: ${path.basename(backupPath)}。请重启 ${getIdeDisplayName()} 使补丁生效。`

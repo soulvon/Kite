@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>版本 A · 左侧菜单 + 右侧详情</title>
+<style>
+:root {
+    --card-bg: #252526;
+    --surface-bg: rgba(255,255,255,0.02);
+    --elevated-bg: rgba(255,255,255,0.04);
+    --subtle-bg: rgba(255,255,255,0.06);
+    --border-subtle: rgba(255,255,255,0.06);
+    --border-dim: rgba(255,255,255,0.10);
+    --card-border: var(--border-subtle);
+    --hover-bg: rgba(255,255,255,0.04);
+    --muted: #8b8b8b;
+    --vscode-editor-font-family: Consolas, monospace;
+    --ac-emerald: #10b981;
+    --ac-blue: #3b82f6;
+    --ac-violet: #8b5cf6;
+    --ac-amber: #f59e0b;
+    --ac-cyan: #06b6d4;
+    --ac-orange: #f0883e;
+    --ac-red: #ef4444;
+    --ac-pink: #ec4899;
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px; line-height: 1.5;
+    color: #ccc; background: #1e1e1e;
+    overflow-x: hidden;
+}
+.app { max-width: 700px; margin: 0 auto; background: #1e1e1e; min-height: 100vh; }
+
+/* 顶栏 tab */
+.app-tabs { display: flex; border-bottom: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); position: sticky; top: 0; z-index: 20; }
+.app-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 9px 4px 8px; font-size: 12px; font-weight: 500; color: #8b8b8b; background: transparent; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-family: inherit; position: relative; white-space: nowrap; }
+.app-tab.active { color: #fff; }
+.app-tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: linear-gradient(90deg, var(--ac-emerald), var(--ac-cyan)); }
+.tab-count { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 10px; background: rgba(255,255,255,0.08); color: var(--muted); font-family: var(--vscode-editor-font-family); }
+.app-tab.active .tab-count { background: rgba(16,185,129,0.18); color: var(--ac-emerald); }
+
+.tab-page { display: none; padding: 8px 10px 20px; flex-direction: column; gap: 8px; animation: fadeIn 0.2s ease-out; }
+.tab-page.active { display: flex; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--radius-lg); overflow: hidden; }
+
+/* mini-toggle */
+.mini-toggle { width: 30px; height: 17px; border-radius: 9px; background: rgba(255,255,255,0.1); cursor: pointer; position: relative; flex-shrink: 0; transition: background 0.2s; }
+.mini-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #888; transition: all 0.2s; }
+.mini-toggle.is-on { background: var(--ac-emerald); }
+.mini-toggle.is-on::after { left: 15px; background: #fff; }
+
+/* ═══════════════════════════════════════════════
+   版本 A 核心：左侧菜单 + 右侧详情
+   ═══════════════════════════════════════════════ */
+.split-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    display: flex;
+    min-height: 320px;
+}
+.split-sidebar {
+    width: 130px;
+    flex-shrink: 0;
+    background: rgba(0,0,0,0.15);
+    border-right: 1px solid var(--card-border);
+    display: flex; flex-direction: column;
+    padding: 6px 0;
+}
+.split-sidebar-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 9px 12px;
+    font-size: 12px; font-weight: 500;
+    color: #aaa;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    border-left: 2px solid transparent;
+    user-select: none;
+    font-family: inherit;
+    background: none;
+    border-top: none; border-right: none; border-bottom: none;
+    text-align: left;
+    width: 100%;
+}
+.split-sidebar-item:hover { background: var(--hover-bg); color: #ccc; }
+.split-sidebar-item.active {
+    color: #fff;
+    background: var(--hover-bg);
+    border-left-color: var(--ac-emerald);
+}
+.split-sidebar-item svg { width: 13px; height: 13px; flex-shrink: 0; opacity: 0.7; }
+.split-sidebar-item.active svg { opacity: 1; }
+.split-sidebar-item .item-count {
+    margin-left: auto;
+    font-size: 9px; font-weight: 600;
+    background: rgba(255,255,255,0.06);
+    padding: 1px 5px; border-radius: 3px;
+    font-family: var(--vscode-editor-font-family);
+}
+.split-sidebar-item.active .item-count {
+    background: rgba(16,185,129,0.15);
+    color: var(--ac-emerald);
+}
+
+.split-content {
+    flex: 1; min-width: 0;
+    display: none;
+    flex-direction: column;
+    animation: fadeIn 0.15s ease-out;
+}
+.split-content.active { display: flex; }
+.split-content-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--card-border);
+    font-size: 13px; font-weight: 600;
+}
+.split-content-header svg { width: 14px; height: 14px; color: var(--muted); }
+.split-content-body {
+    flex: 1;
+    padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+    overflow-y: auto;
+}
+
+/* 复用组件 */
+.strip { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.strip-band { width: 3px; height: 24px; border-radius: 0 2px 2px 0; flex-shrink: 0; }
+.strip-band.emerald { background: var(--ac-emerald); }
+.strip-band.blue { background: var(--ac-blue); }
+.strip-band.violet { background: var(--ac-violet); }
+.strip-band.amber { background: var(--ac-amber); }
+.strip-band.cyan { background: var(--ac-cyan); }
+.strip-band.orange { background: var(--ac-orange); }
+.strip-band.red { background: var(--ac-red); }
+.strip-band.pink { background: var(--ac-pink); }
+.strip-info { flex: 1; min-width: 0; }
+.strip-name { font-size: 12px; font-weight: 600; display: block; }
+.strip-desc { font-size: 11px; color: var(--muted); display: block; margin-top: 1px; }
+
+.opt-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.opt-label { font-size: 11px; color: var(--muted); white-space: nowrap; min-width: 50px; }
+.input { background: #3c3c3c; border: 1px solid var(--card-border); color: #ccc; font-size: 12px; padding: 5px 8px; border-radius: var(--radius-sm); outline: none; font-family: inherit; }
+.input:focus { border-color: var(--ac-emerald); }
+.input-num { width: 56px; text-align: center; font-family: var(--vscode-editor-font-family); }
+.select { background: #3c3c3c; border: 1px solid var(--card-border); color: #ccc; font-size: 12px; padding: 5px 22px 5px 8px; border-radius: var(--radius-sm); outline: none; cursor: pointer; font-family: inherit; flex: 1; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b8b8b' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 6px center; background-size: 12px; }
+.btn { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; font-size: 11px; font-weight: 600; border-radius: var(--radius-sm); border: 1px solid transparent; cursor: pointer; font-family: inherit; }
+.btn-blue { background: var(--ac-blue); color: #fff; border-color: var(--ac-blue); }
+.btn-emerald { background: var(--ac-emerald); color: #fff; border-color: var(--ac-emerald); }
+.btn-ghost { background: transparent; color: #ccc; border-color: var(--border-dim); }
+.btn-ghost:hover { background: var(--hover-bg); }
+.btn-danger { background: transparent; color: var(--ac-red); border-color: var(--ac-red); }
+.hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.divider { height: 1px; background: var(--card-border); margin: 4px 0; }
+.status-grid { display: flex; flex-direction: column; gap: 4px; }
+.status-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+.status-label { color: var(--muted); }
+.status-val { font-weight: 600; font-family: var(--vscode-editor-font-family); }
+.status-val.ok { color: var(--ac-emerald); }
+
+/* BYOK provider mini list */
+.mini-list { display: flex; flex-direction: column; gap: 4px; }
+.mini-list-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px;
+    background: var(--elevated-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.mini-list-item:hover { border-color: var(--border-dim); }
+.mini-list-item.active { border-color: var(--ac-emerald); background: rgba(16,185,129,0.05); }
+.mini-logo { width: 20px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; flex-shrink: 0; }
+.logo-anthropic { background: linear-gradient(135deg, #D4A574, #C4956A); color: #1A1209; }
+.logo-openai { background: linear-gradient(135deg, #4A9EFF, #357ABD); color: #fff; }
+.logo-deepseek { background: linear-gradient(135deg, #6C5CE7, #5A4BD1); color: #fff; }
+.logo-gemini { background: linear-gradient(135deg, #4285F4, #34A853); color: #fff; }
+.logo-qwen { background: linear-gradient(135deg, #6C5CE7, #A29BFE); color: #fff; }
+.logo-xai { background: linear-gradient(135deg, #FDCB6E, #F39C12); color: #1A1209; }
+.mini-list-info { flex: 1; min-width: 0; }
+.mini-list-name { font-size: 11px; font-weight: 600; }
+.mini-list-sub { font-size: 9px; color: var(--muted); font-family: var(--vscode-editor-font-family); }
+.conn-dot { width: 6px; height: 6px; border-radius: 50%; }
+.conn-dot.ok { background: var(--ac-emerald); box-shadow: 0 0 4px var(--ac-emerald); }
+.conn-dot.no { background: #555; }
+.tag { display: inline-block; padding: 2px 7px; font-size: 10px; font-weight: 500; border-radius: 3px; border: 1px solid; }
+.tag.orange { background: rgba(240,136,62,0.12); color: #f0883e; border-color: rgba(240,136,62,0.25); }
+.tag.emerald { background: rgba(16,185,129,0.12); color: #3fb950; border-color: rgba(16,185,129,0.25); }
+.tag.violet { background: rgba(139,92,246,0.12); color: #a78bfa; border-color: rgba(139,92,246,0.25); }
+.tag.cyan { background: rgba(6,182,212,0.12); color: #06b6d4; border-color: rgba(6,182,212,0.25); }
+.tag.blue { background: rgba(59,130,246,0.12); color: #58a6ff; border-color: rgba(59,130,246,0.25); }
+.byok-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.byok-table th { text-align: left; padding: 5px 6px; font-size: 9px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--elevated-bg); border-bottom: 1px solid var(--card-border); }
+.byok-table td { padding: 4px 6px; border-bottom: 1px solid var(--card-border); font-family: var(--vscode-editor-font-family); font-size: 11px; }
+.byok-table tr:last-child td { border-bottom: none; }
+.byok-table tr:hover td { background: var(--hover-bg); }
+.field-label { font-size: 9px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; }
+.key-input { -webkit-text-security: disc; }
+
+/* 占位 tab */
+.tab-page .placeholder { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- 顶栏 -->
+  <div class="app-tabs">
+    <button class="app-tab" data-tab="account">账户</button>
+    <button class="app-tab" data-tab="instance">实例</button>
+    <button class="app-tab active" data-tab="automation">自动化</button>
+    <button class="app-tab" data-tab="enhance">增强</button>
+    <button class="app-tab" data-tab="byok">BYOK</button>
+  </div>
+
+  <!-- ═══ Tab: 账户 ═══ -->
+  <div class="tab-page" data-tab-page="account">
+    <div class="placeholder">账户管理（保留原设计）</div>
+  </div>
+
+  <!-- ═══ Tab: 实例 ═══ -->
+  <div class="tab-page" data-tab-page="instance">
+    <div class="placeholder">实例管理（保留原设计）</div>
+  </div>
+
+  <!-- ═══ Tab: 自动化 ═══ -->
+  <div class="tab-page active" data-tab-page="automation">
+    <div class="split-card">
+      <div class="split-sidebar">
+        <button class="split-sidebar-item active" data-pane="auto-switch">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          <span>自动切号</span>
+          <span class="item-count">23</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="auto-continue">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M12 17h.01"/></svg>
+          <span>自动继续</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="long-task">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span>长任务</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="guardian">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+          <span>守护</span>
+        </button>
+      </div>
+
+      <!-- ── 自动切号 ── -->
+      <div class="split-content active" data-pane-content="auto-switch">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          自动切号
+          <div style="margin-left:auto" class="mini-toggle is-on"></div>
+        </div>
+        <div class="split-content-body">
+          <div style="display:flex;align-items:center;gap:4px;font-size:13px;font-weight:500">
+            <span>额度低于</span>
+            <input class="input input-num" value="15" style="font-size:13px;font-weight:700">
+            <span style="color:var(--muted);font-size:10px">%</span>
+            <span>时自动换号</span>
+          </div>
+          <div class="opt-row">
+            <span class="opt-label">范围</span>
+            <select class="select"><option>全部账号</option><option selected>按标签</option><option>当前实例分组</option></select>
+          </div>
+          <div class="opt-row">
+            <span class="opt-label">策略</span>
+            <select class="select"><option>满额度优先（推荐）</option><option>先用完再换新</option></select>
+          </div>
+          <div class="opt-row">
+            <span class="opt-label">废号下限</span>
+            <input class="input input-num" value="10"><span style="color:var(--muted);font-size:10px">%</span>
+            <span class="opt-label">冷却</span>
+            <input class="input input-num" value="15"><span style="color:var(--muted);font-size:10px">秒</span>
+          </div>
+          <div class="divider"></div>
+          <div class="hint">取日/周配额中较低者为准。例：日100% 周0% → 实际不可用，自动切到额度最充足的号。</div>
+          <div style="display:flex;gap:6px;margin-top:4px">
+            <button class="btn btn-emerald" style="flex:1">保存设置</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 自动继续 ── -->
+      <div class="split-content" data-pane-content="auto-continue">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M12 17h.01"/></svg>
+          自动继续
+        </div>
+        <div class="split-content-body">
+          <div class="strip"><div class="strip-band emerald"></div><div class="strip-info"><span class="strip-name">自动点击"继续"按钮</span><span class="strip-desc">AI 停止时自动点击 continue</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="strip"><div class="strip-band blue"></div><div class="strip-info"><span class="strip-name">自动发送 continue</span><span class="strip-desc">检测到停止时直接发送消息</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="strip"><div class="strip-band amber"></div><div class="strip-info"><span class="strip-name">自动重试</span><span class="strip-desc">遇到错误时自动重新发送</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="divider"></div>
+          <div class="opt-row"><span class="opt-label">模式</span><select class="select"><option selected>简单（自动点继续）</option><option>守护（监控+自动恢复）</option></select></div>
+          <div class="opt-row"><span class="opt-label">冷却</span><input class="input input-num" value="3"><span style="color:var(--muted);font-size:10px">秒</span></div>
+          <div style="display:flex;gap:6px;margin-top:4px"><button class="btn btn-emerald" style="flex:1">保存设置</button></div>
+        </div>
+      </div>
+
+      <!-- ── 长任务 ── -->
+      <div class="split-content" data-pane-content="long-task">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          长任务
+        </div>
+        <div class="split-content-body">
+          <div class="hint">长任务模式：自动执行指令队列中的任务，适用于批量操作场景。</div>
+          <div class="strip"><div class="strip-band emerald"></div><div class="strip-info"><span class="strip-name">启用长任务模式</span><span class="strip-desc">AI 停止后自动发送下一条指令</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="opt-row"><span class="opt-label">等待</span><input class="input input-num" value="2"><span style="color:var(--muted);font-size:10px">秒</span></div>
+          <div class="opt-row"><span class="opt-label">上限</span><input class="input input-num" value="100"><span style="color:var(--muted);font-size:10px">轮</span></div>
+          <div class="opt-row"><span class="opt-label">指令文件</span><input class="input" value="tasks.txt" style="flex:1"></div>
+          <div style="display:flex;gap:6px;margin-top:4px"><button class="btn btn-emerald" style="flex:1">保存设置</button></div>
+        </div>
+      </div>
+
+      <!-- ── 守护 ── -->
+      <div class="split-content" data-pane-content="guardian">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+          守护
+        </div>
+        <div class="split-content-body">
+          <div class="strip"><div class="strip-band emerald"></div><div class="strip-info"><span class="strip-name">错误恢复</span><span class="strip-desc">AI 报错时自动尝试恢复</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="strip"><div class="strip-band blue"></div><div class="strip-info"><span class="strip-name">权限自动批准</span><span class="strip-desc">自动批准终端/文件操作</span></div><div class="mini-toggle"></div></div>
+          <div class="strip"><div class="strip-band amber"></div><div class="strip-info"><span class="strip-name">断线重连</span><span class="strip-desc">连接断开时自动重试</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="divider"></div>
+          <div class="opt-row"><span class="opt-label">重试</span><input class="input input-num" value="3"><span style="color:var(--muted);font-size:10px">次</span></div>
+          <div style="display:flex;gap:6px;margin-top:4px"><button class="btn btn-emerald" style="flex:1">保存设置</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Tab: 增强 ═══ -->
+  <div class="tab-page" data-tab-page="enhance">
+    <div class="split-card">
+      <div class="split-sidebar">
+        <button class="split-sidebar-item active" data-pane="core">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span>核心增强</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="bubble">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+          <span>回复建议</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="statusbar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="8" width="4" height="13" rx="1"/><rect x="17" y="4" width="4" height="17" rx="1"/></svg>
+          <span>状态栏</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="notify">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <span>完成提醒</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="i18n">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+          <span>界面汉化</span>
+        </button>
+      </div>
+
+      <!-- ── 核心增强 ── -->
+      <div class="split-content active" data-pane-content="core">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Windsurf 核心增强
+          <span style="margin-left:auto;font-size:10px;color:var(--ac-emerald);background:rgba(16,185,129,0.15);padding:2px 8px;border-radius:10px;font-family:var(--vscode-editor-font-family)">v5.0.3</span>
+        </div>
+        <div class="split-content-body">
+          <div class="status-grid">
+            <div class="status-row"><span class="status-label">增强脚本</span><span class="status-val ok">✓ 已注入</span></div>
+            <div class="status-row"><span class="status-label">智能建议规则</span><span class="status-val ok">✓ 已配置</span></div>
+            <div class="status-row"><span class="status-label">无感切号</span><span class="status-val ok">✓ 已就绪</span></div>
+            <div class="status-row"><span class="status-label">Bridge 端口</span><span class="status-val">127.0.0.1:5639</span></div>
+          </div>
+          <div class="divider"></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-blue">重新注入</button>
+            <button class="btn btn-ghost">修改提示词</button>
+            <button class="btn btn-ghost">导出补丁</button>
+            <button class="btn btn-danger">恢复原始</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 回复建议 ── -->
+      <div class="split-content" data-pane-content="bubble">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+          回复建议
+        </div>
+        <div class="split-content-body">
+          <div class="strip"><div class="strip-band emerald"></div><div class="strip-info"><span class="strip-name">启用回复建议</span><span class="strip-desc">AI 回复后显示气泡</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="strip"><div class="strip-band blue"></div><div class="strip-info"><span class="strip-name">点击自动发送</span><span class="strip-desc">选择后直接发送</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="divider"></div>
+          <div class="opt-row"><span class="opt-label">主题</span><select class="select"><option>绿青蓝（翡翠）</option><option>紫粉（极光）</option></select></div>
+          <div class="opt-row"><span class="opt-label">位置</span><select class="select"><option>消息底部</option><option>右侧浮动</option></select></div>
+        </div>
+      </div>
+
+      <!-- ── 状态栏 ── -->
+      <div class="split-content" data-pane-content="statusbar">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="8" width="4" height="13" rx="1"/><rect x="17" y="4" width="4" height="17" rx="1"/></svg>
+          状态栏
+        </div>
+        <div class="split-content-body">
+          <div class="strip"><div class="strip-band blue"></div><div class="strip-info"><span class="strip-name">启用状态栏</span><span class="strip-desc">底部显示账号/额度</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="divider"></div>
+          <div class="opt-row"><span class="opt-label">位置</span><select class="select"><option>右侧</option><option>左侧</option></select></div>
+          <div class="opt-row"><span class="opt-label">样式</span><select class="select"><option>🟢 75% — 圆点 + 百分比</option><option>完整</option></select></div>
+        </div>
+      </div>
+
+      <!-- ── 完成提醒 ── -->
+      <div class="split-content" data-pane-content="notify">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          完成提醒
+        </div>
+        <div class="split-content-body">
+          <div class="strip"><div class="strip-band amber"></div><div class="strip-info"><span class="strip-name">启用完成提醒</span><span class="strip-desc">AI 完成时响铃/通知</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="divider"></div>
+          <div class="opt-row"><span class="opt-label">铃声</span><select class="select"><option>Funk</option><option>Ding</option><option>Chime</option></select></div>
+          <div class="opt-row"><span class="opt-label">通知</span><select class="select"><option>系统通知</option><option>仅响铃</option><option>两者</option></select></div>
+        </div>
+      </div>
+
+      <!-- ── 界面汉化 ── -->
+      <div class="split-content" data-pane-content="i18n">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+          界面汉化
+        </div>
+        <div class="split-content-body">
+          <div class="strip"><div class="strip-band cyan"></div><div class="strip-info"><span class="strip-name">启用界面汉化</span><span class="strip-desc">翻译为中文</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="divider"></div>
+          <div class="opt-row"><span class="opt-label">语言</span><select class="select"><option selected>简体中文</option><option>繁體中文</option></select></div>
+          <div class="hint">汉化补丁会在下次重启 Windsurf 后生效。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Tab: BYOK ═══ -->
+  <div class="tab-page" data-tab-page="byok">
+    <!-- 概览 -->
+    <div class="card" style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8b8b8b" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span style="font-size:13px;font-weight:600;flex:1">运行总览</span>
+      <span style="font-size:10px;color:var(--ac-emerald);background:rgba(16,185,129,0.15);padding:2px 8px;border-radius:10px;font-family:var(--vscode-editor-font-family)">运行中</span>
+    </div>
+    <div class="card" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+      <div class="status-row"><span class="status-label">今日请求</span><span class="status-val" style="color:#fff">1,247 <span style="color:var(--ac-emerald);font-size:10px">↑18%</span></span></div>
+      <div class="status-row"><span class="status-label">Token 费用</span><span class="status-val" style="color:#fff">$4.23 / 892K</span></div>
+      <div class="status-row"><span class="status-label">活跃供应商</span><span class="status-val ok">2 / 6</span></div>
+    </div>
+
+    <!-- 分割卡：菜单 + 详情 -->
+    <div class="split-card" style="min-height:480px">
+      <div class="split-sidebar">
+        <button class="split-sidebar-item active" data-pane="providers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          <span>供应商</span>
+          <span class="item-count">6</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="models">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6"/></svg>
+          <span>模型映射</span>
+          <span class="item-count">5</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="patches">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <span>补丁</span>
+          <span class="item-count">3/4</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="proxy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4"/></svg>
+          <span>代理设置</span>
+        </button>
+        <button class="split-sidebar-item" data-pane="logs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>活动日志</span>
+          <span class="item-count">24</span>
+        </button>
+      </div>
+
+      <!-- ── 供应商 ── -->
+      <div class="split-content active" data-pane-content="providers">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          API 供应商
+          <span style="margin-left:auto;font-size:10px;color:var(--muted);font-family:var(--vscode-editor-font-family)">2 / 6 已配置</span>
+        </div>
+        <div class="split-content-body">
+          <div class="mini-list">
+            <div class="mini-list-item active">
+              <div class="mini-logo logo-anthropic">A</div>
+              <div class="mini-list-info"><div class="mini-list-name">Anthropic</div><div class="mini-list-sub">/v1/messages · 12ms</div></div>
+              <span class="conn-dot ok"></span>
+            </div>
+            <div class="mini-list-item">
+              <div class="mini-logo logo-openai">O</div>
+              <div class="mini-list-info"><div class="mini-list-name">OpenAI</div><div class="mini-list-sub">/v1/responses</div></div>
+              <span class="conn-dot no"></span>
+            </div>
+            <div class="mini-list-item">
+              <div class="mini-logo logo-deepseek">D</div>
+              <div class="mini-list-info"><div class="mini-list-name">DeepSeek</div><div class="mini-list-sub">/v1/chat/completions · 45ms</div></div>
+              <span class="conn-dot ok"></span>
+            </div>
+            <div class="mini-list-item">
+              <div class="mini-logo logo-gemini">G</div>
+              <div class="mini-list-info"><div class="mini-list-name">Google Gemini</div><div class="mini-list-sub">/v1beta/models</div></div>
+              <span class="conn-dot no"></span>
+            </div>
+            <div class="mini-list-item">
+              <div class="mini-logo logo-qwen">Q</div>
+              <div class="mini-list-info"><div class="mini-list-name">通义千问</div><div class="mini-list-sub">/compatible-mode/v1</div></div>
+              <span class="conn-dot no"></span>
+            </div>
+            <div class="mini-list-item">
+              <div class="mini-logo logo-xai">X</div>
+              <div class="mini-list-info"><div class="mini-list-name">xAI (Grok)</div><div class="mini-list-sub">/v1/chat/completions</div></div>
+              <span class="conn-dot no"></span>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <div style="font-size:12px;font-weight:600;margin-bottom:4px">Anthropic 详情</div>
+          <div class="field-label">API 地址</div>
+          <input class="input" value="api.anthropic.com" style="font-family:var(--vscode-editor-font-family);width:100%">
+          <div class="field-label" style="margin-top:6px">API 密钥</div>
+          <input class="input key-input" value="sk-ant-•••••••••••••••" style="width:100%">
+          <div class="field-label" style="margin-top:6px">默认模型</div>
+          <select class="select"><option>claude-sonnet-4-6</option><option>claude-opus-4-6</option></select>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-blue" style="flex:1">⚡ 测试连接</button>
+            <button class="btn btn-ghost">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 模型映射 ── -->
+      <div class="split-content" data-pane-content="models">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6"/></svg>
+          模型映射
+        </div>
+        <div class="split-content-body">
+          <table class="byok-table">
+            <thead><tr><th>Windsurf</th><th>供应商</th><th>实际模型</th><th>状态</th></tr></thead>
+            <tbody>
+              <tr><td>claude-sonnet-4-6</td><td><span class="tag orange">Anthropic</span></td><td>claude-sonnet-4-6</td><td style="color:var(--ac-emerald)">●</td></tr>
+              <tr><td>claude-opus-4-6</td><td><span class="tag orange">Anthropic</span></td><td>claude-opus-4-6</td><td style="color:var(--ac-emerald)">●</td></tr>
+              <tr><td>gpt-5-4-low</td><td><span class="tag emerald">OpenAI</span></td><td>gpt-5.4</td><td style="color:var(--muted)">○</td></tr>
+              <tr><td>deepseek-r1</td><td><span class="tag violet">DeepSeek</span></td><td>deepseek-reasoner</td><td style="color:var(--ac-emerald)">●</td></tr>
+            </tbody>
+          </table>
+          <button class="btn btn-ghost" style="width:100%">+ 添加映射</button>
+        </div>
+      </div>
+
+      <!-- ── 补丁 ── -->
+      <div class="split-content" data-pane-content="patches">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Extension.js 补丁
+        </div>
+        <div class="split-content-body">
+          <div class="strip"><div class="strip-band emerald" style="height:22px"></div><div class="strip-info" style="display:flex;align-items:center;gap:6px;width:100%"><span class="tag emerald" style="font-family:var(--vscode-editor-font-family)">1</span><div style="flex:1"><div class="strip-name">getApiServerUrlFromContext</div><div class="strip-desc">→ "http://localhost:3000"</div></div></div><span class="status-val ok">已应用</span></div>
+          <div class="strip"><div class="strip-band emerald" style="height:22px"></div><div class="strip-info" style="display:flex;align-items:center;gap:6px;width:100%"><span class="tag emerald" style="font-family:var(--vscode-editor-font-family)">2</span><div style="flex:1"><div class="strip-name">restart() URL 锁定</div><div class="strip-desc">→ 防止重启后 URL 回弹</div></div></div><span class="status-val ok">已应用</span></div>
+          <div class="strip"><div class="strip-band amber" style="height:22px"></div><div class="strip-info" style="display:flex;align-items:center;gap:6px;width:100%"><span class="tag orange" style="font-family:var(--vscode-editor-font-family)">3</span><div style="flex:1"><div class="strip-name">Thinking 模式透传</div><div class="strip-desc">→ thinking 参数原样转发</div></div></div><span class="status-val" style="color:var(--ac-amber)">待应用</span></div>
+          <div class="divider"></div>
+          <div style="display:flex;gap:6px"><button class="btn btn-blue" style="flex:1">✂ 应用全部补丁</button><button class="btn btn-ghost">恢复</button></div>
+        </div>
+      </div>
+
+      <!-- ── 代理设置 ── -->
+      <div class="split-content" data-pane-content="proxy">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4"/></svg>
+          代理设置
+        </div>
+        <div class="split-content-body">
+          <div class="opt-row"><span class="opt-label">HTTP</span><input class="input input-num" value="3000"><span class="opt-label">HTTPS</span><input class="input input-num" value="3001"></div>
+          <div class="opt-row"><span class="opt-label">超时</span><input class="input input-num" value="30"><span style="color:var(--muted);font-size:10px">秒</span><span class="opt-label">重试</span><input class="input input-num" value="2"><span style="color:var(--muted);font-size:10px">次</span></div>
+          <div class="divider"></div>
+          <div class="strip"><div class="strip-band emerald"></div><div class="strip-info"><span class="strip-name">自动启动</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="strip"><div class="strip-band blue"></div><div class="strip-info"><span class="strip-name">自动回退</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="strip"><div class="strip-band amber"></div><div class="strip-info"><span class="strip-name">Codeium 透传</span></div><div class="mini-toggle is-on"></div></div>
+          <div class="strip"><div class="strip-band red"></div><div class="strip-info"><span class="strip-name">密钥加密</span></div><div class="mini-toggle is-on"></div></div>
+        </div>
+      </div>
+
+      <!-- ── 活动日志 ── -->
+      <div class="split-content" data-pane-content="logs">
+        <div class="split-content-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          最近活动
+        </div>
+        <div class="split-content-body">
+          <div style="font-size:10px;font-family:var(--vscode-editor-font-family);color:var(--muted);line-height:1.8">
+            <div>15:42:01 <span style="color:var(--ac-emerald)">OK</span> Anthropic claude-sonnet-4-6 → 200 (1.2s)</div>
+            <div>15:41:58 <span style="color:var(--ac-emerald)">OK</span> DeepSeek deepseek-chat → 200 (0.8s)</div>
+            <div>15:41:45 <span style="color:var(--ac-amber)">WRN</span> OpenAI 密钥未配置</div>
+            <div>15:41:12 <span style="color:var(--ac-red)">ERR</span> Gemini 超时</div>
+            <div>15:40:55 <span style="color:var(--ac-cyan)">INF</span> 代理启动成功 :3000</div>
+            <div>15:40:48 <span style="color:var(--ac-emerald)">OK</span> 补丁注入成功 (3/4)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── 顶栏 Tab 切换 ──
+(function() {
+  const tabs = document.querySelectorAll('.app-tab');
+  const pages = document.querySelectorAll('.tab-page');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.tab;
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      pages.forEach(p => p.classList.toggle('active', p.dataset.tabPage === target));
+    });
+  });
+})();
+
+// ── 左侧菜单切换 ──
+document.querySelectorAll('.split-card').forEach(card => {
+  const items = card.querySelectorAll('.split-sidebar-item');
+  const contents = card.querySelectorAll('.split-content');
+  items.forEach(item => {
+    item.addEventListener('click', () => {
+      const target = item.dataset.pane;
+      items.forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      contents.forEach(c => c.classList.toggle('active', c.dataset.paneContent === target));
+    });
+  });
+});
+
+// ── mini-toggle 点击 ──
+document.querySelectorAll('.mini-toggle').forEach(t => {
+  t.addEventListener('click', e => {
+    e.stopPropagation();
+    t.classList.toggle('is-on');
+  });
+});
+</script>
+</body>
+</html>

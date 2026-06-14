@@ -1016,6 +1016,9 @@
 	}
 	
 	// ========== 汉化功能 ==========
+	// v8.5.5：把"易被误伤"的元素（code/kbd/samp/var）从 EXCLUDE_SELECTOR 拆出，
+	// 仅当其祖先含 CODE_CONTEXT_REQUIRED 之一时才算"代码区"才跳过。
+	// 解决"设置面板里 <code> 描述（如"Automatically detect a network proxy..."）被误屏蔽"的问题。
 	const EXCLUDE_SELECTOR = [
 		// ── 编辑器与代码区 ──
 		'.monaco-editor', '.monaco-diff-editor',
@@ -1025,7 +1028,7 @@
 		'.shiki', '[class*="shiki"]',                  // Shiki 语法高亮器
 		'[class*="language-"]',                        // Prism / 通用 language-xx 标记
 		'[class*="token"]',                            // Prism / Monaco token spans
-		'pre', 'code', 'kbd', 'samp', 'var',           // 标准代码相关元素
+		'pre',                                          // <pre> 代码块容器（保留）
 		'textarea', 'input', '[contenteditable="true"]',
 		// ── 终端 / 输出区 ──
 		'.xterm', '.terminal', '.debug-console',
@@ -1069,10 +1072,17 @@
 		'.notification-list-item-source',
 		'.notification-list-item-detail-row code'
 	].join(', ');
+
+	// 仅当"易误伤"元素（code/kbd/samp/var）在真正的代码容器中时才跳过。
+	// 单独的 <code> 在设置描述里很常见，不应被屏蔽。
+	const CODE_CONTEXT_REQUIRED = '.monaco-editor, .monaco-diff-editor, [class*="diffEditor"], [class*="diff-editor"], [class*="codeBlock"], [class*="code-block"], .hljs, [class*="hljs"], .shiki, [class*="shiki"], [class*="language-"], [class*="token"], pre, [class*="markdown-body"], [class*="markdownBody"], [class*="tool-call"], [class*="toolCall"], [class*="tool_call"], [class*="code-citation"], [class*="codeCitation"], [class*="file-citation"], [class*="fileCitation"], [class*="diff-line"], [class*="diffLine"], [data-language], [role="code"], .notebook-editor, .notebook-cell-list, [class*="cell-editor-part"], .monaco-hover, .xterm, .terminal, .debug-console';
+	const FRAGILE_INLINE_TAGS = 'code, kbd, samp, var';
 	// 模型名标识正则：文本包含已知模型/智能体名称时跳过翻译（避免翻译模型限定词如 Thinking/Fast/Medium）
+	// v8.5.6：放宽 - 只匹配"短且像模型限定词"的文本。含 devin 但长度 > 30 视为产品名/描述，跳过此检查
 	const MODEL_LABEL_SKIP_RE = /\b(claude|gpt-?\d|gpt-?o|o\d-|gemini|llama|qwen|deepseek|mistral|mixtral|swe-?\d|grok|haiku|sonnet|opus|codestral|devstral|devin)\b/i;
 	// 描述性词汇指示符：含这些词时认为是描述/说明文字而非模型标签，不跳过翻译
-	const MODEL_DESC_RE = /\b(for|via|using|with|agent|coding|powered|based|built|available|supported|requires?|enables?|provides?|settings|apply|saved|balance|draw|from|describe|task)\b/i;
+	// v8.5.6：扩展词汇表，覆盖"长描述句"的常见特征词（detect/reload/setting/...）
+	const MODEL_DESC_RE = /\b(for|via|using|with|agent|coding|powered|based|built|available|supported|requires?|enables?|provides?|settings|apply|saved|balance|draw|from|describe|task|detect|reload|enable|disable|when|will|this|that|default|click|select|enter|input|edit|change|update|reload|reload|reloads|reload|please|note|tip|hint|info|warning|error|failed|success|complete|reopen|restart|reset|clear|remove|delete|add|create|new|import|export|download|upload|view|open|close|save|cancel|confirm|run|start|stop|pause|resume|show|hide|display|render|compute|process|handle|manage|configure)\b/i;
 	const ATTRS_TO_TRANSLATE = ['aria-label', 'title', 'placeholder', 'data-tooltip'];
 	
 	const TRANSLATIONS = new Map([
@@ -1222,6 +1232,9 @@
 		['These settings only apply to Devin CLI and are saved to c:\\Users\\admin\\AppData\\Roaming\\devin\\config.json', '这些设置仅适用于 Devin CLI，并保存至 c:\\Users\\admin\\AppData\\Roaming\\devin\\config.json'],
 		['Browse, install, and manage MCP servers from the Devin MCP marketplace. Enable or disable servers and individual tools', '从 Devin MCP 市场浏览、安装和管理 MCP 服务器。启用或禁用服务器及单个工具。'],
 		['Open Devin MCP marketplace', '打开 Devin MCP 市场'],
+		['Browse and install MCP servers from the Devin MCP marketplace. Manage installed MCPs including enabling or disabling them at both server and individual tool level.', '从 Devin MCP 市场浏览并安装 MCP 服务器。管理已安装的 MCP，包括在服务器和单个工具级别启用或禁用它们。'],
+		['Open Devin MCP Marketplace', '打开 Devin MCP 市场'],
+		['Open the config.json file in the editor for advanced editing.', '在编辑器中打开 config.json 文件进行高级编辑。'],
 		['Patterns for tools and commands that are always allowed', '始终允许的工具和命令的模式'],
 		['Patterns for tools and commands that are always denied', '始终拒绝的工具和命令的模式'],
 		['Patterns for tools and commands that require confirmation', '需要确认的工具和命令的模式'],
@@ -1230,6 +1243,8 @@
 		['Agents can be instantiated through the Agent Client Protocol', '智能体可以通过智能体客户端协议（ACP）进行实例化'],
 		['Search agents...', '搜索智能体...'],
 		['Makes Cascade available; otherwise only ACP agents can be used', '启用 Cascade；否则只能使用 ACP 智能体'],
+		['Start a new Codex CLI session', '开始新的 Codex CLI 会话'],
+		['Start a new Claude Agent session', '开始新的 Claude Code 会话'],
 		['Devin Local', 'Devin 本地'],
 		['Devin AI coding agent via Devin CLI', '通过 Devin CLI 的 Devin AI 编程智能体'],
 		['Devin Cloud', 'Devin 云端'],
@@ -1292,6 +1307,20 @@
 		['Local-first coding agent. Runs entirely on your machine with optional on-device ...', '本地优先编程智能体。完全在您的机器上运行，支持可选的本地端...'],
 		['Open-source DevOps agent in Rust with enterprise-grade security', '采用 Rust 编写的、具有企业级安全性的开源 DevOps 智能体'],
 		['An open-source coding agent with LLM-native code understanding and robust s...', '一个开源编程智能体，具有 LLM 原生代码理解和强大的...'],
+		// v8.5.8：扩长 anchor，覆盖 robust shel... 截断（+3 字符）
+		['An open-source coding agent with LLM-native code understanding and robust shel', '一个开源编程智能体，具有 LLM 原生代码理解和强大的 shel'],
+		['An open-source coding agent with LLM-native code understanding and robust she', '一个开源编程智能体，具有 LLM 原生代码理解和强大的 she'],
+		['An open-source coding agent with LLM-native code understanding and robust sh', '一个开源编程智能体，具有 LLM 原生代码理解和强大的 sh'],
+		['An open-source coding agent with LLM-native code understanding and robust ', '一个开源编程智能体，具有 LLM 原生代码理解和强大的 '],
+		// Agoragentic 智能体描述（截图 5）
+		['Agoragentic', 'Agoragentic'],
+		['Agent marketplace with 174+ AI capabilities. Browse, invoke, and pay for agent s...', '聚合 174+ AI 能力的智能体市场。可浏览、调用和支付 agent s...'],
+		['Agent marketplace with 174+ AI capabilities', '聚合 174+ AI 能力的智能体市场'],
+		// VT Code 智能体名（保持英文）
+		['VT Code', 'VT Code'],
+		// 下拉菜单补充
+		['Hide configuration', '隐藏配置'],
+		['Show configuration', '显示配置'],
 		
 		// ========== 选项值 ==========
 		// ['Low', '低'],     // 移除：保留原文（模型推理强度等上下文使用）
@@ -1310,6 +1339,9 @@
 		['Auto-execution is disabled for all commands', '所有命令的自动执行已禁用'],
 		['Auto-fetching is disabled for all web requests', '所有 Web 请求的自动获取已禁用'],
 		['Allowlist', '允许列表'],
+		['Permission required', '需要权限'],
+		['Allow for this session', '允许本次会话'],
+		["Allow and don't ask again", '允许并不再询问'],
 		['Never auto-execute commands unless they are in your allow list', '除非命令在你的允许列表中，否则不自动执行'],
 		['Only auto-fetch URLs from origins in your allow list', '仅自动获取允许列表中来源的 URL'],
 		['Auto', '自动'],
@@ -1512,6 +1544,8 @@
 		['AI Shortcuts', 'AI 快捷键'],
 
 		// ========== 通用操作 ==========
+		['Enable', '启用'],
+		['Disable', '禁用'],
 		['Save', '保存'],
 		['Delete', '删除'],
 		['Edit', '编辑'],
@@ -1534,6 +1568,9 @@
 
 		// ========== 模型选择相关 ==========
 		['Search all models', '搜索所有模型'],
+		['Available models', '可用模型'],
+		['Small, fast, and cost-efficient model for simpler coding tasks.', '小巧、快速、成本更低，适合较简单的编码任务。'],
+		['Small, fast, and cost-efficient model for simpler coding tasks', '小巧、快速、成本更低，适合较简单的编码任务'],
 		['Group by', '分组'],
 		['Adaptive', '自适应'],
 		['Automatically balances quality and cost', '自动平衡质量和成本'],
@@ -1551,11 +1588,64 @@
 		['Output', '输出'],
 		['tokens', 'tokens'],
 
+		// ========== Cascade 输入框 chip 标签（截图 Cascade Agent Session） ==========
+		// chip 格式: "Model: Default" / "Effort: High" / "Claude Haiku 5"
+		// v8.5.7 补：Model / Effort 单独翻译，含冒号也支持
+		['Model', '模型'],
+		['Model: Default', '模型：默认'],
+		['Model: ', '模型：'],
+		['Effort: ', '推理强度：'],
+		['Effort: high', '推理强度：高'],
+		['Effort: High', '推理强度：高'],
+		['Model default', '模型默认'],
+		['Mode', '模式'],
+		['Mode: Default', '模式：默认'],
+		['Mode: ', '模式：'],
+		['Mode default', '模式默认'],
+		['Mode: Bypass Permissions', '模式：绕过权限'],
+		['Effort: Medium', '推理强度：中'],
+		['Effort: Low', '推理强度：低'],
+		['Effort: medium', '推理强度：中'],
+		['Effort: low', '推理强度：低'],
+		// 模型选择 chip 文本（用户在 chip 上点击后展示的当前选中）
+		['Claude Haiku 5', 'Claude Haiku 5'],
+
+		// ========== Cascade Agent Session 页面（截图右下角） ==========
+		['Cascade Agent Session', 'Cascade 智能体会话'],
+		['Cascade Code Session', 'Cascade 代码会话'],
+		['Claude Code', 'Claude Code'],  // 产品名保持英文
+		['Start a new Claude Code session', '开启新的 Claude Code 会话'],
+
 		// ========== 聊天模式相关 ==========
 		['Code', '代码'],
 		['Can write and edit code', '可以编写和编辑代码'],
 		['Reads but won\'t edit', '读取但不会编辑'],
 		['Plan changes before implementing', '先规划，再实施'],
+		['Read Only', '只读'],
+		['Codex can read files in the current workspace. Approval is required to edit files or access the internet.', 'Codex 可以读取当前工作区中的文件。编辑文件或访问互联网需要批准。'],
+		['Codex can read files in the current workspace. Approval is required to edit files or access the internet', 'Codex 可以读取当前工作区中的文件。编辑文件或访问互联网需要批准'],
+		['Codex can read and edit files in the current workspace, and run commands. Approval is required to access the internet or edit other files. (Identical to Agent mode)', 'Codex 可以读取和编辑当前工作区中的文件，并运行命令。访问互联网或编辑其他文件需要批准。（等同于 Agent 模式）'],
+		['Full Access', '完全访问'],
+		['Codex can edit files outside this workspace and access the internet without asking for approval. Exercise caution when using.', 'Codex 可以编辑此工作区外的文件并访问互联网，无需请求批准。使用时请谨慎。'],
+		['Codex can edit files outside this workspace and access the internet without asking for approval. Exercise caution when using', 'Codex 可以编辑此工作区外的文件并访问互联网，无需请求批准。使用时请谨慎'],
+		['Low', '低'],
+		['Fast responses with lighter reasoning', '更快响应，推理更轻量'],
+		['Medium', '中'],
+		['Balances speed and reasoning depth for everyday tasks', '在日常任务中平衡速度与推理深度'],
+		['High', '高'],
+		['Greater reasoning depth for complex problems', '为复杂问题提供更深的推理'],
+		['Xhigh', '超高'],
+		['Extra high reasoning depth for complex problems', '为复杂问题提供额外高强度推理'],
+		['Use a model classifier to approve/deny permission prompts', '使用模型分类器批准或拒绝权限提示'],
+		['Standard behavior, prompts for dangerous operations', '标准行为，危险操作会提示确认'],
+		['Accept Edits', '接受编辑'],
+		['Auto-accept file edit operations', '自动接受文件编辑操作'],
+		['Plan Mode', '计划模式'],
+		['Planning mode, no actual tool execution', '计划模式，不实际执行工具'],
+		['Don\'t Ask', '不询问'],
+		['Don\'t prompt for permissions, deny if not pre-approved', '不提示权限请求，未预先批准则拒绝'],
+		['Bypass Permissions', '绕过权限'],
+		['Bypass all permission checks', '绕过所有权限检查'],
 		['Use', '使用'],
 		['to switch modes', '切换模式'],
 		['Ask anything', '询问任何问题'],
@@ -1686,9 +1776,32 @@
 		['Controls how proactively Supercomplete suggests edits near your cursor.', '控制 Supercomplete 在光标附近主动建议编辑的频率。'],
 		['Choose your preferred code completion experience.', '选择你偏好的代码补全体验。'],
 
-		// ========== Agents 页面（截图4） ==========
+		// ========== Agents 页面（截图1-4） ==========
+		// 智能体卡片下拉菜单
+		['Set as preferred', '设为首选'],
+		['Remove as preferred', '取消首选'],
+		['Configure', '配置'],
+		// 智能体卡片下拉菜单（其他动作 - 截图3）
+		['Hide configuration', '隐藏配置'],
+		['Show configuration', '显示配置'],
+		['Disable', '禁用'],
+		['Enable', '启用'],
+		['Uninstall', '卸载'],
+		// Agent 配置面板 - 环境变量
 		['No environment variables set.', '未设置环境变量。'],
+		['No environment variables', '暂无环境变量'],
 		['Add', '添加'],
+		// 智能体描述（DOM 中省略号位置不固定，前缀兜底匹配，见 lookupTranslationPrefix）
+		// 注：带 `...` 的智能体描述 key 已存在于上方的"智能体/ACP"分类中
+
+		// ========== 高级设置 / 允许的源（截图5-6） ==========
+		// 允许的源 - 底部按钮
+		['Import', '导入'],
+		['Export', '导出'],
+		// 顶级 "Settings" 标题（截图1标签）
+		['Settings', '设置'],
+		// 底部状态栏（截图3）
+		['Free - Upgrade Now', '免费版 - 立即升级'],
 
 		// ========== 模型选择器分组菜单 ==========
 		['Provider', '提供商'],
@@ -1918,6 +2031,18 @@
 		['Switch agent', '切换智能体'],
 		['See more', '查看更多'],
 		['Model provider unreachable', '模型提供商不可达'],
+		['Internal error: API Error: Request rejected (429) - Service Unavailable', '内部错误：API 错误：请求被拒绝 (429) - 服务不可用'],
+		['Show logs', '显示日志'],
+		['Show Logs', '显示日志'],
+		['Authentication failed', '认证失败'],
+		['Failed to activate agent', '激活智能体失败'],
+		['Team settings refresh timed out', '团队设置刷新超时'],
+		['Unable to connect to Devin. Some AI features may not work.', '无法连接到 Devin。部分 AI 功能可能不可用。'],
+		['timed out', '超时'],
+		['Canceled terminal command', '已取消终端命令'],
+		['Cancelled terminal command', '已取消终端命令'],
+		['Canceled', '已取消'],
+		['Cancelled', '已取消'],
 		['Purchase extra usage to continue using premium models', '购买额外用量以继续使用高级模型'],
 		['Your included weekly usage quota is exhausted.', '您的每周配额已用完。'],
 		['Your included weekly usage quota is exhausted', '您的每周配额已用完'],
@@ -1955,6 +2080,10 @@
 		[/\b(\d+)% used\b/i, '$1% 已使用'],
 		[/^These settings only apply to Devin for Terminal and are saved to\s*(.+)$/i, '这些设置仅适用于 Devin 终端，并保存到 $1'],
 		[/^These settings only apply to Devin CLI and are saved to\s*(.+)$/i, '这些设置仅适用于 Devin CLI，并保存至 $1'],
+		[/^These settings only apply to Devin Local and are saved to\s*(.+)$/i, '这些设置仅适用于 Devin Local，并保存至 $1'],
+		[/^Augment Code['\u2019]s powerful software agent, backed by industry-leading context.+$/i, 'Augment Code 的强大软件智能体，由行业领先的上下文引擎支持'],
+		[/^Autonomous coding agent CLI\s*-\s*capable of creating\/editing files, running comm.+$/i, '自主编程智能体 CLI，可创建/编辑文件、运行命令等'],
+		[/^Reduces API costs by more than 50%, produces better and faster work\. Uses.+$/i, '降低 API 成本超过 50%，产出更好更快的成果'],
 		[/^Plan ends in (\d+) days$/i, '计划在 $1 天内结束'],
 		[/^Resets\s+(.+)$/i, '重置于 $1'],
 		[/^(\d+)K context$/i, '$1K 上下文'],
@@ -1967,6 +2096,7 @@
 		[/^Send now\s+(.+)$/i, '立即发送 $1'],
 		[/^Ask anything\s*\((.+)\)$/i, '询问任何问题 ($1)'],
 		[/^(\d+)\s+resources$/i, '$1 个资源'],
+		[/^Start a new (.+) session$/i, '开始新的 $1 会话'],
 		[/^Start a New Conversation\s+(.+)$/i, '开始新对话 $1'],
 		[/^Start recording\s*\((.+)\)$/i, '开始录音 ($1)'],
 		[/^Add Context\s*\((.+)\)$/i, '添加上下文 ($1)'],
@@ -2165,11 +2295,59 @@
 		const idx = getTranslationsLowerIndex();
 		const orig = idx.get(core.toLowerCase());
 		if (orig) return TRANSLATIONS.get(orig);
+		// 3) 前缀兜底匹配：处理 DOM 中省略号位置不固定导致的截断失配
+		//    仅匹配字典 key 以 `...` 结尾的条目，且 core 长度 < key 长度
+		//    例：dict key = "An enhanced AI code assistant ... develop..."
+		//        DOM text = "An enhanced AI code assistant ... developm..."  (省略号前多了 1~N 字符)
+		//    → 取 dict key 中第一个 "..." 之前的"锚定前缀"（至少 20 字符），在 core 中查找
+		const prefixHit = lookupTranslationPrefix(core);
+		if (prefixHit) return prefixHit;
+		return null;
+	}
+
+	// 前缀兜底匹配索引：key 前缀(在第一个 `...` 之前) → value
+	// 懒构建，键都是稳定长英文（≥ 20 字符），避免误伤短词
+	let _translationsPrefixIndex = null;
+	const PREFIX_ANCHOR_MIN_LEN = 20;
+	function getTranslationsPrefixIndex() {
+		if (_translationsPrefixIndex) return _translationsPrefixIndex;
+		_translationsPrefixIndex = [];
+		for (const k of TRANSLATIONS.keys()) {
+			// 仅索引带 `...` 省略号的 key
+			const dotIdx = k.indexOf('...');
+			if (dotIdx < 0) continue;
+			// 锚定前缀 = 第一个 `...` 之前的内容
+			const anchor = k.substring(0, dotIdx).trim();
+			if (anchor.length < PREFIX_ANCHOR_MIN_LEN) continue;
+			// value = 翻译条目对应值的"前 dotIdx 字符"（同样去 `...`）
+			const v = TRANSLATIONS.get(k) || '';
+			const vAnchor = v.substring(0, dotIdx).trim();
+			_translationsPrefixIndex.push({ anchor, vPrefix: vAnchor, fullKey: k });
+		}
+		return _translationsPrefixIndex;
+	}
+
+	function lookupTranslationPrefix(core) {
+		const idx = getTranslationsPrefixIndex();
+		const lower = core.toLowerCase();
+		for (const { anchor, vPrefix } of idx) {
+			// 字典锚点（去尾 `...` 后的稳定前缀）应出现在 core 中
+			// 容忍 1~5 字符的尾部差异（DOM 截断可能多保留 1~N 字符）
+			const minMatch = anchor.length;
+			const maxMatch = anchor.length + 5;
+			// core 的开头必须以 anchor 起始（DOM 截断只能让前缀更长）
+			if (lower.length < minMatch || lower.length > maxMatch + 20) continue;
+			if (!lower.startsWith(anchor.toLowerCase())) continue;
+			// 命中：返回 value 前缀 + 省略号收尾（devin DOM 总是带 `...`）
+			// vPrefix 已不含 `...`（构建索引时去掉了），此处统一补上
+			return vPrefix + '...';
+		}
 		return null;
 	}
 
 	function applyRegex(core) {
 		for (const [pattern, replacement] of REGEX_TRANSLATIONS) {
+			if (!pattern || typeof pattern.test !== 'function') continue;
 			if (pattern.test(core)) return core.replace(pattern, replacement);
 		}
 		return null;
@@ -2182,9 +2360,10 @@
 		let core = text.trim();
 
 		// 跳过模型名标签（如 "Claude Opus 4.6 Thinking", "SWE-1.6 Fast"）
-		// 短于 80 字符且包含已知模型标识 → 认为是模型标签，不翻译
-		// 但含描述性词汇（for/via/agent 等）时例外，视为描述文字继续翻译
-		if (core.length < 80 && MODEL_LABEL_SKIP_RE.test(core) && !MODEL_DESC_RE.test(core)) return text;
+		// 短于 30 字符且包含已知模型标识 → 认为是模型限定词标签，不翻译
+		// v8.5.6：阈值 80→30 - 避免把含"Devin/Windsurf"等品牌名的长描述句误判为模型标签
+		// 含描述性词汇（for/via/agent 等）时例外，视为描述文字继续翻译
+		if (core.length < 30 && MODEL_LABEL_SKIP_RE.test(core) && !MODEL_DESC_RE.test(core)) return text;
 
 		// 第 1 轮：原文精确/大小写不敏感
 		let hit = lookupTranslation(core);
@@ -2224,20 +2403,66 @@
 		const softHit = applySoftReplacement(core);
 		if (softHit) return `${leading}${softHit}${trailing}`;
 
+		// 调试：记录翻译未命中（含英文但未匹配）
+		try {
+			if (typeof window !== 'undefined' && window.__wsI18nDebug) {
+				if (core.length > 10 && core.length < 500 && /[A-Za-z]{8,}/.test(core)) {
+					window.__wsI18nDebug.noMatch.push(core.slice(0, 200));
+					if (window.__wsI18nDebug.noMatch.length > 200) window.__wsI18nDebug.noMatch.shift();
+				}
+			}
+		} catch {}
+
 		return text;
 	}
 	
+	function isAllowedSettingsTreeExclusion(el) {
+		return Boolean(el && el.matches && el.matches('.monaco-list-row[role="treeitem"]') && el.closest && el.closest('.settings-editor'));
+	}
+
 	function shouldSkip(node) {
 		if (!node) return true;
-		if (node.nodeType === Node.ELEMENT_NODE) {
-			return Boolean(node.closest(EXCLUDE_SELECTOR));
+		// 获取"祖先链上的第一个匹配 EXCLUDE_SELECTOR 的元素"
+		const closestExcluded = (() => {
+			if (node.nodeType === Node.ELEMENT_NODE) {
+				return node.closest && node.closest(EXCLUDE_SELECTOR);
+			}
+			const parent = node.parentElement;
+			return parent && parent.closest ? parent.closest(EXCLUDE_SELECTOR) : null;
+		})();
+		if (closestExcluded && !isAllowedSettingsTreeExclusion(closestExcluded)) return true;
+		// 易误伤的内联元素（code/kbd/samp/var）需要"祖先含代码容器"才算代码区
+		// 单独 <code> 在设置描述里很常见，不应被屏蔽
+		const fragile = (() => {
+			if (node.nodeType === Node.ELEMENT_NODE) {
+				return node.matches && node.matches(FRAGILE_INLINE_TAGS);
+			}
+			const parent = node.parentElement;
+			return parent && parent.matches && parent.matches(FRAGILE_INLINE_TAGS);
+		})();
+		if (fragile) {
+			const root = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+			if (root && root.closest && root.closest(CODE_CONTEXT_REQUIRED)) {
+				return true;
+			}
 		}
-		const parent = node.parentElement;
-		return !parent || Boolean(parent.closest(EXCLUDE_SELECTOR));
+		return false;
 	}
+
+	function shouldSkipAttributes(el) {
+		if (!el) return true;
+		if (el.matches && el.matches('input, textarea')) {
+			const parent = el.parentElement;
+			return !parent || Boolean(parent.closest(EXCLUDE_SELECTOR));
+		}
+		return shouldSkip(el);
+	}
+
+	// 别名以兼容旧调用点
+	const shouldSkipParent = (node) => shouldSkip(node);
 	
 	function translateAttributes(el) {
-		if (!el || shouldSkip(el)) return;
+		if (!el || shouldSkipAttributes(el)) return;
 		for (const attr of ATTRS_TO_TRANSLATE) {
 			const value = el.getAttribute(attr);
 			if (!value) continue;
@@ -2259,12 +2484,38 @@
 	// 简化：每个被翻译的 attribute 在元素上记录 data-ws-orig-<attr>="<原值>"
 
 	function translateTextNode(node) {
-		if (!node || shouldSkip(node)) return;
+		if (!node || shouldSkip(node)) {
+			// 调试：记录被跳过的原因到 window.__wsI18nDebug，便于排查未翻译文本
+			try {
+				if (typeof window !== 'undefined') {
+					if (!window.__wsI18nDebug) window.__wsI18nDebug = { skipped: [], noMatch: [], translated: 0 };
+					const original = node && node.nodeValue;
+					if (original && original.trim().length > 10 && original.length < 500 &&
+					    /[A-Za-z]/.test(original) && !/^[\u4e00-\u9fa5\s]+$/.test(original)) {
+						const parent = node.parentElement;
+						const skipReason = parent && parent.closest ? (() => {
+							const m = parent.closest(EXCLUDE_SELECTOR);
+							return m ? m.tagName.toLowerCase() + (m.className ? '.' + String(m.className).split(' ')[0] : '') : 'none';
+						})() : 'no-parent';
+						window.__wsI18nDebug.skipped.push({
+							text: original,
+							parentTag: parent ? parent.tagName : null,
+							parentClass: parent ? String(parent.className || '').slice(0, 80) : null,
+							skipReason,
+						});
+						if (window.__wsI18nDebug.skipped.length > 200) window.__wsI18nDebug.skipped.shift();
+					}
+				}
+			} catch {}
+			return;
+		}
 		const original = node.nodeValue;
 		const translated = translateText(original);
 		if (translated !== original) {
 			node.nodeValue = translated;
-			// 1) 单 textNode 原文存 WeakMap，关闭汉化时精确还原
+			try {
+				if (typeof window !== 'undefined' && window.__wsI18nDebug) window.__wsI18nDebug.translated++;
+			} catch {}
 			_translatedTextNodes.set(node, original);
 			// 2) 同时把原文写到父元素 data-ws-orig（供错误检测等模块用）
 			try {
@@ -2339,7 +2590,13 @@
 		const elementRoot = root.nodeType === Node.ELEMENT_NODE ? root : document.body;
 		if (!elementRoot || !elementRoot.isConnected) return;
 		// 整个 root 在排除区域内（如 Monaco 编辑器）→ 跳过整棵子树
-		if (elementRoot.closest && elementRoot.closest(EXCLUDE_SELECTOR)) return;
+		const closestExcludedRoot = elementRoot.closest && elementRoot.closest(EXCLUDE_SELECTOR);
+		if (closestExcludedRoot && !isAllowedSettingsTreeExclusion(closestExcludedRoot)) {
+			if (elementRoot.matches && elementRoot.matches('input, textarea')) {
+				translateAttributes(elementRoot);
+			}
+			return;
+		}
 		
 		translateAttributes(elementRoot);
 		const elementList = elementRoot.querySelectorAll ? elementRoot.querySelectorAll('*') : [];
@@ -2360,6 +2617,13 @@
 		// 策略：找到 childNodes 全为内联元素且各含极短文本的父元素，
 		// 拼合 textContent 后查翻译表，命中则整体替换。
 		translateRainbowElements(elementRoot);
+
+		// ========== 父容器兜底合并翻译（v8.5.4） ==========
+		// 处理"描述文本被 React 等拆成多个 textNode"的情况：
+		// 单 textNode 翻译可能因拆分而不命中；走父容器拼合后再查表。
+		// 与 translateRainbowElements 不同：这里不要求"每 span 极短"，
+		// 只要父容器整段是英文且长度适中即可尝试整段替换。
+		translateParentFallback(elementRoot);
 	}
 
 	/** 检测并翻译"彩虹文本"（字符被拆分到多个 span 的元素） */
@@ -2401,6 +2665,51 @@
 			}
 		}
 	}
+
+	/**
+	 * 父容器兜底合并翻译（v8.5.4+）
+	 * 场景：React 等 SPA 框架常把一段文本拆成多个 textNode（如"前导空格 + 文本"或"链接 + 文本"），
+	 *       单 textNode 精确匹配 miss，整段合起来才能命中。
+	 * 策略：对所有"非彩虹文本"的 p/div/span/label/a，若整段 textContent 是英文且
+	 *       translateText 能命中，则直接用 textContent 替换原 innerHTML。
+	 * 保守性：仅在子节点全是 textNode 或 inline 元素（无 form/控件）时执行，避免破坏复杂布局。
+	 */
+	function translateParentFallback(root) {
+		if (!root || !root.querySelectorAll) return;
+		const candidates = root.querySelectorAll('p, div, span, label, a, h1, h2, h3, h4, h5, h6, li, td, th');
+		for (const el of candidates) {
+			if (shouldSkip(el)) continue;
+			if (el.hasAttribute('data-ws-rainbow')) continue;
+			if (el.hasAttribute('data-ws-fallback')) continue;
+			// 必须是叶子级或近叶子级（子节点是 textNode + inline 元素），否则整段替换会破坏布局
+			const children = el.childNodes;
+			if (children.length < 2) continue;
+			// 检查子节点：允许 textNode + 1~N 个 inline 元素（如 span/a/strong），不允许 form/控件
+			let allSafe = true;
+			for (const ch of children) {
+				if (ch.nodeType === Node.TEXT_NODE) continue;
+				if (ch.nodeType === Node.ELEMENT_NODE) {
+					const tag = ch.tagName;
+					if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') {
+						allSafe = false; break;
+					}
+				} else {
+					allSafe = false; break;
+				}
+			}
+			if (!allSafe) continue;
+			const combined = (el.textContent || '').trim();
+			if (!combined || combined.length < 20 || combined.length > 300) continue;
+			// 必须是英文为主（避免破坏中英文混排和已有中文）
+			const asciiLetters = (combined.match(/[A-Za-z]/g) || []).length;
+			if (asciiLetters < combined.length * 0.5) continue;
+			const translated = translateText(combined);
+			if (translated && translated !== combined) {
+				el.setAttribute('data-ws-fallback', el.innerHTML);
+				el.textContent = translated;
+			}
+		}
+	}
 	
 	let pendingRoots = new Set();
 	let _locFlushTimer = 0;
@@ -2435,6 +2744,7 @@
 		_locFlushTimer = setTimeout(flushQueue, LOC_DEBOUNCE_MS);
 	}
 	
+	let _locRescanTimer = 0;
 	function startLocalizationObserver() {
 		if (localizationObserver) localizationObserver.disconnect();
 		localizationObserver = new MutationObserver((mutations) => {
@@ -2462,6 +2772,16 @@
 			attributes: true,
 			attributeFilter: ATTRS_TO_TRANSLATE,
 		});
+
+		// v8.6.4：定时全量重扫兜底（每 3 秒）
+		// 原因：部分 DOM 变更不被 MutationObserver 捕获（React 并发模式/Shadow DOM/webview 等），
+		// 导致已有翻译条目不生效。定时全扫确保遗漏的节点也能被翻译。
+		if (!_locRescanTimer) {
+			_locRescanTimer = setInterval(() => {
+				if (!settings.localizationEnabled) return;
+				enqueue(document.body);
+			}, 3000);
+		}
 	}
 	
 	// (Settings UI removed — moved to sidebar panel)
@@ -5968,6 +6288,33 @@
 			startLocalizationObserver();
 			enqueue(document.body);
 			logLocalization('✅汉化已启用');
+
+			// v8.6.4 诊断：5 秒后输出翻译统计到控制台
+			setTimeout(() => {
+				const debug = window.__wsI18nDebug;
+				if (debug) {
+					console.log('[ws-better][i18n-诊断] 翻译数: ' + debug.translated +
+						', 跳过数: ' + debug.skipped.length +
+						', 未命中数: ' + debug.noMatch.length);
+					// 输出前 10 条跳过原因
+					const recent = debug.skipped.slice(-10);
+					for (const s of recent) {
+						console.log('[ws-better][i18n-跳过] text="' + s.text.slice(0, 50) +
+							'" parentTag=' + s.parentTag +
+							' parentClass=' + (s.parentClass || '').slice(0, 50) +
+							' skipReason=' + s.skipReason);
+					}
+				} else {
+					console.log('[ws-better][i18n-诊断] __wsI18nDebug 未初始化，翻译可能未启动');
+				}
+				// 检查是否有 webview/iframe
+				const iframes = document.querySelectorAll('iframe');
+				const webviews = document.querySelectorAll('webview');
+				console.log('[ws-better][i18n-诊断] iframe数: ' + iframes.length + ', webview数: ' + webviews.length);
+				// 检查 settings-editor 是否在主文档
+				const settingsEditor = document.querySelector('.settings-editor');
+				console.log('[ws-better][i18n-诊断] settings-editor: ' + (settingsEditor ? '在主文档' : '不在主文档'));
+			}, 5000);
 		}
 
 		// 统一 storage 事件监听（合并命令分发 + 设置同步，减少调度开销）

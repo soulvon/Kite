@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDE增强助手 · 完整侧栏设计预览</title>
+<style>
+/* ════════════════════════════════════════════════════════════
+   IDE增强助手（Kite）侧栏设计系统
+   复刻真实侧栏：VSCode 主题 + 卡片化 + 色带 + 绿色额度条
+   5 个 Tab：账户 / 实例 / 自动化 / 增强 / BYOK
+   ════════════════════════════════════════════════════════════ */
+:root {
+    --vscode-foreground: #cccccc;
+    --vscode-descriptionForeground: #8b8b8b;
+    --vscode-sideBar-background: #1e1e1e;
+    --vscode-sideBarSectionHeader-background: #252526;
+    --vscode-input-background: #3c3c3c;
+    --vscode-button-background: #0e639c;
+    --vscode-button-foreground: #ffffff;
+    --vscode-focusBorder: #10b981;
+    --vscode-list-hoverBackground: #2a2d2e;
+    --vscode-editor-background: #1e1e1e;
+    --vscode-textBlockQuote-background: rgba(127,127,127,0.1);
+    --vscode-errorForeground: #f48771;
+    --vscode-editor-font-family: Consolas, "Courier New", monospace;
+
+    --card-bg: #252526;
+    --surface-bg: rgba(255,255,255,0.02);
+    --elevated-bg: rgba(255,255,255,0.04);
+    --subtle-bg: rgba(255,255,255,0.06);
+    --border-subtle: rgba(255,255,255,0.06);
+    --border-dim: rgba(255,255,255,0.10);
+    --card-border: var(--border-subtle);
+    --hover-bg: rgba(255,255,255,0.04);
+    --muted: #8b8b8b;
+
+    --ac-emerald: #10b981;
+    --ac-blue: #3b82f6;
+    --ac-violet: #8b5cf6;
+    --ac-amber: #f59e0b;
+    --ac-cyan: #06b6d4;
+    --ac-orange: #f0883e;
+    --ac-red: #ef4444;
+    --ac-pink: #ec4899;
+
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+}
+
+* { box-sizing: border-box; }
+body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px; line-height: 1.5;
+    color: #cccccc;
+    background: #1e1e1e;
+    overflow-x: hidden;
+}
+
+.app {
+    max-width: 600px;
+    margin: 0 auto;
+    background: #1e1e1e;
+    min-height: 100vh;
+}
+
+/* ═══════ Tab 导航 ═══════ */
+.app-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-subtle);
+    background: rgba(255,255,255,0.02);
+    position: sticky; top: 0; z-index: 20;
+    overflow-x: auto;
+}
+.app-tab {
+    flex: 1; min-width: 0;
+    display: flex; align-items: center; justify-content: center;
+    gap: 4px;
+    padding: 9px 4px 8px;
+    font-size: 12px; font-weight: 500;
+    color: #8b8b8b;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+    font-family: inherit;
+    position: relative;
+    white-space: nowrap;
+}
+.app-tab svg { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.6; }
+.app-tab:hover { color: #ccc; }
+.app-tab.active { color: #fff; }
+.app-tab.active svg { opacity: 1; }
+.app-tab.active::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: -1px;
+    height: 2px;
+    background: linear-gradient(90deg, var(--ac-emerald), var(--ac-cyan));
+}
+.tab-count {
+    font-size: 10px; font-weight: 700;
+    padding: 1px 5px; border-radius: 10px;
+    background: rgba(255,255,255,0.08);
+    color: var(--muted);
+    font-family: var(--vscode-editor-font-family);
+}
+.app-tab.active .tab-count {
+    background: rgba(16,185,129,0.18);
+    color: var(--ac-emerald);
+}
+
+/* ═══════ Tab Pages ═══════ */
+.tab-page {
+    display: none;
+    padding: 8px 10px 20px;
+    flex-direction: column; gap: 8px;
+    animation: fadeIn 0.25s ease-out;
+}
+.tab-page.active { display: flex; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    transition: border-color 0.2s;
+}
+.card:hover { border-color: var(--border-dim); }
+
+/* ═══════ 折叠面板 ═══════ */
+details.fold { border: none; }
+details.fold > summary {
+    list-style: none; cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 14px;
+    transition: background 0.15s;
+    border-bottom: 1px solid var(--card-border);
+}
+details.fold > summary:hover { background: var(--hover-bg); }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::marker { display: none; content: ''; }
+.fold-icon { color: var(--muted); flex-shrink: 0; }
+.fold-title { font-size: 13px; font-weight: 600; }
+.fold-sub { font-size: 10px; color: var(--muted); font-family: var(--vscode-editor-font-family); margin-left: auto; }
+.fold-pill {
+    margin-left: auto;
+    padding: 2px 8px;
+    font-size: 10px; font-weight: 600; border-radius: 10px;
+    background: rgba(255,255,255,0.06); color: var(--muted);
+    font-family: var(--vscode-editor-font-family);
+}
+.fold-pill.ok { background: rgba(16,185,129,0.15); color: var(--ac-emerald); }
+.fold-pill.warn { background: rgba(245,158,11,0.15); color: var(--ac-amber); }
+.fold-pill.info { background: rgba(59,130,246,0.15); color: var(--ac-blue); }
+details.fold > summary > .fold-pill,
+details.fold > summary > .fold-sub { margin-left: auto; }
+details.fold > summary > .fold-sub + .mini-toggle { margin-left: 6px; }
+details.fold > summary > .mini-toggle + .fold-arrow,
+details.fold[open] .fold-arrow { transform: rotate(90deg); }
+.fold-arrow {
+    font-size: 8px; color: var(--muted);
+    transition: transform 0.2s;
+    display: inline-flex; align-items: center;
+}
+details.fold:not([open]) .fold-arrow { transform: rotate(0deg); }
+details.fold > summary > .mini-toggle + .fold-arrow { margin-left: 6px; }
+.fold-body {
+    padding: 14px;
+    display: flex; flex-direction: column; gap: 12px;
+    animation: fadeIn 0.2s ease-out;
+}
+
+/* ═══════ Mini Toggle ═══════ */
+.mini-toggle {
+    width: 30px; height: 17px; border-radius: 9px;
+    background: rgba(255,255,255,0.1);
+    cursor: pointer; position: relative;
+    flex-shrink: 0; transition: background 0.2s;
+}
+.mini-toggle::after {
+    content: ''; position: absolute;
+    top: 2px; left: 2px;
+    width: 13px; height: 13px; border-radius: 50%;
+    background: #888;
+    transition: all 0.2s;
+}
+.mini-toggle.is-on { background: var(--ac-emerald); }
+.mini-toggle.is-on::after { left: 15px; background: #fff; }
+
+/* ═══════ Strip（色带条目） ═══════ */
+.strip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0;
+}
+.strip-band { width: 3px; height: 26px; border-radius: 0 2px 2px 0; flex-shrink: 0; }
+.strip-band.emerald { background: var(--ac-emerald); }
+.strip-band.blue { background: var(--ac-blue); }
+.strip-band.violet { background: var(--ac-violet); }
+.strip-band.amber { background: var(--ac-amber); }
+.strip-band.cyan { background: var(--ac-cyan); }
+.strip-band.orange { background: var(--ac-orange); }
+.strip-band.red { background: var(--ac-red); }
+.strip-band.pink { background: var(--ac-pink); }
+.strip-info { flex: 1; min-width: 0; }
+.strip-name { font-size: 12px; font-weight: 600; display: block; }
+.strip-desc { font-size: 11px; color: var(--muted); display: block; margin-top: 1px; }
+
+/* ═══════ 汇总卡 ═══════ */
+.summary-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.summary-stat {
+    padding: 9px 11px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--card-border);
+    background: var(--surface-bg);
+    transition: all 0.2s;
+}
+.summary-stat:hover { transform: translateY(-1px); border-color: rgba(16,185,129,0.35); }
+.summary-stat-head { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; }
+.summary-stat-icon { color: var(--ac-emerald); flex-shrink: 0; }
+.summary-stat-label { font-size: 11px; font-weight: 600; color: var(--muted); }
+.summary-stat-pct { margin-left: auto; font-size: 11px; font-weight: 700; font-family: var(--vscode-editor-font-family); }
+.summary-stat-pct.ok { color: var(--ac-emerald); }
+.summary-stat-pct.warn { color: var(--ac-amber); }
+.summary-stat-pct.err { color: var(--ac-red); }
+.summary-bar { height: 5px; background: var(--subtle-bg); border-radius: 3px; overflow: hidden; }
+.summary-bar-fill { height: 100%; background: linear-gradient(90deg, #0e639c 0%, #3fb950 100%); border-radius: 3px; transition: width 0.3s; }
+.summary-stat-footer { display: flex; align-items: baseline; gap: 3px; margin-top: 4px; }
+.summary-stat-num { font-size: 16px; font-weight: 700; color: #fff; font-family: var(--vscode-editor-font-family); }
+.summary-stat-max { font-size: 11px; color: var(--muted); font-family: var(--vscode-editor-font-family); }
+
+.status-grid { display: flex; flex-direction: column; gap: 4px; }
+.status-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+.status-label { color: var(--muted); }
+.status-val { font-weight: 600; font-family: var(--vscode-editor-font-family); }
+.status-val.ok { color: var(--ac-emerald); }
+.status-val.warn { color: var(--ac-amber); }
+.status-val.off { color: var(--muted); }
+
+/* ═══════ 按钮 ═══════ */
+.btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 5px 10px;
+    font-size: 11px; font-weight: 600;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+.btn:active { transform: scale(0.97); }
+.btn-blue { background: var(--ac-blue); color: #fff; border-color: var(--ac-blue); }
+.btn-blue:hover { background: #2563eb; }
+.btn-emerald { background: var(--ac-emerald); color: #fff; border-color: var(--ac-emerald); }
+.btn-emerald:hover { background: #059669; }
+.btn-ghost { background: transparent; color: #ccc; border-color: var(--border-dim); }
+.btn-ghost:hover { background: var(--hover-bg); border-color: #555; }
+.btn-danger { background: transparent; color: var(--ac-red); border-color: var(--ac-red); }
+.btn-danger:hover { background: rgba(239,68,68,0.1); }
+
+/* ═══════ Tag chip ═══════ */
+.tag {
+    display: inline-block; padding: 2px 7px;
+    font-size: 10px; font-weight: 500;
+    border-radius: 3px;
+    cursor: pointer;
+    border: 1px solid;
+    transition: all 0.15s;
+    user-select: none;
+}
+.tag.blue { background: rgba(59,130,246,0.12); color: #58a6ff; border-color: rgba(59,130,246,0.25); }
+.tag.violet { background: rgba(139,92,246,0.12); color: #a78bfa; border-color: rgba(139,92,246,0.25); }
+.tag.emerald { background: rgba(16,185,129,0.12); color: #3fb950; border-color: rgba(16,185,129,0.25); }
+.tag.amber { background: rgba(245,158,11,0.12); color: #d29922; border-color: rgba(245,158,11,0.25); }
+.tag.orange { background: rgba(240,136,62,0.12); color: #f0883e; border-color: rgba(240,136,62,0.25); }
+.tag.pink { background: rgba(236,72,153,0.12); color: #ec4899; border-color: rgba(236,72,153,0.25); }
+.tag.red { background: rgba(239,68,68,0.12); color: #f85149; border-color: rgba(239,68,68,0.25); }
+.tag.cyan { background: rgba(6,182,212,0.12); color: #06b6d4; border-color: rgba(6,182,212,0.25); }
+.tag.gray { background: rgba(139,148,158,0.12); color: #8b949e; border-color: rgba(139,148,158,0.25); }
+
+/* ═══════ 工具栏 ═══════ */
+.toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 12px;
+    flex-wrap: wrap;
+}
+.toolbar-search {
+    flex: 1; min-width: 120px;
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 8px;
+    background: var(--vscode-input-background);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    color: #ccc;
+}
+.toolbar-search input {
+    flex: 1; background: transparent; border: none; outline: none;
+    color: #ccc; font-size: 12px; font-family: inherit;
+}
+.toolbar-search input::placeholder { color: var(--muted); }
+.toolbar-search svg { color: var(--muted); width: 13px; height: 13px; flex-shrink: 0; }
+.toolbar-btn {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 4px 8px;
+    font-size: 11px;
+    background: transparent;
+    color: #ccc;
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+.toolbar-btn:hover { background: var(--hover-bg); border-color: #555; }
+.toolbar-btn svg { width: 12px; height: 12px; }
+.page-size {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; color: #ccc;
+    background: transparent; border: 1px solid var(--border-dim);
+    border-radius: var(--radius-sm); padding: 4px 6px;
+    cursor: pointer; font-family: inherit;
+}
+
+/* ═══════ 账号卡片 ═══════ */
+.account-list { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 12px; }
+.account-card {
+    background: var(--surface-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    transition: border-color 0.15s, transform 0.15s;
+    cursor: pointer;
+}
+.account-card:hover { border-color: var(--border-dim); transform: translateY(-1px); }
+.account-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.account-email {
+    font-size: 12px; font-weight: 600; flex: 1; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.account-plan {
+    padding: 2px 7px; font-size: 10px; font-weight: 500;
+    border-radius: 3px;
+}
+.account-plan.Trial { background: rgba(245,158,11,0.15); color: #d29922; }
+.account-plan.Free { background: rgba(139,148,158,0.15); color: #8b949e; }
+.account-plan.Pro { background: linear-gradient(135deg, #8b5cf6, #ec4899); color: #fff; }
+.account-status {
+    padding: 2px 7px; font-size: 10px; font-weight: 600;
+    border-radius: 3px; display: inline-flex; align-items: center; gap: 3px;
+}
+.account-status.ok { background: rgba(16,185,129,0.15); color: #3fb950; }
+.account-status.warn { background: rgba(245,158,11,0.15); color: #d29922; }
+.account-status::before { content: '●'; font-size: 7px; }
+.account-usage-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.account-usage-label { font-size: 11px; color: var(--muted); min-width: 30px; }
+.usage-bar { flex: 1; height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden; }
+.usage-bar-fill { height: 100%; background: linear-gradient(90deg, #0e639c, #3fb950); border-radius: 2px; }
+.usage-bar-fill.warn { background: linear-gradient(90deg, #d29922, #f59e0b); }
+.usage-bar-fill.err { background: linear-gradient(90deg, #f85149, #ef4444); }
+.usage-pct { font-size: 11px; font-weight: 700; color: #3fb950; font-family: var(--vscode-editor-font-family); min-width: 36px; text-align: right; }
+.usage-pct.warn { color: #d29922; }
+.usage-pct.err { color: #f85149; }
+.usage-meta { font-size: 10px; color: var(--muted); margin-top: 2px; font-family: var(--vscode-editor-font-family); }
+
+/* ═══════ 实例 tab ═══════ */
+.instance-list { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 12px; }
+.instance-card {
+    background: var(--surface-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    transition: border-color 0.15s, transform 0.15s;
+    cursor: pointer;
+}
+.instance-card:hover { border-color: var(--border-dim); transform: translateY(-1px); }
+.instance-card.current { border-color: var(--ac-emerald); box-shadow: 0 0 0 1px rgba(16,185,129,0.2); }
+.instance-head { display: flex; align-items: center; gap: 8px; }
+.instance-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ac-emerald); box-shadow: 0 0 6px var(--ac-emerald); }
+.instance-dot.off { background: #555; box-shadow: none; }
+.instance-name { font-size: 12px; font-weight: 600; flex: 1; }
+.instance-current {
+    font-size: 10px; font-weight: 600;
+    color: var(--ac-emerald);
+    background: rgba(16,185,129,0.15);
+    padding: 1px 6px; border-radius: 3px;
+}
+.instance-meta { font-size: 10px; color: var(--muted); font-family: var(--vscode-editor-font-family); margin-top: 4px; }
+.instance-actions { display: flex; gap: 4px; margin-top: 6px; }
+
+/* ═══════ BYOK 供应商卡片 ═══════ */
+.provider-list { display: flex; flex-direction: column; gap: 6px; }
+.provider-card {
+    background: var(--surface-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    transition: border-color 0.15s;
+}
+.provider-card.active { border-color: rgba(16,185,129,0.4); box-shadow: 0 0 0 1px rgba(16,185,129,0.1); }
+.provider-card:hover { border-color: var(--border-dim); }
+.provider-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    cursor: pointer; user-select: none;
+    transition: background 0.15s;
+}
+.provider-head:hover { background: var(--hover-bg); }
+.provider-logo {
+    width: 26px; height: 26px; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; flex-shrink: 0;
+}
+.logo-anthropic { background: linear-gradient(135deg, #D4A574, #C4956A); color: #1A1209; }
+.logo-openai { background: linear-gradient(135deg, #4A9EFF, #357ABD); color: #fff; }
+.logo-deepseek { background: linear-gradient(135deg, #6C5CE7, #5A4BD1); color: #fff; }
+.logo-gemini { background: linear-gradient(135deg, #4285F4, #34A853); color: #fff; }
+.logo-qwen { background: linear-gradient(135deg, #6C5CE7, #A29BFE); color: #fff; }
+.logo-xai { background: linear-gradient(135deg, #FDCB6E, #F39C12); color: #1A1209; }
+.provider-info { flex: 1; min-width: 0; }
+.provider-name { font-size: 12px; font-weight: 600; }
+.provider-protocol { font-size: 10px; color: var(--muted); font-family: var(--vscode-editor-font-family); }
+.provider-conn {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10px; color: var(--muted); font-family: var(--vscode-editor-font-family);
+}
+.conn-dot { width: 6px; height: 6px; border-radius: 50%; }
+.conn-dot.ok { background: var(--ac-emerald); box-shadow: 0 0 4px var(--ac-emerald); }
+.conn-dot.no { background: #555; }
+.provider-arrow { font-size: 8px; color: var(--muted); transition: transform 0.2s; display: inline-flex; align-items: center; }
+details.fold[open] > .provider-head .provider-arrow { transform: rotate(90deg); }
+.provider-body {
+    padding: 8px 12px 10px;
+    display: flex; flex-direction: column; gap: 6px;
+    border-top: 1px solid var(--card-border);
+    animation: fadeIn 0.2s ease-out;
+}
+.provider-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 12px; border-top: 1px solid var(--card-border);
+    background: rgba(0,0,0,0.15);
+}
+.field-label {
+    font-size: 9px; color: var(--muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 3px;
+}
+.provider-field .input { font-family: var(--vscode-editor-font-family); font-size: 11px; }
+.provider-field .key-input { -webkit-text-security: disc; }
+.btn-icon {
+    width: 22px; height: 22px;
+    border-radius: var(--radius-sm);
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--card-border);
+    color: var(--muted);
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    font-size: 11px;
+}
+.btn-icon:hover { color: #fff; background: rgba(255,255,255,0.08); }
+
+/* BYOK 流量路由 */
+.flow {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 4px;
+    flex-wrap: wrap; justify-content: center;
+}
+.flow-node {
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    padding: 6px 8px;
+    background: var(--elevated-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    min-width: 60px;
+}
+.flow-node.lit { background: rgba(16,185,129,0.08); border-color: rgba(16,185,129,0.3); }
+.flow-icon { font-size: 14px; }
+.flow-label { font-size: 9px; font-weight: 600; }
+.flow-sub { font-size: 8px; color: var(--muted); font-family: var(--vscode-editor-font-family); }
+.flow-arrow { color: var(--muted); font-size: 12px; font-weight: 700; }
+
+/* BYOK 表格 */
+.byok-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.byok-table th {
+    text-align: left; padding: 6px 8px; font-size: 9px; font-weight: 700;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;
+    background: var(--elevated-bg); border-bottom: 1px solid var(--card-border);
+}
+.byok-table td {
+    padding: 5px 8px; border-bottom: 1px solid var(--card-border);
+    font-family: var(--vscode-editor-font-family); font-size: 11px;
+}
+.byok-table tr:last-child td { border-bottom: none; }
+.byok-table tr:hover td { background: var(--hover-bg); }
+
+/* 表单 */
+.opt-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.opt-label { font-size: 11px; color: var(--muted); white-space: nowrap; min-width: 50px; }
+.input {
+    background: var(--vscode-input-background);
+    border: 1px solid var(--card-border);
+    color: #ccc;
+    font-size: 12px;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    outline: none;
+    transition: border-color 0.15s;
+    font-family: inherit;
+}
+.input:focus { border-color: var(--ac-emerald); }
+.input-num { width: 56px; text-align: center; font-family: var(--vscode-editor-font-family); }
+.select {
+    background: var(--vscode-input-background);
+    border: 1px solid var(--card-border);
+    color: #ccc;
+    font-size: 12px;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    outline: none;
+    cursor: pointer;
+    font-family: inherit;
+    flex: 1; min-width: 0;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b8b8b' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 6px center; background-size: 12px;
+    padding-right: 22px;
+}
+.select:focus { border-color: var(--ac-emerald); }
+.hint { font-size: 11px; color: var(--muted); line-height: 1.5; padding: 4px 0; }
+.divider { height: 1px; background: var(--card-border); margin: 6px 0; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ═══════ Tab 导航 ═══════ -->
+  <div class="app-tabs" role="tablist">
+    <button class="app-tab" data-tab="account">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span>账户</span><span class="tab-count">227</span>
+    </button>
+    <button class="app-tab" data-tab="instance">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <span>实例</span><span class="tab-count">6</span>
+    </button>
+    <button class="app-tab" data-tab="automation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      <span>自动化</span>
+    </button>
+    <button class="app-tab" data-tab="enhance">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      <span>增强</span>
+    </button>
+    <button class="app-tab active" data-tab="byok">
+      <svg viewBox="0 0 1024 1024" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M469.333333 554.666667a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m-170.666666 0a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m640-384a128 128 0 0 0-128-128H213.333333a128 128 0 0 0-128 128v170.666666a128 128 0 0 0 33.28 85.333334A128 128 0 0 0 85.333333 512v170.666667a128 128 0 0 0 128 128h256v85.333333H128a42.666667 42.666667 0 0 0 0 85.333333h768a42.666667 42.666667 0 1 0 0-85.333333h-341.333333v-85.333333h256a128 128 0 0 0 128-128v-170.666667a128 128 0 0 0-33.28-85.333333A128 128 0 0 0 938.666667 341.333333V170.666667z m-85.333334 512a42.666667 42.666667 0 0 1-42.666666 42.666666H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666666v-170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666667z m0-341.333334a42.666667 42.666667 0 0 1-42.666666 42.666667H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666667V170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666666z m-384-128a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334zM298.666667 213.333333a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334z"></path></svg>
+      <span>BYOK</span>
+    </button>
+  </div>
+
+  <!-- ═══════ Tab: 账户 ═══════ -->
+  <div class="tab-page" id="tab-account" data-tab-page="account">
+    <div class="card">
+      <div class="toolbar">
+        <span style="font-size:12px;font-weight:700;color:#fff;margin-right:auto">227 个</span>
+        <button class="btn btn-emerald">+ 添加账号</button>
+      </div>
+      <div style="padding:0 12px 12px;display:flex;flex-direction:column;gap:10px">
+        <div class="summary-stats">
+          <div class="summary-stat">
+            <div class="summary-stat-head">
+              <svg class="summary-stat-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+              <span class="summary-stat-label">本日</span>
+              <span class="summary-stat-pct ok">100.0%</span>
+            </div>
+            <div class="summary-bar"><div class="summary-bar-fill" style="width:100%"></div></div>
+            <div class="summary-stat-footer"><span class="summary-stat-num">22693</span><span class="summary-stat-max">/ 22700</span></div>
+          </div>
+          <div class="summary-stat">
+            <div class="summary-stat-head">
+              <svg class="summary-stat-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span class="summary-stat-label">本周</span>
+              <span class="summary-stat-pct ok">100.0%</span>
+            </div>
+            <div class="summary-bar"><div class="summary-bar-fill" style="width:100%"></div></div>
+            <div class="summary-stat-footer"><span class="summary-stat-num">22696</span><span class="summary-stat-max">/ 22700</span></div>
+          </div>
+        </div>
+        <div class="status-grid">
+          <div class="status-row"><span class="status-label">活跃 / 禁用</span><span class="status-val ok">227 / 0</span></div>
+          <div class="status-row"><span class="status-label">满额度账号</span><span class="status-val ok">227 个 (≥ 80%)</span></div>
+          <div class="status-row"><span class="status-label">低额度账号</span><span class="status-val warn">0 个 (≤ 30%)</span></div>
+          <div class="status-row"><span class="status-label">最近刷新</span><span class="status-val off">0 秒前</span></div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="toolbar">
+        <div class="toolbar-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input placeholder="搜索账号...">
+        </div>
+        <button class="toolbar-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          全部 (227)
+        </button>
+        <button class="toolbar-btn">↓ 刷新</button>
+        <select class="page-size"><option>20/页</option></select>
+      </div>
+      <div style="padding:0 12px 8px;display:flex;flex-wrap:wrap;gap:4px">
+        <span class="tag blue">5.18 (5)</span>
+        <span class="tag violet">5.19 (41)</span>
+        <span class="tag orange">5.20 (11)</span>
+        <span class="tag pink">5.21 (44)</span>
+        <span class="tag emerald">5.22 (13)</span>
+        <span class="tag amber">5.23 (43)</span>
+        <span class="tag cyan">5.26 (9)</span>
+        <span class="tag red">2107 (6)</span>
+        <span class="tag gray">free (2)</span>
+        <span class="tag emerald">朋友分享号 (4)</span>
+        <span class="tag violet">自购 (3)</span>
+        <span class="tag red">监控 (4)</span>
+        <span class="tag cyan">余额 (2)</span>
+        <span class="tag gray">未分类 (33)</span>
+      </div>
+      <div class="account-list">
+        <div class="account-card">
+          <div class="account-card-head">
+            <span class="account-email">oledru1282834@gmail.com</span>
+            <span class="account-plan Trial">Trial</span>
+            <span class="tag amber" style="font-size:9px">5.26</span>
+            <span class="account-status ok">正常</span>
+          </div>
+          <div class="account-usage-row">
+            <span class="account-usage-label">日配额</span>
+            <div class="usage-bar"><div class="usage-bar-fill" style="width:100%"></div></div>
+            <span class="usage-pct">100%</span>
+          </div>
+          <div class="usage-meta">23 时 28 分后重置</div>
+          <div class="account-usage-row">
+            <span class="account-usage-label">周配额</span>
+            <div class="usage-bar"><div class="usage-bar-fill" style="width:100%"></div></div>
+            <span class="usage-pct">100%</span>
+          </div>
+        </div>
+        <div class="account-card">
+          <div class="account-card-head">
+            <span class="account-email">lyonsmarleigh51@gmail.com</span>
+            <span class="account-plan Free">Free</span>
+            <span class="tag red" style="font-size:9px">5.18</span>
+            <span class="account-status ok">正常</span>
+          </div>
+          <div class="account-usage-row">
+            <span class="account-usage-label">日配额</span>
+            <div class="usage-bar"><div class="usage-bar-fill" style="width:100%"></div></div>
+            <span class="usage-pct">100%</span>
+          </div>
+          <div class="usage-meta">23 时 28 分后重置</div>
+          <div class="account-usage-row">
+            <span class="account-usage-label">周配额</span>
+            <div class="usage-bar"><div class="usage-bar-fill" style="width:100%"></div></div>
+            <span class="usage-pct">100%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ Tab: 实例 ═══════ -->
+  <div class="tab-page" id="tab-instance" data-tab-page="instance">
+    <div class="card">
+      <div class="toolbar">
+        <span style="font-size:12px;font-weight:700;color:#fff;margin-right:auto">6 个实例</span>
+        <button class="btn btn-emerald">+ 启动新实例</button>
+      </div>
+      <div class="instance-list">
+        <div class="instance-card current">
+          <div class="instance-head">
+            <span class="instance-dot"></span>
+            <span class="instance-name">sox</span>
+            <span class="instance-current">当前</span>
+          </div>
+          <div class="instance-meta">PID 42871 · :3000 · 运行 2h 14m</div>
+          <div class="instance-actions">
+            <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px">↻ 重启</button>
+            <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px">⏸ 暂停</button>
+          </div>
+        </div>
+        <div class="instance-card">
+          <div class="instance-head">
+            <span class="instance-dot"></span>
+            <span class="instance-name">work-1</span>
+          </div>
+          <div class="instance-meta">PID 42902 · :3001 · 运行 1h 42m</div>
+          <div class="instance-actions">
+            <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px">↻ 重启</button>
+            <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px">⏸ 暂停</button>
+          </div>
+        </div>
+        <div class="instance-card">
+          <div class="instance-head">
+            <span class="instance-dot off"></span>
+            <span class="instance-name">work-2</span>
+            <span class="tag gray" style="font-size:9px">已停止</span>
+          </div>
+          <div class="instance-meta">最后一次运行：3 天前</div>
+          <div class="instance-actions">
+            <button class="btn btn-emerald" style="font-size:10px;padding:3px 8px">▶ 启动</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ Tab: 自动化 ═══════ -->
+  <div class="tab-page" id="tab-automation" data-tab-page="automation">
+    <div class="card">
+      <details class="fold" open>
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          <span class="fold-title">自动切号</span>
+          <span class="fold-sub">23 账号池</span>
+          <div class="mini-toggle is-on" onclick="event.stopPropagation();this.classList.toggle('is-on')"></div>
+        </summary>
+        <div class="fold-body">
+          <div style="display:flex;align-items:center;gap:4px;font-size:13px;font-weight:500">
+            <span>额度低于</span>
+            <input class="input input-num" value="15" style="font-size:13px;font-weight:700">
+            <span style="color:var(--muted);font-size:10px">%</span>
+            <span>时自动换号</span>
+          </div>
+          <div class="opt-row">
+            <span class="opt-label">范围</span>
+            <select class="select">
+              <option>全部账号</option>
+              <option selected>按标签</option>
+              <option>当前实例分组</option>
+            </select>
+          </div>
+          <details class="fold" style="border:1px solid var(--card-border);border-radius:6px;background:var(--surface-bg)">
+            <summary style="padding:7px 10px;font-size:11px;color:var(--muted)">
+              <span style="font-size:9px">▸</span>
+              <span style="margin-left:4px">高级设置</span>
+            </summary>
+            <div class="fold-body" style="gap:8px">
+              <div class="opt-row">
+                <span class="opt-label">策略</span>
+                <select class="select">
+                  <option>满额度优先（推荐）</option>
+                  <option>先用完再换新</option>
+                </select>
+              </div>
+              <div class="opt-row">
+                <span class="opt-label">废号下限</span>
+                <input class="input input-num" value="10"><span style="color:var(--muted);font-size:10px">%</span>
+              </div>
+            </div>
+          </details>
+          <div class="hint">取日/周配额中较低者为准。例：日100% 周0% → 实际不可用，自动切到额度最充足的号。</div>
+        </div>
+      </details>
+    </div>
+
+    <div class="card">
+      <details class="fold" open>
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M12 17h.01"/></svg>
+          <span class="fold-title">自动继续</span>
+          <div class="mini-toggle is-on" onclick="event.stopPropagation();this.classList.toggle('is-on')"></div>
+        </summary>
+        <div class="fold-body">
+          <div class="strip">
+            <div class="strip-band emerald"></div>
+            <div class="strip-info"><span class="strip-name">简单模式</span><span class="strip-desc">自动点击"继续"按钮 / 自动发送 continue</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+          <div class="strip">
+            <div class="strip-band blue"></div>
+            <div class="strip-info"><span class="strip-name">守护模式</span><span class="strip-desc">错误恢复 + 自动批准权限</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+          <div class="strip">
+            <div class="strip-band violet"></div>
+            <div class="strip-info"><span class="strip-name">长任务</span><span class="strip-desc">指令队列循环 + 自动续写</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- ═══════ Tab: 增强 ═══════ -->
+  <div class="tab-page" id="tab-enhance" data-tab-page="enhance">
+    <div class="card">
+      <details class="fold" open>
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span class="fold-title">Windsurf 增强</span>
+          <span class="fold-pill ok">已启用</span>
+        </summary>
+        <div class="fold-body">
+          <div class="status-grid">
+            <div class="status-row"><span class="status-label">增强脚本</span><span class="status-val ok">已注入 v5.0.3</span></div>
+            <div class="status-row"><span class="status-label">智能建议规则</span><span class="status-val ok">已配置</span></div>
+            <div class="status-row"><span class="status-label">无感切号</span><span class="status-val ok">已就绪</span></div>
+            <div class="status-row"><span class="status-label">Bridge 端口</span><span class="status-val ok">:5639</span></div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-blue">重新注入</button>
+            <button class="btn btn-ghost">修改提示词</button>
+            <button class="btn btn-danger">恢复原始</button>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <div class="card">
+      <details class="fold">
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M4.22 4.22l4.24 4.24m7.08 7.08l4.24 4.24M1 12h6m10 0h6M4.22 19.78l4.24-4.24m7.08-7.08l4.24-4.24"/></svg>
+          <span class="fold-title">增强功能</span>
+        </summary>
+        <div class="fold-body">
+          <div class="strip">
+            <div class="strip-band emerald"></div>
+            <div class="strip-info"><span class="strip-name">回复建议提示</span><span class="strip-desc">AI 回复后显示气泡建议</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+          <div class="strip">
+            <div class="strip-band blue"></div>
+            <div class="strip-info"><span class="strip-name">底部状态栏</span><span class="strip-desc">显示账号/额度/切号状态</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+          <div class="strip">
+            <div class="strip-band amber"></div>
+            <div class="strip-info"><span class="strip-name">完成提醒</span><span class="strip-desc">AI 回复完成时响铃/通知</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+          <div class="strip">
+            <div class="strip-band cyan"></div>
+            <div class="strip-info"><span class="strip-name">界面汉化</span><span class="strip-desc">将英文界面翻译为中文</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- ═══════ Tab: BYOK（核心设计区） ═══════ -->
+  <div class="tab-page active" id="tab-byok" data-tab-page="byok">
+
+    <!-- 概览 -->
+    <div class="card">
+      <details class="fold" open>
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <span class="fold-title">运行总览</span>
+          <span class="fold-pill ok">运行中</span>
+        </summary>
+        <div class="fold-body">
+          <div class="summary-stats">
+            <div class="summary-stat">
+              <div class="summary-stat-head">
+                <span class="summary-stat-label">今日请求</span>
+                <span class="summary-stat-pct ok">+18%</span>
+              </div>
+              <div class="summary-stat-footer" style="margin-top:0"><span class="summary-stat-num" style="font-size:22px">1,247</span></div>
+            </div>
+            <div class="summary-stat">
+              <div class="summary-stat-head">
+                <span class="summary-stat-label">Token 费用</span>
+              </div>
+              <div class="summary-stat-footer" style="margin-top:0">
+                <span class="summary-stat-num" style="font-size:22px">$4.23</span>
+                <span class="summary-stat-max">/ 892K</span>
+              </div>
+            </div>
+          </div>
+          <div class="status-grid">
+            <div class="status-row"><span class="status-label">活跃供应商</span><span class="status-val ok">2 / 6</span></div>
+            <div class="status-row"><span class="status-label">代理地址</span><span class="status-val">localhost:3000</span></div>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <!-- 流量路由 -->
+    <div class="card">
+      <details class="fold" open>
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+          <span class="fold-title">流量路由</span>
+        </summary>
+        <div class="fold-body">
+          <div class="flow">
+            <div class="flow-node">
+              <div class="flow-icon">🖥</div>
+              <div class="flow-label">Windsurf</div>
+              <div class="flow-sub">IDE</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node lit">
+              <div class="flow-icon">🔑</div>
+              <div class="flow-label">Kite Proxy</div>
+              <div class="flow-sub">:3000</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node">
+              <div class="flow-icon">🤖</div>
+              <div class="flow-label">LLM 供应商</div>
+              <div class="flow-sub">API</div>
+            </div>
+            <div class="flow-arrow">⟷</div>
+            <div class="flow-node">
+              <div class="flow-icon">🏢</div>
+              <div class="flow-label">Codeium</div>
+              <div class="flow-sub">补全</div>
+            </div>
+          </div>
+          <div class="hint">Windsurf → 本地 Kite 代理 → LLM 供应商；代码补全仍走 Codeium 官方通道</div>
+        </div>
+      </details>
+    </div>
+
+    <!-- 供应商配置（核心） -->
+    <div class="card">
+      <details class="fold" open>
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          <span class="fold-title">API 供应商</span>
+          <span class="fold-sub">2 / 6</span>
+        </summary>
+        <div class="fold-body">
+          <div class="provider-list">
+            <!-- Anthropic -->
+            <div class="provider-card active">
+              <div class="provider-head" onclick="this.parentElement.parentElement.parentElement.toggleAttribute('data-collapsed')">
+                <div class="provider-logo logo-anthropic">A</div>
+                <div class="provider-info">
+                  <div class="provider-name">Anthropic</div>
+                  <div class="provider-protocol">/v1/messages</div>
+                </div>
+                <div class="provider-conn"><span class="conn-dot ok"></span><span>12ms</span></div>
+                <div class="mini-toggle is-on" onclick="event.stopPropagation();this.classList.toggle('is-on')"></div>
+                <span class="provider-arrow">▶</span>
+              </div>
+              <div class="provider-body">
+                <div class="provider-field">
+                  <div class="field-label">API 地址</div>
+                  <input class="input" value="api.anthropic.com" style="font-family:var(--vscode-editor-font-family)">
+                </div>
+                <div class="provider-field">
+                  <div class="field-label">API 密钥</div>
+                  <input class="input key-input" value="sk-ant-•••••••••••••••">
+                </div>
+                <div class="provider-field">
+                  <div class="field-label">默认模型</div>
+                  <select class="select">
+                    <option>claude-sonnet-4-6</option>
+                    <option>claude-opus-4-6</option>
+                    <option>claude-haiku-4-5</option>
+                  </select>
+                </div>
+              </div>
+              <div class="provider-footer">
+                <div class="provider-conn"><span class="conn-dot ok"></span><span>已连接 · 12ms</span></div>
+                <button class="btn-icon" title="测试连接">⚡</button>
+              </div>
+            </div>
+
+            <!-- OpenAI -->
+            <div class="provider-card">
+              <div class="provider-head" onclick="this.parentElement.classList.toggle('collapsed')">
+                <div class="provider-logo logo-openai">O</div>
+                <div class="provider-info">
+                  <div class="provider-name">OpenAI</div>
+                  <div class="provider-protocol">/v1/responses</div>
+                </div>
+                <div class="provider-conn"><span class="conn-dot no"></span><span>未配置</span></div>
+                <div class="mini-toggle" onclick="event.stopPropagation();this.classList.toggle('is-on')"></div>
+                <span class="provider-arrow">▶</span>
+              </div>
+              <div class="provider-body" style="display:none">
+                <div class="provider-field"><div class="field-label">API 地址</div><input class="input" value="api.openai.com" style="font-family:var(--vscode-editor-font-family)"></div>
+                <div class="provider-field"><div class="field-label">API 密钥</div><input class="input key-input" placeholder="sk-..."></div>
+                <div class="provider-field"><div class="field-label">默认模型</div><select class="select"><option>gpt-4o</option><option>o3</option></select></div>
+              </div>
+              <div class="provider-footer">
+                <div class="provider-conn"><span class="conn-dot no"></span><span>未配置密钥</span></div>
+                <button class="btn-icon">⚡</button>
+              </div>
+            </div>
+
+            <!-- DeepSeek -->
+            <div class="provider-card">
+              <div class="provider-head" onclick="this.parentElement.classList.toggle('collapsed')">
+                <div class="provider-logo logo-deepseek">D</div>
+                <div class="provider-info">
+                  <div class="provider-name">DeepSeek</div>
+                  <div class="provider-protocol">/v1/chat/completions</div>
+                </div>
+                <div class="provider-conn"><span class="conn-dot ok"></span><span>45ms</span></div>
+                <div class="mini-toggle is-on" onclick="event.stopPropagation();this.classList.toggle('is-on')"></div>
+                <span class="provider-arrow">▶</span>
+              </div>
+              <div class="provider-body" style="display:none">
+                <div class="provider-field"><div class="field-label">API 地址</div><input class="input" value="api.deepseek.com" style="font-family:var(--vscode-editor-font-family)"></div>
+                <div class="provider-field"><div class="field-label">API 密钥</div><input class="input key-input" value="sk-••••••••••"></div>
+                <div class="provider-field"><div class="field-label">默认模型</div><select class="select"><option>deepseek-chat</option><option>deepseek-reasoner</option></select></div>
+              </div>
+              <div class="provider-footer">
+                <div class="provider-conn"><span class="conn-dot ok"></span><span>已连接 · 45ms</span></div>
+                <button class="btn-icon">⚡</button>
+              </div>
+            </div>
+
+            <!-- Gemini -->
+            <div class="provider-card">
+              <div class="provider-head" onclick="this.parentElement.classList.toggle('collapsed')">
+                <div class="provider-logo logo-gemini">G</div>
+                <div class="provider-info">
+                  <div class="provider-name">Google Gemini</div>
+                  <div class="provider-protocol">/v1beta/models</div>
+                </div>
+                <div class="provider-conn"><span class="conn-dot no"></span><span>未配置</span></div>
+                <div class="mini-toggle" onclick="event.stopPropagation();this.classList.toggle('is-on')"></div>
+                <span class="provider-arrow">▶</span>
+              </div>
+              <div class="provider-body" style="display:none">
+                <div class="provider-field"><div class="field-label">API 地址</div><input class="input" value="generativelanguage.googleapis.com" style="font-family:var(--vscode-editor-font-family)"></div>
+                <div class="provider-field"><div class="field-label">API 密钥</div><input class="input key-input" placeholder="AIza..."></div>
+                <div class="provider-field"><div class="field-label">默认模型</div><select class="select"><option>gemini-2.5-pro</option><option>gemini-2.5-flash</option></select></div>
+              </div>
+              <div class="provider-footer">
+                <div class="provider-conn"><span class="conn-dot no"></span><span>未配置密钥</span></div>
+                <button class="btn-icon">⚡</button>
+              </div>
+            </div>
+
+            <!-- 千问 -->
+            <div class="provider-card">
+              <div class="provider-head" onclick="this.parentElement.classList.toggle('collapsed')">
+                <div class="provider-logo logo-qwen">Q</div>
+                <div class="provider-info">
+                  <div class="provider-name">通义千问</div>
+                  <div class="provider-protocol">/compatible-mode/v1</div>
+                </div>
+                <div class="provider-conn"><span class="conn-dot no"></span><span>未配置</span></div>
+                <div class="mini-toggle" onclick="event.stopPropagation();this.classList.toggle('is-on')"></div>
+                <span class="provider-arrow">▶</span>
+              </div>
+              <div class="provider-body" style="display:none">
+                <div class="provider-field"><div class="field-label">API 地址</div><input class="input" value="dashscope.aliyuncs.com" style="font-family:var(--vscode-editor-font-family)"></div>
+                <div class="provider-field"><div class="field-label">API 密钥</div><input class="input key-input" placeholder="sk-..."></div>
+                <div class="provider-field"><div class="field-label">默认模型</div><select class="select"><option>qwen-max</option><option>qwen-plus</option></select></div>
+              </div>
+              <div class="provider-footer">
+                <div class="provider-conn"><span class="conn-dot no"></span><span>未配置密钥</span></div>
+                <button class="btn-icon">⚡</button>
+              </div>
+            </div>
+
+            <!-- xAI -->
+            <div class="provider-card">
+              <div class="provider-head" onclick="this.parentElement.classList.toggle('collapsed')">
+                <div class="provider-logo logo-xai">X</div>
+                <div class="provider-info">
+                  <div class="provider-name">xAI (Grok)</div>
+                  <div class="provider-protocol">/v1/chat/completions</div>
+                </div>
+                <div class="provider-conn"><span class="conn-dot no"></span><span>未配置</span></div>
+                <div class="mini-toggle" onclick="event.stopPropagation();this.classList.toggle('is-on')"></div>
+                <span class="provider-arrow">▶</span>
+              </div>
+              <div class="provider-body" style="display:none">
+                <div class="provider-field"><div class="field-label">API 地址</div><input class="input" value="api.x.ai" style="font-family:var(--vscode-editor-font-family)"></div>
+                <div class="provider-field"><div class="field-label">API 密钥</div><input class="input key-input" placeholder="xai-..."></div>
+                <div class="provider-field"><div class="field-label">默认模型</div><select class="select"><option>grok-3</option><option>grok-3-mini</option></select></div>
+              </div>
+              <div class="provider-footer">
+                <div class="provider-conn"><span class="conn-dot no"></span><span>未配置密钥</span></div>
+                <button class="btn-icon">⚡</button>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:4px">
+            <button class="btn btn-blue" style="flex:1">⚡ 测试全部连接</button>
+            <button class="btn btn-ghost">+ 自定义</button>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <!-- 模型映射 -->
+    <div class="card">
+      <details class="fold">
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6"/></svg>
+          <span class="fold-title">模型映射</span>
+          <span class="fold-sub">Windsurf → 供应商</span>
+        </summary>
+        <div class="fold-body" style="padding:0">
+          <table class="byok-table">
+            <thead><tr><th>Windsurf 模型</th><th>供应商</th><th>实际模型</th><th>状态</th></tr></thead>
+            <tbody>
+              <tr><td>claude-sonnet-4-6-thinking</td><td><span class="tag orange" style="font-size:9px">Anthropic</span></td><td>claude-sonnet-4-6</td><td><span class="status-val ok" style="font-size:11px">● 启用</span></td></tr>
+              <tr><td>claude-opus-4-6-thinking</td><td><span class="tag orange" style="font-size:9px">Anthropic</span></td><td>claude-opus-4-6</td><td><span class="status-val ok" style="font-size:11px">● 启用</span></td></tr>
+              <tr><td>gpt-5-4-low</td><td><span class="tag emerald" style="font-size:9px">OpenAI</span></td><td>gpt-5.4</td><td><span class="status-val off" style="font-size:11px">○ 无密钥</span></td></tr>
+              <tr><td>deepseek-r1</td><td><span class="tag violet" style="font-size:9px">DeepSeek</span></td><td>deepseek-reasoner</td><td><span class="status-val ok" style="font-size:11px">● 启用</span></td></tr>
+              <tr><td>MODEL_GOOGLE_GEMINI_*</td><td><span class="tag orange" style="font-size:9px">Anthropic</span></td><td>claude-sonnet-4-6 (回退)</td><td><span class="status-val warn" style="font-size:11px">△ 回退</span></td></tr>
+            </tbody>
+          </table>
+          <div style="padding:10px 14px"><button class="btn btn-ghost" style="width:100%">+ 添加映射</button></div>
+        </div>
+      </details>
+    </div>
+
+    <!-- Extension.js 补丁 -->
+    <div class="card">
+      <details class="fold">
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <span class="fold-title">Extension.js 补丁</span>
+          <span class="fold-sub">3 / 4</span>
+        </summary>
+        <div class="fold-body">
+          <div class="strip">
+            <div class="strip-band emerald" style="height:22px"></div>
+            <div class="strip-info" style="display:flex;align-items:center;gap:8px">
+              <span class="tag emerald" style="font-size:9px;padding:1px 6px;font-family:var(--vscode-editor-font-family)">1</span>
+              <div style="flex:1"><span class="strip-name">getApiServerUrlFromContext</span><span class="strip-desc">→ return "http://localhost:3000"</span></div>
+            </div>
+            <span class="status-val ok" style="font-size:11px">已应用</span>
+          </div>
+          <div class="strip">
+            <div class="strip-band emerald" style="height:22px"></div>
+            <div class="strip-info" style="display:flex;align-items:center;gap:8px">
+              <span class="tag emerald" style="font-size:9px;padding:1px 6px;font-family:var(--vscode-editor-font-family)">2</span>
+              <div style="flex:1"><span class="strip-name">restart() URL 锁定</span><span class="strip-desc">→ 防止重启后 URL 回弹</span></div>
+            </div>
+            <span class="status-val ok" style="font-size:11px">已应用</span>
+          </div>
+          <div class="strip">
+            <div class="strip-band amber" style="height:22px"></div>
+            <div class="strip-info" style="display:flex;align-items:center;gap:8px">
+              <span class="tag amber" style="font-size:9px;padding:1px 6px;font-family:var(--vscode-editor-font-family)">3</span>
+              <div style="flex:1"><span class="strip-name">Thinking 模式透传</span><span class="strip-desc">→ thinking 参数原样转发</span></div>
+            </div>
+            <span class="status-val warn" style="font-size:11px">待应用</span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-blue" style="flex:1">✂ 应用全部补丁</button>
+            <button class="btn btn-ghost">恢复</button>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <!-- 设置 -->
+    <div class="card">
+      <details class="fold">
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68 1.65 1.65 0 0 0 10 3.17V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span class="fold-title">代理设置</span>
+          <span class="fold-pill ok">已启动</span>
+        </summary>
+        <div class="fold-body">
+          <div class="opt-row">
+            <span class="opt-label">HTTP</span>
+            <input class="input input-num" value="3000">
+            <span class="opt-label">HTTPS</span>
+            <input class="input input-num" value="3001">
+          </div>
+          <div class="opt-row">
+            <span class="opt-label">超时</span>
+            <input class="input input-num" value="30">
+            <span style="color:var(--muted);font-size:10px">秒</span>
+            <span class="opt-label">重试</span>
+            <input class="input input-num" value="2">
+            <span style="color:var(--muted);font-size:10px">次</span>
+          </div>
+          <div class="divider"></div>
+          <div class="strip">
+            <div class="strip-band emerald"></div>
+            <div class="strip-info"><span class="strip-name">自动启动</span><span class="strip-desc">插件激活时自动启动代理</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+          <div class="strip">
+            <div class="strip-band blue"></div>
+            <div class="strip-info"><span class="strip-name">自动回退</span><span class="strip-desc">失败时切换到下一个可用供应商</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+          <div class="strip">
+            <div class="strip-band amber"></div>
+            <div class="strip-info"><span class="strip-name">Codeium 透传</span><span class="strip-desc">代码补全走 Codeium 官方</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+          <div class="strip">
+            <div class="strip-band red"></div>
+            <div class="strip-info"><span class="strip-name">密钥本地加密</span><span class="strip-desc">API 密钥加密存储</span></div>
+            <div class="mini-toggle is-on" onclick="this.classList.toggle('is-on')"></div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:4px">
+            <button class="btn btn-emerald" style="flex:1">↻ 重启代理</button>
+            <button class="btn btn-ghost">查看日志</button>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <!-- 使用说明 -->
+    <div class="card">
+      <details class="fold">
+        <summary>
+          <svg class="fold-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span class="fold-title">BYOK 使用说明</span>
+        </summary>
+        <div class="fold-body">
+          <div style="font-size:12px;line-height:1.7;color:var(--muted)">
+            <b style="color:#ccc">什么是 BYOK？</b><br>
+            BYOK（Bring Your Own Key）让你使用自己的 API Key 驱动 Windsurf，绕开官方配额限制。
+            <br><br>
+            <b style="color:#ccc">使用步骤</b><br>
+            <span class="tag emerald" style="margin-right:4px">1</span> 在「API 供应商」中填入你的 API 密钥<br>
+            <span class="tag emerald" style="margin-right:4px">2</span> 启用需要的供应商开关<br>
+            <span class="tag emerald" style="margin-right:4px">3</span> 点击「测试全部连接」验证密钥<br>
+            <span class="tag emerald" style="margin-right:4px">4</span> 点击「应用全部补丁」注入代理<br>
+            <span class="tag emerald" style="margin-right:4px">5</span> 重启 Windsurf 即可使用自己的 Key
+            <br><br>
+            <b style="color:#ccc">支持协议</b><br>
+            <span class="tag blue">OpenAI 兼容</span>
+            <span class="tag orange">Anthropic</span>
+            <span class="tag cyan">Google Gemini</span>
+          </div>
+        </div>
+      </details>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+// Tab 切换
+document.querySelectorAll('.app-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const target = tab.dataset.tab;
+    document.querySelectorAll('.app-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
+    const page = document.getElementById('tab-' + target);
+    if (page) page.classList.add('active');
+  });
+});
+
+// 供应商卡片折叠（默认除第一个外都折叠）
+document.querySelectorAll('.provider-card').forEach((card, i) => {
+  if (i > 0) {
+    card.classList.add('collapsed');
+    const body = card.querySelector('.provider-body');
+    if (body) body.style.display = 'none';
+    const arrow = card.querySelector('.provider-arrow');
+    if (arrow) arrow.style.transform = 'rotate(0deg)';
+  }
+});
+</script>
+</body>
+</html>

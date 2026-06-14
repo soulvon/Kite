@@ -5,7 +5,7 @@ import { WebviewMessage, BackendMessage } from './types';
 import * as accountStore from './accountStore';
 import { login, loginByAuth1Token } from './loginService';
 import { fetchUsage } from './usageService';
-import { getLastInjectFailure, injectSession } from './sessionInjector';
+import { applyPatch, ensureAcpLocalRegistryFallback, getLastInjectFailure, injectSession, needsAcpUnlockPatch } from './sessionInjector';
 import * as instanceManager from './instanceManager';
 import { AutoSwitcher } from './autoSwitcher';
 import { getSignalBridgeScript, getBridgeRelayScript, handlePoolSignal, PoolSignal } from './signalBridge';
@@ -935,6 +935,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           ensureEnhancement();
         } catch (err) {
           console.warn('[windsurf-pool] re-inject after enhSave failed:', err);
+        }
+        // ACP 解锁不是 workbench 注入脚本能力，而是 Devin 内置 extension.js 补丁。
+        // 如果用户开启了解锁但底层仍保留旧限制，保存设置时自动补一次。
+        if (detectIdeFlavor() === 'devin' && merged.acpUnlock !== false) {
+          try {
+            if (ensureAcpLocalRegistryFallback()) {
+              this.log('[enhSave] ACP local registry fallback ensured; reloading connections');
+              scheduleAcpConnectionRecovery('acp-local-registry-fallback', 800);
+            }
+            if (needsAcpUnlockPatch()) {
+              this.log('[enhSave] ACP unlock requested; applying Devin extension patch');
+              const ok = await applyPatch(this._context);
+              this.log(`[enhSave] ACP unlock patch ${ok ? 'applied' : 'failed'}`);
+            }
+          } catch (err) {
+            this.log(`[enhSave] ACP unlock patch failed: ${(err as Error)?.message || err}`);
+          }
         }
         // 通过桥实时推送 apply-settings 命令给 windsurf-better.js
         // 这样改设置无需 reload，立即生效（启停 observer / 还原汉化 / 切换 bubbles 主题等）
@@ -2189,23 +2206,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   <div class="app">
     <div class="app-tabs" id="appTabs" role="tablist">
       <button type="button" class="app-tab active" data-tab="account" role="tab" aria-selected="true">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"/><path d="M4 21a8 8 0 0 1 16 0 1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         账户
       </button>
       <button type="button" class="app-tab" data-tab="instance" role="tab" aria-selected="false">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M10 18h4v2h3a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2h3v-2Z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         实例
       </button>
       <button type="button" class="app-tab" data-tab="automation" role="tab" aria-selected="false">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 2.75a1 1 0 1 1 2 0V5h3a4 4 0 0 1 4 4v7a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V9a4 4 0 0 1 4-4h3V2.75Z"/><path d="M2 12.5a1 1 0 0 1 1 1v3a1 1 0 1 1-2 0v-3a1 1 0 0 1 1-1Zm20 0a1 1 0 0 1 1 1v3a1 1 0 1 1-2 0v-3a1 1 0 0 1 1-1Z"/><path d="M9 13.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Zm6 0a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z" fill="var(--vscode-sideBar-background, #1f1f1f)"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="2"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/><path d="M12 3v3"/><circle cx="12" cy="3" r="1"/><path d="M2 13v3"/><path d="M22 13v3"/><path d="M2 16h2"/><path d="M20 16h2"/></svg>
         自动化
       </button>
       <button type="button" class="app-tab" data-tab="enhance" role="tab" aria-selected="false">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.9 2.5 3.7 13.2A1.5 1.5 0 0 0 4.8 15H11l-1 6.2a1 1 0 0 0 1.75.78L21.9 9.8A1.5 1.5 0 0 0 20.75 7H14l1.65-3.45a1 1 0 0 0-1.75-1.05Z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         增强
       </button>
       <button type="button" class="app-tab" data-tab="byok" role="tab" aria-selected="false">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v5H3V5a2 2 0 0 1 2-2Z"/><path d="M3 12h18v7a2 2 0 0 1-2 2h-5v-3h-4v3H5a2 2 0 0 1-2-2v-7Z"/><path d="M7 7h2v2H7V7Zm4 0h2v2h-2V7Zm-4 9h2v2H7v-2Zm4 0h2v2h-2v-2Z" fill="var(--vscode-sideBar-background, #1f1f1f)"/></svg>
+        <svg viewBox="0 0 1024 1024" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M469.333333 554.666667a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m-170.666666 0a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m640-384a128 128 0 0 0-128-128H213.333333a128 128 0 0 0-128 128v170.666666a128 128 0 0 0 33.28 85.333334A128 128 0 0 0 85.333333 512v170.666667a128 128 0 0 0 128 128h256v85.333333H128a42.666667 42.666667 0 0 0 0 85.333333h768a42.666667 42.666667 0 1 0 0-85.333333h-341.333333v-85.333333h256a128 128 0 0 0 128-128v-170.666667a128 128 0 0 0-33.28-85.333333A128 128 0 0 0 938.666667 341.333333V170.666667z m-85.333334 512a42.666667 42.666667 0 0 1-42.666666 42.666666H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666666v-170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666667z m0-341.333334a42.666667 42.666667 0 0 1-42.666666 42.666667H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666667V170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666666z m-384-128a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334zM298.666667 213.333333a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334z"></path></svg>
         BYOK
       </button>
     </div>
@@ -2230,7 +2247,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <span>完成提醒</span>
         </button>
         <button type="button" class="split-sidebar-item" data-pane="i18n">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4.2 19.5h2l.55-1.75h3.8l.55 1.75h2L9.65 5h-2L4.2 19.5Zm3.05-3.45 1.4-4.55 1.4 4.55h-2.8Z"/><path d="M14 5.5h2.3V4h1.7v1.5h2.7v1.7H18v1.2h3.1v1.75h-.8a8.4 8.4 0 0 1-1.85 3.45 8.2 8.2 0 0 0 2.95 1.3l-.85 1.65a9.9 9.9 0 0 1-3.35-1.72 10.2 10.2 0 0 1-3.45 1.72l-.8-1.6a8.2 8.2 0 0 0 3-1.35 8.5 8.5 0 0 1-1.6-2.35h1.85c.25.47.58.9.98 1.3.46-.52.82-1.1 1.08-1.72H14V8.4h2.3V7.2H14V5.5Z"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>
           <span>界面汉化</span>
         </button>
       </div>
@@ -2514,7 +2531,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     <div class="tab-page" id="tab-byok" data-tab-page="byok" role="tabpanel">
       <div class="byok-overview">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v5H3V5a2 2 0 0 1 2-2Z"/><path d="M3 12h18v7a2 2 0 0 1-2 2h-5v-3h-4v3H5a2 2 0 0 1-2-2v-7Z"/><path d="M7 7h2v2H7V7Zm4 0h2v2h-2V7Zm-4 9h2v2H7v-2Zm4 0h2v2h-2v-2Z" fill="var(--vscode-sideBar-background, #1f1f1f)"/></svg>
+        <svg viewBox="0 0 1024 1024" width="16" height="16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M469.333333 554.666667a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m-170.666666 0a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m640-384a128 128 0 0 0-128-128H213.333333a128 128 0 0 0-128 128v170.666666a128 128 0 0 0 33.28 85.333334A128 128 0 0 0 85.333333 512v170.666667a128 128 0 0 0 128 128h256v85.333333H128a42.666667 42.666667 0 0 0 0 85.333333h768a42.666667 42.666667 0 1 0 0-85.333333h-341.333333v-85.333333h256a128 128 0 0 0 128-128v-170.666667a128 128 0 0 0-33.28-85.333333A128 128 0 0 0 938.666667 341.333333V170.666667z m-85.333334 512a42.666667 42.666667 0 0 1-42.666666 42.666666H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666666v-170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666667z m0-341.333334a42.666667 42.666667 0 0 1-42.666666 42.666667H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666667V170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666666z m-384-128a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334zM298.666667 213.333333a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334z"></path></svg>
         <span class="byok-overview-title">BYOK · 自带 Key</span>
         <span class="byok-overview-status is-dev" id="byokStatusPill">开发中</span>
       </div>

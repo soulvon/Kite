@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { SidebarProvider } from './sidebarProvider';
-import { applyPatch, applyI18nOnly, getLastInjectFailure } from './sessionInjector';
+import { applyPatch, applyI18nOnly, ensureAcpLocalRegistryFallback, getLastInjectFailure } from './sessionInjector';
 import * as accountStore from './accountStore';
 import { readBindMark, getCurrentUserDataDir, getCurrentInstanceName, getCurrentInstanceId, migrateAllInstancesToAuto } from './instanceManager';
 import { AutoSwitcher } from './autoSwitcher';
@@ -37,6 +37,9 @@ let _context: vscode.ExtensionContext;
 export function activate(context: vscode.ExtensionContext) {
   _context = context;
   setExtensionPath(context.extensionPath);
+  if (readEnhSettings().acpUnlock !== false) {
+    ensureAcpLocalRegistryFallback();
+  }
   scheduleAcpAgentRepair('extension-activate', 10_000);
   scheduleAcpConnectionRecovery('extension-activate', 12_000);
 

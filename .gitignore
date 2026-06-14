@@ -6,4 +6,6 @@ out/
 *.har
 *.msi
 .claude/
+.codebuddy/
+.playwright-mcp/
 orderProject/
