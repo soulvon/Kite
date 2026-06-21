@@ -297,10 +297,10 @@ export function ensureAcpLocalRegistryFallback(): boolean {
       agents: [...agents, ...missing]
     };
     fs.writeFileSync(registryPath, JSON.stringify(nextRegistry, null, 2) + '\n', 'utf8');
-    console.log(`[windsurf-pool] ACP local registry fallback ensured: ${registryPath}`);
+    console.log(`[kite] ACP local registry fallback ensured: ${registryPath}`);
     return true;
   } catch (err) {
-    console.warn('[windsurf-pool] ACP local registry fallback failed:', err);
+    console.warn('[kite] ACP local registry fallback failed:', err);
     return false;
   }
 }
@@ -442,7 +442,7 @@ export async function injectSession(
 
     if (alreadyPatched && !cmdRegistered) {
       // 方法已注入但命令注册缺失 — 重新应用补丁修复
-      console.warn('[windsurf-pool] Patch method found but command registration missing, re-patching...');
+      console.warn('[kite] Patch method found but command registration missing, re-patching...');
       const ok = await applyPatch(context);
       if (!silent && ok) {
         vscode.commands.executeCommand('workbench.action.reloadWindow');
@@ -455,7 +455,7 @@ export async function injectSession(
       // 文件完整但命令未加载
       if (silent) {
         // 启动时静默失败，不弹窗不重启
-        console.warn('[windsurf-pool] Patch exists but command not loaded after ' + maxWait + 's, skipping auto-switch.');
+        console.warn('[kite] Patch exists but command not loaded after ' + maxWait + 's, skipping auto-switch.');
         setInjectFailure(account.email, `${getIdeDisplayName()} 补丁命令尚未加载`, 'error');
         return false;
       }
@@ -756,9 +756,9 @@ export async function applyPatch(context: vscode.ExtensionContext): Promise<bool
       const acpResult = applyAcpUnlockPatches(content, acpUnlock);
       if (acpResult.changed) {
         content = acpResult.content;
-        console.log('[windsurf-pool] ACP custom agent unlock patches applied');
+        console.log('[kite] ACP custom agent unlock patches applied');
       } else if (acpUnlock) {
-        console.warn('[windsurf-pool] ACP unlock: no matching patterns found in extension.js (Devin version may have changed)');
+        console.warn('[kite] ACP unlock: no matching patterns found in extension.js (Devin version may have changed)');
       }
       if (acpUnlock) {
         acpRegistryEnsured = ensureAcpLocalRegistryFallback();

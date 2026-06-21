@@ -195,7 +195,7 @@ async function exchangeFirebaseToken(firebaseIdToken: string): Promise<StoredAcc
         locale: 'zh-CN',
         os: process.platform === 'darwin' ? 'darwin' : process.platform,
         disableTelemetry: false,
-        sessionId: `windsurf-pool-${Date.now()}`,
+        sessionId: `kite-${Date.now()}`,
         requestId: String(Date.now()),
       }
     },

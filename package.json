@@ -1,12 +1,12 @@
 {
-  "name": "windsurf-pool",
-  "displayName": "IDE 增强助手",
-  "description": "IDE 增强助手是面向 Windsurf / Devin 的 AI IDE 增强套件：界面增强、多实例分身、BYOK（开发中）自带 Key、多账号号池、自动恢复与长任务自动化。",
-  "version": "8.6.9",
+  "name": "kite",
+  "displayName": "Kite",
+  "description": "Kite 是面向 Windsurf / Devin 的 AI IDE 增强套件：界面增强、多实例分身、多账号号池、自动恢复与长任务自动化。",
+  "version": "8.7.4",
   "publisher": "local",
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/windsurf-pool"
+    "url": "https://github.com/soulvon/Kite"
   },
   "license": "MIT",
   "icon": "resources/icon.png",
@@ -25,7 +25,7 @@
       "activitybar": [
         {
           "id": "windsurfPool",
-          "title": "IDE 增强助手",
+          "title": "Kite",
           "icon": "resources/icon.svg"
         }
       ]
@@ -44,130 +44,106 @@
       {
         "command": "windsurfPool.openSidebar",
         "title": "打开换号侧栏",
-        "category": "IDE 增强助手",
+        "category": "Kite",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "windsurfPool.applyPatch",
         "title": "应用 IDE 注入补丁",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.showLog",
         "title": "显示日志面板",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.openLogFile",
         "title": "打开日志文件",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.addAccount",
         "title": "添加账号",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.switchAccount",
         "title": "切换账号（弹窗列表）",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.switchNextAccount",
         "title": "切换下一个账号",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.removeAccount",
         "title": "删除账号",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.showStatus",
         "title": "账号状态",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.checkForUpdates",
         "title": "检查更新",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.restoreWorkbench",
         "title": "恢复原始 Workbench",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.reinjectEnhancement",
         "title": "重新注入 IDE 增强",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.injectBubbleRules",
         "title": "注入智能建议规则",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.removeBubbleRules",
         "title": "移除智能建议规则",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.injectScriptDisciplineRules",
         "title": "注入脚本纪律规则",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.removeScriptDisciplineRules",
         "title": "移除脚本纪律规则",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.fixChecksums",
         "title": "修复 product.json 校验值（消除\"已损坏\"提示）",
-        "category": "IDE 增强助手"
+        "category": "Kite"
       },
       {
         "command": "windsurfPool.openLogPanel",
         "title": "打开统计面板",
-        "category": "IDE 增强助手",
+        "category": "Kite",
         "icon": "$(graph)"
       },
       {
         "command": "windsurfPool.openHealthCheck",
         "title": "打开测活面板",
-        "category": "IDE 增强助手",
+        "category": "Kite",
         "icon": "$(pulse)"
       },
       {
         "command": "windsurfPool.recoverCascadeInput",
         "title": "恢复 Cascade 输入",
-        "category": "IDE 增强助手",
+        "category": "Kite",
         "icon": "$(debug-restart)"
-      },
-      {
-        "command": "windsurfPool.byokStart",
-        "title": "启动 BYOK Sidecar（开发中）",
-        "category": "IDE 增强助手",
-        "icon": "$(play)"
-      },
-      {
-        "command": "windsurfPool.byokStop",
-        "title": "停止 BYOK Sidecar",
-        "category": "IDE 增强助手",
-        "icon": "$(debug-stop)"
-      },
-      {
-        "command": "windsurfPool.byokApplyPatch",
-        "title": "应用 BYOK Patch（开发中）",
-        "category": "IDE 增强助手",
-        "icon": "$(plug)"
-      },
-      {
-        "command": "windsurfPool.byokRestorePatch",
-        "title": "恢复 BYOK Patch",
-        "category": "IDE 增强助手",
-        "icon": "$(debug-reverse-continue)"
       }
     ],
     "keybindings": [
@@ -185,7 +161,7 @@
       }
     ],
     "configuration": {
-      "title": "IDE 增强助手设置",
+      "title": "Kite 设置",
       "properties": {
         "windsurfPool.refreshOnSwitch": {
           "type": "boolean",
@@ -236,25 +212,6 @@
           "type": "boolean",
           "default": true,
           "description": "自动修复 product.json 中的 SHA256 校验值。增强/补丁会修改 workbench.html 等被校验的文件，导致每次启动弹\"installation appears corrupt\"提示；开启后会重算并写回正确哈希，从根本消除提示。"
-        },
-        "windsurfPool.byok.nodePath": {
-          "type": "string",
-          "default": "node",
-          "description": "BYOK sidecar 使用的 Node.js 可执行文件路径。"
-        },
-        "windsurfPool.byok.apiPort": {
-          "type": "number",
-          "default": 7450,
-          "minimum": 1,
-          "maximum": 65535,
-          "description": "BYOK API 代理端口。"
-        },
-        "windsurfPool.byok.inferencePort": {
-          "type": "number",
-          "default": 7451,
-          "minimum": 1,
-          "maximum": 65535,
-          "description": "BYOK inference 代理端口。"
         }
       }
     }
@@ -264,13 +221,15 @@
     "watch": "tsc -watch -p ./",
     "build": "npm run compile",
     "package": "npm run build && vsce package --no-dependencies",
-    "package:release": "npm run build && vsce package --no-dependencies && node scripts/upload-release.js",
-    "upload": "node scripts/upload-release.js"
+    "package:release": "npm run package"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
     "@types/vscode": "^1.80.0",
-    "typescript": "^5.0.0",
-    "@vscode/vsce": "^2.22.0"
+    "@vscode/vsce": "^2.22.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "parse5": "^8.0.1"
   }
 }

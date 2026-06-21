@@ -23,8 +23,6 @@ import { testModelAccess, ProbeModelInfo, setCascadeProbeEnabled } from './usage
 import { stopIsolatedCascadeProbeLs } from './cascadeProbe';
 import { scheduleAcpConnectionRecovery } from './acpRecovery';
 import { loginByWindsurfOAuth } from './windsurfOAuthService';
-import { ByokProxyManager } from './byokProxyManager';
-import { BYOK_DEVELOPMENT_NOTICE, BYOK_FEATURE_IN_DEVELOPMENT, isByokDevelopmentBlockedMessage } from './byokFeatureGate';
 
 /**
  * 侧栏 Webview 提供器
@@ -48,15 +46,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     private readonly _extensionUri: vscode.Uri,
     private readonly _context: vscode.ExtensionContext,
     autoSwitcher: AutoSwitcher,
-    usageTracker: UsageTracker,
-    private readonly _byok: ByokProxyManager
+    usageTracker: UsageTracker
   ) {
     this._usageTracker = usageTracker;
-    // 日志文件：globalStorage/windsurf-pool.log（保留最近 500KB）
+    // 日志文件：globalStorage/kite.log（保留最近 500KB）
     try {
       fs.mkdirSync(this._context.globalStorageUri.fsPath, { recursive: true });
     } catch {}
-    this._logFilePath = path.join(this._context.globalStorageUri.fsPath, 'windsurf-pool.log');
+    this._logFilePath = path.join(this._context.globalStorageUri.fsPath, 'kite.log');
     this._diagnoseLogPath = path.join(this._context.globalStorageUri.fsPath, 'diagnose.log');
     // 每次启动在文件头写分隔符
     try {
@@ -210,13 +207,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // 定时 contextMonitor 检查：当前账号有活跃 session 有 token → 清除限速状态
     const contextCheckTimer = setInterval(() => this._checkContextForHealthClear(), 60_000);
     this._disposables.push({ dispose: () => clearInterval(contextCheckTimer) });
-
-    this._disposables.push(this._byok.onDidChange(() => {
-      void this._pushByokState();
-    }));
-    this._disposables.push(this._byok.onDidLog((log) => {
-      this.postMessage({ type: 'byokLog', log } as any);
-    }));
   }
 
   private async _checkContextForHealthClear(): Promise<void> {
@@ -392,9 +382,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   /** 过滤只保留主流模型 + 最近使用 */
   private _filterMainstreamModels(allModels: string[], recentUids: string[]): string[] {
-    // 排除含这些关键词的变体（Low/Medium/High/XHigh/Fast/Mini/BYOK/1M/Spark/Max）
+    // 排除含这些关键词的变体（Low/Medium/High/XHigh/Fast/Mini/1M/Spark/Max）
     // 注意：Thinking 不排除，因为它是重要的模型行为差异（Claude Opus 4.6 vs Claude Opus 4.6 Thinking）
-    const variantRe = /\b(Low|Medium|High|XHigh|X-High|Fast|Mini|BYOK|1M|Spark|Max|Minimal)\b/i;
+    const variantRe = /\b(Low|Medium|High|XHigh|X-High|Fast|Mini|1M|Spark|Max|Minimal)\b/i;
     const mainstream = allModels.filter(m => !variantRe.test(m));
     // 把最近使用的 uid 转成 label 匹配（uid: claude-opus-4-7-medium → 匹配 "Claude Opus 4.7 Medium"）
     const recentLabels: string[] = [];
@@ -634,7 +624,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._pushPreflightSetting();
       this._pushUsageStats();
       this._pushQuotaHistory();
-      void this._pushByokState();
 
       // 记录实例启动日志（用于异常监控的引用计数）
       const curEmail = this._context.globalState.get<string>('lastEmail');
@@ -697,7 +686,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._pushPreflightSetting();
         this._pushUsageStats();
         this._pushQuotaHistory();
-        void this._pushByokState();
         this.refreshBridgeInfo();
       }
     });
@@ -747,7 +735,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       const status = getInjectionStatus();
       const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
       const autoRecovery = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('autoRecovery', true);
-      const ext = vscode.extensions.getExtension('local.windsurf-pool');
+      const ext = vscode.extensions.getExtension('local.kite') || vscode.extensions.getExtension('local.windsurf-pool');
       const extVersion = ext?.packageJSON?.version || '0.0.0';
       const patchVersion = status.patchVersion || '0.0.0';
       const bubbleRulesInjected = hasBubbleRules();
@@ -794,104 +782,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.postMessage({ type: 'preflightSettingSync', enabled } as any);
   }
 
-  /** 推送 BYOK sidecar / patch / provider 状态给 webview */
-  private async _pushByokState(): Promise<void> {
-    try {
-      const state = await this._byok.getState();
-      this.postMessage({ type: 'byokStateSync', state } as any);
-    } catch (err) {
-      this.postMessage({
-        type: 'byokStateSync',
-        error: err instanceof Error ? err.message : String(err),
-      } as any);
-    }
-  }
-
-  private async _runByokAction(title: string, action: () => Promise<void>): Promise<void> {
-    try {
-      await action();
-      await this._pushByokState();
-    } catch (err) {
-      this.showAlert(title, err instanceof Error ? err.message : String(err), 'error');
-      await this._pushByokState();
-    }
-  }
-
   /**
    * 处理 webview 消息
    */
   private async handleMessage(message: WebviewMessage): Promise<void> {
-    if (isByokDevelopmentBlockedMessage(message.type)) {
-      this.showAlert('BYOK 开发中', BYOK_DEVELOPMENT_NOTICE, 'info');
-      await this._pushByokState();
-      return;
-    }
-
     switch (message.type) {
-      case 'byokLoad': {
-        await this._pushByokState();
-        return;
-      }
-      case 'byokStart': {
-        await this._runByokAction('BYOK 启动失败', () => this._byok.start());
-        return;
-      }
-      case 'byokStop': {
-        await this._runByokAction('BYOK 停止失败', () => this._byok.stop());
-        return;
-      }
-      case 'byokSaveProvider': {
-        await this._runByokAction('保存 BYOK 供应商失败', () => this._byok.saveProvider((message as any).provider || {}));
-        return;
-      }
-      case 'byokDeleteProvider': {
-        const providerId = (message as any).providerId || (message as any).id;
-        if (!providerId) return;
-        await this._runByokAction('删除 BYOK 供应商失败', () => this._byok.deleteProvider(providerId));
-        return;
-      }
-      case 'byokTestProvider': {
-        try {
-          const providerId = (message as any).providerId || (message as any).id;
-          if (!providerId) return;
-          const result = await this._byok.testProvider(providerId, (message as any).apiKey);
-          this.postMessage({ type: 'byokProviderTestResult', providerId, result } as any);
-        } catch (err) {
-          this.postMessage({
-            type: 'byokProviderTestResult',
-            providerId: (message as any).providerId,
-            result: { ok: false, message: err instanceof Error ? err.message : String(err) },
-          } as any);
-        }
-        await this._pushByokState();
-        return;
-      }
-      case 'byokSaveSlot': {
-        await this._runByokAction('保存 BYOK 模型映射失败', () => this._byok.saveSlot((message as any).slot || {}));
-        return;
-      }
-      case 'byokSaveModelMapSettings': {
-        await this._runByokAction('保存 BYOK 显示名设置失败', () => this._byok.saveModelMapSettings((message as any).settings || {}));
-        return;
-      }
-      case 'byokSaveInjected': {
-        await this._runByokAction('保存 BYOK 扩展槽位失败', () => this._byok.saveInjectedModels((message as any).injected || []));
-        return;
-      }
-      case 'byokDeleteSlot': {
-        const modelUid = (message as any).modelUid;
-        if (!modelUid) return;
-        await this._runByokAction('删除 BYOK 模型映射失败', () => this._byok.deleteSlot(modelUid));
-        return;
-      }
-      case 'byokApplyPatch': {
-        await this._runByokAction('应用 BYOK patch 失败', () => this._byok.applyPatch());
-        return;
-      }
-      case 'byokRestorePatch': {
-        await this._runByokAction('恢复 BYOK patch 失败', () => this._byok.restorePatch());
-        return;
-      }
       case 'enhLoad': {
         // webview 启动时拉取磁盘上的真相源
         const settings = readEnhSettings();
@@ -934,7 +829,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         try {
           ensureEnhancement();
         } catch (err) {
-          console.warn('[windsurf-pool] re-inject after enhSave failed:', err);
+          console.warn('[kite] re-inject after enhSave failed:', err);
         }
         // ACP 解锁不是 workbench 注入脚本能力，而是 Devin 内置 extension.js 补丁。
         // 如果用户开启了解锁但底层仍保留旧限制，保存设置时自动补一次。
@@ -958,7 +853,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         try {
           enqueueCommand({ id: Date.now(), action: 'apply-settings', payload: merged });
         } catch (err) {
-          console.warn('[windsurf-pool] bridge push apply-settings failed:', err);
+          console.warn('[kite] bridge push apply-settings failed:', err);
         }
         // 回传保存结果（webview 显示"已实时应用"toast）
         this.postMessage({ type: 'enhSaved', settings: merged } as any);
@@ -971,7 +866,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         try {
           enqueueCommand({ id: Date.now(), action: 'force-stop', payload: {} });
         } catch (err) {
-          console.warn('[windsurf-pool] bridge push force-stop failed:', err);
+          console.warn('[kite] bridge push force-stop failed:', err);
         }
         return;
       }
@@ -1432,7 +1327,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const accounts = await accountStore.readAccounts(this._context);
         const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const payload = {
-          type: 'windsurf-pool-accounts',
+          type: 'kite-accounts',
           version: 1,
           exportedAt: new Date().toISOString(),
           accounts,
@@ -1440,7 +1335,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const text = JSON.stringify(payload, null, 2);
         try { await vscode.env.clipboard.writeText(text); } catch {}
         const uri = await vscode.window.showSaveDialog({
-          defaultUri: vscode.Uri.file(path.join(process.env.USERPROFILE || '', 'Desktop', `windsurf-pool-accounts-${stamp}.json`)),
+          defaultUri: vscode.Uri.file(path.join(process.env.USERPROFILE || '', 'Desktop', `kite-accounts-${stamp}.json`)),
           filters: { JSON: ['json'] },
           saveLabel: '导出账号设置',
         });
@@ -1468,7 +1363,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
         const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const payload = {
-          type: 'windsurf-pool-accounts',
+          type: 'kite-accounts',
           version: 1,
           exportedAt: new Date().toISOString(),
           accounts: selected,
@@ -1476,7 +1371,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const text = JSON.stringify(payload, null, 2);
         try { await vscode.env.clipboard.writeText(text); } catch {}
         const uri = await vscode.window.showSaveDialog({
-          defaultUri: vscode.Uri.file(path.join(process.env.USERPROFILE || process.env.HOME || '', 'Desktop', `windsurf-pool-accounts-${stamp}.json`)),
+          defaultUri: vscode.Uri.file(path.join(process.env.USERPROFILE || process.env.HOME || '', 'Desktop', `kite-accounts-${stamp}.json`)),
           filters: { JSON: ['json'] },
           saveLabel: '导出选中账号',
         });
@@ -1526,7 +1421,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         } else {
           // JSON 完整格式
           const payload = {
-            type: 'windsurf-pool-accounts',
+            type: 'kite-accounts',
             version: 2,
             exportedAt: new Date().toISOString(),
             accounts: selected,
@@ -1541,7 +1436,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
 
         const uri = await vscode.window.showSaveDialog({
-          defaultUri: vscode.Uri.file(path.join(process.env.USERPROFILE || process.env.HOME || '', 'Desktop', `windsurf-pool-${stamp}.${ext}`)),
+          defaultUri: vscode.Uri.file(path.join(process.env.USERPROFILE || process.env.HOME || '', 'Desktop', `kite-${stamp}.${ext}`)),
           filters: { [filterName]: [ext] },
           saveLabel: '导出账号',
         });
@@ -1691,7 +1586,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             removeScriptDisciplineRules();
           }
         } catch (err) {
-          console.error('[windsurf-pool] toggleEnhancement file op failed:', err);
+          console.error('[kite] toggleEnhancement file op failed:', err);
         }
 
         this._pushEnhancementStatus();
@@ -2190,10 +2085,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _getHtmlForWebview(webview: vscode.Webview): string {
     const ideName = getIdeDisplayName();
     const isDevin = detectIdeFlavor() === 'devin';
-    const extVersion = vscode.extensions.getExtension('local.windsurf-pool')?.packageJSON?.version || '0.0.0';
+    const extVersion = (vscode.extensions.getExtension('local.kite') || vscode.extensions.getExtension('local.windsurf-pool'))?.packageJSON?.version || '0.0.0';
     const cssUri = `${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.css'))}?v=${extVersion}`;
     const jsUri = `${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.js'))}?v=${extVersion}`;
-    const byokBlockedAttrs = BYOK_FEATURE_IN_DEVELOPMENT ? ' disabled aria-disabled="true"' : '';
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -2220,10 +2114,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       <button type="button" class="app-tab" data-tab="enhance" role="tab" aria-selected="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         增强
-      </button>
-      <button type="button" class="app-tab" data-tab="byok" role="tab" aria-selected="false">
-        <svg viewBox="0 0 1024 1024" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M469.333333 554.666667a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m-170.666666 0a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m640-384a128 128 0 0 0-128-128H213.333333a128 128 0 0 0-128 128v170.666666a128 128 0 0 0 33.28 85.333334A128 128 0 0 0 85.333333 512v170.666667a128 128 0 0 0 128 128h256v85.333333H128a42.666667 42.666667 0 0 0 0 85.333333h768a42.666667 42.666667 0 1 0 0-85.333333h-341.333333v-85.333333h256a128 128 0 0 0 128-128v-170.666667a128 128 0 0 0-33.28-85.333333A128 128 0 0 0 938.666667 341.333333V170.666667z m-85.333334 512a42.666667 42.666667 0 0 1-42.666666 42.666666H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666666v-170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666667z m0-341.333334a42.666667 42.666667 0 0 1-42.666666 42.666667H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666667V170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666666z m-384-128a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334zM298.666667 213.333333a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334z"></path></svg>
-        BYOK
       </button>
     </div>
 
@@ -2529,393 +2419,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     </div>
     </div>
 
-    <div class="tab-page" id="tab-byok" data-tab-page="byok" role="tabpanel">
-      <div class="byok-overview">
-        <svg viewBox="0 0 1024 1024" width="16" height="16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M469.333333 554.666667a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m-170.666666 0a42.666667 42.666667 0 1 0 0 85.333333 42.666667 42.666667 0 0 0 0-85.333333z m640-384a128 128 0 0 0-128-128H213.333333a128 128 0 0 0-128 128v170.666666a128 128 0 0 0 33.28 85.333334A128 128 0 0 0 85.333333 512v170.666667a128 128 0 0 0 128 128h256v85.333333H128a42.666667 42.666667 0 0 0 0 85.333333h768a42.666667 42.666667 0 1 0 0-85.333333h-341.333333v-85.333333h256a128 128 0 0 0 128-128v-170.666667a128 128 0 0 0-33.28-85.333333A128 128 0 0 0 938.666667 341.333333V170.666667z m-85.333334 512a42.666667 42.666667 0 0 1-42.666666 42.666666H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666666v-170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666667z m0-341.333334a42.666667 42.666667 0 0 1-42.666666 42.666667H213.333333a42.666667 42.666667 0 0 1-42.666666-42.666667V170.666667a42.666667 42.666667 0 0 1 42.666666-42.666667h597.333334a42.666667 42.666667 0 0 1 42.666666 42.666667v170.666666z m-384-128a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334zM298.666667 213.333333a42.666667 42.666667 0 1 0 0 85.333334 42.666667 42.666667 0 0 0 0-85.333334z"></path></svg>
-        <span class="byok-overview-title">BYOK · 自带 Key</span>
-        <span class="byok-overview-status is-dev" id="byokStatusPill">开发中</span>
-      </div>
-
-      <div class="byok-dev-note" id="byokDevNote">
-        BYOK 功能正在开发中，当前版本暂不开放新增配置、启动 Sidecar 或应用 Patch；旧版本已应用的运行状态仍可停止或恢复。
-      </div>
-
-      <div class="byok-metrics">
-        <div class="byok-metric"><div class="byok-metric-label">Sidecar</div><div class="byok-metric-val" id="byokProxyStatus">检测中…</div></div>
-        <div class="byok-metric"><div class="byok-metric-label">Patch</div><div class="byok-metric-val" id="byokPatchStatus">检测中…</div></div>
-        <div class="byok-metric"><div class="byok-metric-label">端口</div><div class="byok-metric-val"><span id="byokPortStatus">-</span></div></div>
-      </div>
-
-      <div class="byok-runtime-panel" id="byokRuntimeStats">
-        <div class="byok-runtime-grid">
-          <div class="byok-runtime-cell"><span>请求</span><b id="byokStatRequests">-</b></div>
-          <div class="byok-runtime-cell"><span>Token</span><b id="byokStatTokens">-</b></div>
-          <div class="byok-runtime-cell"><span>重试</span><b id="byokStatRetries">-</b></div>
-          <div class="byok-runtime-cell"><span>错误</span><b id="byokStatErrors">-</b></div>
-        </div>
-        <div class="byok-runtime-foot">
-          <span id="byokStatLastRoute">最近路由 -</span>
-          <span id="byokStatRate">速率 -</span>
-        </div>
-      </div>
-
-      <div class="byok-subtabs" id="byokSubtabs">
-        <button type="button" class="byok-subtab active" data-byok-subtab="providers">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4a3 3 0 0 0-2.82 2H3a1 1 0 0 0 0 2h1.18A3 3 0 1 0 7 4Zm10 10a3 3 0 0 0-2.82 2H3a1 1 0 1 0 0 2h11.18A3 3 0 1 0 17 14Zm-4-8h8a1 1 0 1 1 0 2h-8a1 1 0 1 1 0-2Z"/></svg>
-          供应商 <span class="byok-subtab-count" id="byokCountProviders">0</span>
-        </button>
-        <button type="button" class="byok-subtab" data-byok-subtab="models">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 4h5a1 1 0 0 1 0 2H7.4l4.05 4.05-1.4 1.4L6 7.4V10a1 1 0 1 1-2 0V5a1 1 0 0 1 1-1Zm9 0h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V7.4l-4.05 4.05-1.4-1.4L16.6 6H14a1 1 0 1 1 0-2ZM10.05 12.55l1.4 1.4L7.4 18H10a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v2.6l4.05-4.05Zm3.9 0L18 16.6V14a1 1 0 1 1 2 0v5a1 1 0 0 1-1 1h-5a1 1 0 1 1 0-2h2.6l-4.05-4.05 1.4-1.4Z"/></svg>
-          模型映射 <span class="byok-subtab-count" id="byokModelCount">0</span>
-        </button>
-        <button type="button" class="byok-subtab" data-byok-subtab="patches">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 4h8.8l-2 2H5v13h13v-6.8l2-2V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M18.35 2.65a2.1 2.1 0 0 1 2.98 2.97l-8.7 8.7-4.12 1.17 1.17-4.12 8.67-8.72Z"/></svg>
-          补丁 <span class="byok-subtab-count" id="byokCountPatches">0/3</span>
-        </button>
-        <button type="button" class="byok-subtab" data-byok-subtab="logs">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm7 1.5V9h5.5L13 3.5ZM8 13h8v1.7H8V13Zm0 4h8v1.7H8V17Z"/></svg>
-          日志
-        </button>
-      </div>
-
-      <div class="byok-subtab-content active" data-byok-content="providers">
-        <div class="byok-toolbar">
-          <div>
-            <div class="byok-toolbar-title">API 供应商</div>
-            <div class="byok-toolbar-sub">集中管理 OpenAI Compatible / Anthropic 端点和可用模型</div>
-          </div>
-          <button class="v2-btn b-blue" id="byokNewProviderBtn" type="button"${byokBlockedAttrs}>
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4Z"/></svg>
-            新增供应商
-          </button>
-        </div>
-        <div class="byok-provider-list" id="byokProviderList"></div>
-        <div class="byok-empty" id="byokProviderEmpty" hidden>尚未配置任何供应商，点击右上角「新增供应商」开始。</div>
-        <div class="byok-msg" id="byokProviderMsg"></div>
-      </div>
-
-      <div class="byok-subtab-content" data-byok-content="models">
-        <datalist id="byokIdeModels"></datalist>
-        <div class="byok-toolbar">
-          <div>
-            <div class="byok-toolbar-title">模型映射</div>
-            <div class="byok-toolbar-sub">选择 IDE 原生槽位，再映射到供应商模型</div>
-          </div>
-          <div class="byok-toolbar-actions">
-            <button class="v2-btn b-ghost" id="byokOpenMapSettingsBtn" type="button"${byokBlockedAttrs}>显示名</button>
-            <button class="v2-btn b-ghost" id="byokOpenInjectedBtn" type="button"${byokBlockedAttrs}>扩展槽位</button>
-            <button class="v2-btn b-blue" id="byokNewSlotBtn" type="button"${byokBlockedAttrs}>
-              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4Z"/></svg>
-              添加映射
-            </button>
-          </div>
-        </div>
-        <div class="byok-model-tools">
-          <input type="text" class="byok-input" id="byokModelSearchInput" placeholder="搜索显示名 / modelUid / 供应商 / 目标模型">
-          <button class="v2-btn b-ghost" id="byokModelRefreshBtn" type="button" title="刷新映射列表">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 5.1A9 9 0 0 0 3.8 8a1 1 0 0 0 1.8.86A7 7 0 0 1 17.48 6.5H15a1 1 0 1 0 0 2h5a1 1 0 0 0 1-1v-5a1 1 0 1 0-2 0v2.6ZM5.1 18.9A9 9 0 0 0 20.2 16a1 1 0 0 0-1.8-.86A7 7 0 0 1 6.52 17.5H9a1 1 0 1 0 0-2H4a1 1 0 0 0-1 1v5a1 1 0 1 0 2 0v-2.6Z"/></svg>
-          </button>
-        </div>
-        <div class="byok-map-summary" id="byokModelSummary"></div>
-        <div class="byok-slot-list" id="byokSlotList"></div>
-        <div class="byok-empty" id="byokSlotEmpty" hidden>还没有模型映射，点击「添加映射」选择 IDE 槽位和供应商模型。</div>
-        <div class="byok-msg" id="byokSlotMsg"></div>
-      </div>
-
-      <div class="byok-subtab-content" data-byok-content="patches">
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="v2-btn b-blue" id="byokStartBtn"${byokBlockedAttrs}>启动 Sidecar</button>
-          <button class="v2-btn b-ghost" id="byokStopBtn">停止</button>
-          <button class="v2-btn b-ghost" id="byokRefreshBtn">刷新</button>
-          <button class="v2-btn b-blue" id="byokApplyPatchBtn"${byokBlockedAttrs}>应用 Patch</button>
-          <button class="v2-btn b-danger-outline" id="byokRestorePatchBtn">恢复 Patch</button>
-        </div>
-      </div>
-
-      <div class="byok-subtab-content" data-byok-content="logs">
-        <div class="byok-log-head">
-          <div>
-            <div class="byok-toolbar-title">运行日志</div>
-            <div class="byok-toolbar-sub">Sidecar、Patch 与请求路由事件</div>
-          </div>
-          <span class="byok-log-count" id="byokLogCount">0 条</span>
-        </div>
-        <div class="byok-log-tools">
-          <select class="byok-input" id="byokLogFilter">
-            <option value="all">全部日志</option>
-            <option value="error">仅错误</option>
-            <option value="warn">仅警告</option>
-            <option value="sidecar">Sidecar</option>
-          </select>
-          <button class="v2-btn b-ghost" id="byokExportLogBtn" type="button">导出</button>
-          <button class="v2-btn b-ghost" id="byokClearLogBtn" type="button">清空显示</button>
-        </div>
-        <pre class="byok-log" id="byokLog" aria-live="polite" data-empty="暂无 BYOK 日志。启动 Sidecar 或应用 Patch 后，运行事件会显示在这里。"></pre>
-      </div>
-    </div>
-
-    <div class="byok-editor-overlay" id="byokProviderModal" hidden>
-      <div class="byok-editor-modal byok-provider-editor" role="dialog" aria-modal="true" aria-labelledby="byokProviderModalTitle">
-        <div class="byok-editor-header">
-          <div class="byok-editor-heading">
-            <button class="byok-back-btn" id="byokProviderBackBtn" type="button" title="返回供应商列表">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-              <span>返回供应商列表</span>
-            </button>
-            <span class="byok-editor-title" id="byokProviderModalTitle">新增供应商</span>
-          </div>
-          <div class="byok-editor-brand">IDE 增强助手 BYOK</div>
-        </div>
-        <div class="byok-editor-body byok-editor-body--provider">
-          <section class="byok-editor-panel">
-            <input type="hidden" id="byokProviderId">
-            <input type="hidden" id="byokProviderModel">
-            <div class="byok-field">
-              <label for="byokProviderName">名称</label>
-              <input type="text" class="byok-input" id="byokProviderName" placeholder="例如 OpenRouter / 我的中转站">
-            </div>
-            <div class="byok-field">
-              <label for="byokProviderFormat">API 格式</label>
-              <select class="byok-input" id="byokProviderFormat">
-                <option value="openai">OpenAI Compatible</option>
-                <option value="anthropic">Anthropic</option>
-              </select>
-            </div>
-            <div class="byok-field">
-              <label for="byokProviderHost">API Base URL</label>
-              <input type="text" class="byok-input" id="byokProviderHost" placeholder="https://api.openai.com">
-            </div>
-            <div class="byok-field">
-              <label for="byokProviderPath">接口路径</label>
-              <input type="text" class="byok-input" id="byokProviderPath" placeholder="/v1/chat/completions">
-            </div>
-            <div class="byok-field">
-              <label for="byokProviderKey">API 密钥</label>
-              <input type="password" class="byok-input" id="byokProviderKey" placeholder="留空则保留已保存密钥" autocomplete="off">
-            </div>
-            <label class="byok-check byok-editor-check"><input type="checkbox" id="byokProviderEnabled" checked>启用供应商</label>
-            <div class="byok-selected-head">
-              <span>已选模型列表</span>
-              <span class="byok-count-pill" id="byokProviderSelectedCount">0</span>
-            </div>
-            <div class="byok-selected-models" id="byokProviderSelectedModels"></div>
-          </section>
-          <section class="byok-editor-panel byok-catalog-panel">
-            <div class="byok-panel-head">
-              <div>
-                <div class="byok-panel-title">选择支持的模型</div>
-                <div class="byok-panel-sub">首个模型将作为默认模型</div>
-              </div>
-              <button class="v2-btn b-ghost" id="byokFetchModelsBtn" type="button" title="测试连接并读取模型列表">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
-                获取模型列表
-              </button>
-            </div>
-            <div class="byok-model-filter" id="byokProviderModelFilters">
-              <button class="active" type="button" data-filter="all">全部</button>
-              <button type="button" data-filter="reason">推理</button>
-              <button type="button" data-filter="vision">视觉</button>
-              <button type="button" data-filter="free">免费</button>
-              <button type="button" data-filter="embedding">向量</button>
-            </div>
-            <div class="byok-panel-search">
-              <input type="text" class="byok-input" id="byokProviderModelSearch" placeholder="搜索模型 ID / 品牌关键字">
-            </div>
-            <div class="byok-model-catalog" id="byokProviderModelCatalog"></div>
-            <div class="byok-custom-model-row">
-              <input type="text" class="byok-input" id="byokProviderCustomModel" placeholder="自定义模型 ID，如 deepseek-reasoner">
-              <button class="v2-btn b-ghost" id="byokProviderAddCustomModelBtn" type="button">添加</button>
-            </div>
-          </section>
-        </div>
-        <div class="byok-editor-footer">
-          <div class="byok-editor-status"><span class="conn-dot no" id="byokProviderTestDot"></span><span id="byokProviderTestText">未测试</span></div>
-          <div class="byok-editor-actions">
-            <button class="v2-btn b-ghost" id="byokTestProviderBtn" type="button">测试连接</button>
-            <button class="v2-btn b-ghost" id="byokProviderCancelBtn" type="button">取消</button>
-            <button class="v2-btn b-danger-outline" id="byokDeleteProviderBtn" type="button">删除</button>
-            <button class="v2-btn b-blue" id="byokSaveProviderBtn" type="button">保存供应商</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="byok-editor-overlay" id="byokSlotModal" hidden>
-      <div class="byok-editor-modal byok-slot-editor" role="dialog" aria-modal="true" aria-labelledby="byokSlotModalTitle">
-        <div class="byok-editor-header">
-          <div class="byok-editor-heading">
-            <button class="byok-back-btn" id="byokSlotBackBtn" type="button" title="返回模型映射">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-              <span>返回模型映射</span>
-            </button>
-            <span class="byok-editor-title" id="byokSlotModalTitle">添加映射</span>
-          </div>
-          <div class="byok-editor-brand">IDE 增强助手 BYOK</div>
-        </div>
-        <div class="byok-editor-body byok-editor-body--slot">
-          <section class="byok-editor-panel byok-catalog-panel">
-            <div class="byok-panel-head">
-              <div>
-                <div class="byok-panel-title">选择 IDE 槽位</div>
-                <div class="byok-panel-sub">使用 IDE 原生 modelUid 作为劫持入口</div>
-              </div>
-              <span class="byok-count-pill" id="byokSlotCatalogCount">0 可用</span>
-            </div>
-            <div class="byok-panel-search">
-              <input type="text" class="byok-input" id="byokSlotCatalogSearch" placeholder="搜索槽位名 / modelUid">
-            </div>
-            <div class="byok-slot-catalog" id="byokSlotCatalog"></div>
-          </section>
-          <section class="byok-editor-panel byok-catalog-panel">
-            <div class="byok-panel-head">
-              <div>
-                <div class="byok-panel-title">选择映射模型</div>
-                <div class="byok-panel-sub">来自已启用供应商的模型列表</div>
-              </div>
-            </div>
-            <div class="byok-panel-search">
-              <input type="text" class="byok-input" id="byokMappingModelSearch" placeholder="搜索供应商 / 模型">
-            </div>
-            <div class="byok-mapping-catalog" id="byokMappingModelCatalog"></div>
-            <div class="byok-slot-config">
-              <input type="hidden" id="byokSlotEditUid">
-              <input type="hidden" id="byokModelUid">
-              <select id="byokSlotProvider" hidden></select>
-              <input type="hidden" id="byokSlotModel">
-              <div class="byok-field">
-                <label for="byokDisplayName">自定义显示名</label>
-                <input type="text" class="byok-input" id="byokDisplayName" placeholder="留空使用 IDE 原模型名">
-              </div>
-              <label class="byok-check byok-editor-check"><input type="checkbox" id="byokSlotEnabled" checked>启用映射</label>
-            </div>
-          </section>
-        </div>
-        <div class="byok-editor-footer">
-          <div class="byok-editor-status" id="byokSlotEditorStatus">请选择槽位和目标模型</div>
-          <div class="byok-editor-actions">
-            <button class="v2-btn b-ghost" id="byokSlotCancelBtn" type="button">取消</button>
-            <button class="v2-btn b-danger-outline" id="byokDeleteSlotBtn" type="button">删除映射</button>
-            <button class="v2-btn b-blue" id="byokSaveSlotBtn" type="button">保存映射</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="byok-editor-overlay" id="byokMapSettingsModal" hidden>
-      <div class="byok-editor-modal byok-small-editor" role="dialog" aria-modal="true" aria-labelledby="byokMapSettingsTitle">
-        <div class="byok-editor-header">
-          <div class="byok-editor-heading">
-            <button class="byok-back-btn" id="byokMapSettingsBackBtn" type="button" title="返回模型映射">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-              <span>返回模型映射</span>
-            </button>
-            <span class="byok-editor-title" id="byokMapSettingsTitle">显示名设置</span>
-          </div>
-          <div class="byok-editor-brand">IDE 增强助手 BYOK</div>
-        </div>
-        <div class="byok-editor-body byok-editor-body--single">
-          <section class="byok-editor-panel">
-            <div class="byok-field">
-              <label for="byokNamePrefix">名称前缀</label>
-              <input type="text" class="byok-input" id="byokNamePrefix" placeholder="BYOK">
-            </div>
-            <div class="byok-field">
-              <label for="byokLabelTemplate">显示名模板</label>
-              <input type="text" class="byok-input" id="byokLabelTemplate" placeholder="{prefix} {label} ({provider})">
-            </div>
-            <div class="byok-template-hints">
-              <span>{prefix}</span><span>{label}</span><span>{provider}</span><span>{apiModel}</span>
-            </div>
-            <div class="byok-template-preview" id="byokLabelPreview">BYOK Claude Sonnet (OpenRouter)</div>
-          </section>
-        </div>
-        <div class="byok-editor-footer">
-          <div class="byok-editor-status" id="byokMapSettingsStatus">保存后会在下次刷新模型目录时生效</div>
-          <div class="byok-editor-actions">
-            <button class="v2-btn b-ghost" id="byokMapSettingsCancelBtn" type="button">取消</button>
-            <button class="v2-btn b-blue" id="byokMapSettingsSaveBtn" type="button">保存设置</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="byok-editor-overlay" id="byokFailoverModal" hidden>
-      <div class="byok-editor-modal byok-small-editor" role="dialog" aria-modal="true" aria-labelledby="byokFailoverTitle">
-        <div class="byok-editor-header">
-          <div class="byok-editor-heading">
-            <button class="byok-back-btn" id="byokFailoverBackBtn" type="button" title="返回模型映射">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-              <span>返回模型映射</span>
-            </button>
-            <span class="byok-editor-title" id="byokFailoverTitle">故障转移</span>
-          </div>
-          <div class="byok-editor-brand" id="byokFailoverTitleSlot">-</div>
-        </div>
-        <div class="byok-editor-body byok-editor-body--single">
-          <section class="byok-editor-panel">
-            <input type="hidden" id="byokFailoverUid">
-            <div class="byok-panel-head">
-              <div>
-                <div class="byok-panel-title">目标链路</div>
-                <div class="byok-panel-sub">从上到下依次尝试，请求失败时自动切到下一路</div>
-              </div>
-              <button class="v2-btn b-ghost" id="byokFailoverAddBtn" type="button">添加备用</button>
-            </div>
-            <div class="byok-failover-list" id="byokFailoverRows"></div>
-          </section>
-        </div>
-        <div class="byok-editor-footer">
-          <div class="byok-editor-status" id="byokFailoverStatus">至少保留一个目标模型</div>
-          <div class="byok-editor-actions">
-            <button class="v2-btn b-ghost" id="byokFailoverCancelBtn" type="button">取消</button>
-            <button class="v2-btn b-blue" id="byokFailoverSaveBtn" type="button">保存链路</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="byok-editor-overlay" id="byokInjectedModal" hidden>
-      <div class="byok-editor-modal byok-injected-editor" role="dialog" aria-modal="true" aria-labelledby="byokInjectedTitle">
-        <div class="byok-editor-header">
-          <div class="byok-editor-heading">
-            <button class="byok-back-btn" id="byokInjectedBackBtn" type="button" title="返回模型映射">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-              <span>返回模型映射</span>
-            </button>
-            <span class="byok-editor-title" id="byokInjectedTitle">扩展槽位</span>
-          </div>
-          <div class="byok-editor-brand"><span id="byokInjectedCount">0</span> 个已启用</div>
-        </div>
-        <div class="byok-editor-body byok-editor-body--injected">
-          <section class="byok-editor-panel byok-catalog-panel">
-            <div class="byok-panel-head">
-              <div>
-                <div class="byok-panel-title">Windsurf 模型目录</div>
-                <div class="byok-panel-sub">选择需要注入的 IDE 模型槽位并指定目标模型</div>
-              </div>
-            </div>
-            <div class="byok-model-tools">
-              <input type="text" class="byok-input" id="byokInjectedSearch" placeholder="搜索显示名 / modelUid / API ID">
-              <select class="byok-input" id="byokInjectedFilter">
-                <option value="all">全部</option>
-                <option value="enabled">已启用</option>
-                <option value="vision">支持图片</option>
-                <option value="missing">待配置</option>
-              </select>
-            </div>
-            <div class="byok-injected-list" id="byokInjectedList"></div>
-          </section>
-        </div>
-        <div class="byok-editor-footer">
-          <div class="byok-editor-status" id="byokInjectedStatus">启用的槽位会写入模型目录</div>
-          <div class="byok-editor-actions">
-            <button class="v2-btn b-ghost" id="byokInjectedCancelBtn" type="button">取消</button>
-            <button class="v2-btn b-blue" id="byokInjectedSaveBtn" type="button">保存扩展槽位</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="tab-page" id="tab-automation" data-tab-page="automation" role="tabpanel">
     <div class="split-card" id="autoSplitCard">
       <div class="split-sidebar">
@@ -2974,8 +2477,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <div class="v2-hint" id="asHint">取日/周配额中较低者为准。例：日100% 周0% → 实际不可用，自动切到额度最充足的号。</div>
 
           <!-- ★ 高级设置（默认折叠） -->
-          <details class="as-adv-details" id="asAdvancedDetails">
-            <summary class="as-adv-summary">高级设置</summary>
+          <div class="as-adv-details" id="asAdvancedDetails">
+            <div class="as-adv-summary">高级设置</div>
             <div class="as-adv-body">
 
               <!-- 运行参数 -->
@@ -3020,7 +2523,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               <div class="v2-hint" style="margin-top:4px">余额 ≥ 此值时，配额耗尽不切号，自动发继续（0 = 禁用保护）。</div>
 
             </div>
-          </details>
+          </div>
 
           <div style="margin-top:10px;padding:8px 10px;background:var(--vscode-textBlockQuote-background,rgba(127,127,127,.08));border-radius:6px;font-size:11px;color:var(--vscode-descriptionForeground,#888);display:flex;align-items:center;justify-content:space-between;gap:8px">
             <span>切号记录已移至统计面板</span>
@@ -3222,11 +2725,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               <div class="ac-last-action" id="acLastAction" style="display:none"></div>
             </div>
           </div>
+          </div>
+        </details>
 
-          <!-- 错误恢复核心引擎 -->
-          <div class="v2-divider" style="margin:8px 0"></div>
-          <details class="v2-engine">
-            <summary class="v2-engine-head">
+          <!-- 错误恢复核心引擎（仅守护/长任务模式显示） -->
+          <div id="acErrorRecoverySection" style="display:none">
+            <div class="v2-divider" style="margin:8px 0"></div>
+            <div class="v2-engine">
+            <div class="v2-engine-head">
               <div class="v2-engine-icon">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
               </div>
@@ -3234,8 +2740,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 <span class="v2-engine-name">错误恢复核心</span>
                 <span class="v2-engine-stat">● 监控中</span>
               </div>
-              <span class="v2-engine-chevron"></span>
-            </summary>
+              </div>
             <div class="v2-engine-rules" style="padding:10px 12px">
               <div class="v2-strip" style="margin-bottom:8px;padding:8px 10px;background:color-mix(in srgb, var(--vscode-foreground) 3%, transparent);border-radius:4px">
                 <div class="v2-strip-band c-emerald"></div>
@@ -3445,12 +2950,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               </div>
 
             </div>
-          </details>
+          </div>
         </div>
-      </details>
-    </div>
       </div>
     </div>
+      </div>
     </div>
 
     <div class="tab-page" id="tab-instance" data-tab-page="instance" role="tabpanel">
@@ -4135,8 +3639,6 @@ devin-session-token$eyJhbGciOiJIUzI1NiIs...</pre>
 
   <script>
     const vscode = acquireVsCodeApi();
-    window.__BYOK_FEATURE_IN_DEVELOPMENT__ = ${BYOK_FEATURE_IN_DEVELOPMENT ? 'true' : 'false'};
-    window.__BYOK_DEVELOPMENT_NOTICE__ = ${JSON.stringify(BYOK_DEVELOPMENT_NOTICE)};
   </script>
   <script>${getSignalBridgeScript()}</script>
   <script>${getBridgeRelayScript()}</script>

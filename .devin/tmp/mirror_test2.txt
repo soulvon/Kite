@@ -1,6 +1,0 @@
-=== 补充测试 03/19/2026 03:14:58 ===
-gitproxy.click => FAIL: The SSL connection could not be established, see inner excep...
-gh.api.99988866.xyz => FAIL: The SSL connection could not be established, see inner excep...
-ghps.cc => OK (1990ms)
-github.store => FAIL: 不知道这样的主机。 (github.store:443)
-cors.isteed.cc => OK (1740ms)

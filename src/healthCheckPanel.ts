@@ -170,7 +170,7 @@ export function openHealthCheckPanel(
   );
 
   const webview = _panel.webview;
-  const ext = vscode.extensions.getExtension('local.windsurf-pool');
+  const ext = vscode.extensions.getExtension('local.kite') || vscode.extensions.getExtension('local.windsurf-pool');
   const ver = ext?.packageJSON?.version || '0.0.0';
   const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webview', 'health-check.css'));
   const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webview', 'health-check.js'));
@@ -648,7 +648,7 @@ async function readModelsFromStateDb(): Promise<Array<{ label: string; uid: stri
   }
 
   // 过滤掉变体（Low/Medium/High 等），只保留主流模型
-  const variantRe = /\b(Low|Medium|High|XHigh|X-High|Fast|Mini|BYOK|1M|Spark|Max|Minimal)\b/i;
+  const variantRe = /\b(Low|Medium|High|XHigh|X-High|Fast|Mini|1M|Spark|Max|Minimal)\b/i;
   return [...labels]
     .filter(l => !variantRe.test(l))
     .sort()

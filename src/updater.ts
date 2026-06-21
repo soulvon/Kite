@@ -19,7 +19,7 @@ interface GitHubRelease {
 
 // 硬编码仓库信息（公开仓库，无需 token）
 const REPO_OWNER = 'soulvon';
-const REPO_NAME = 'windsurf-pool-releases';
+const REPO_NAME = 'Kite';
 
 interface UpdateConfig {
   autoCheck: boolean;
@@ -52,7 +52,7 @@ function fetchGitHubApi(url: string, token: string): Promise<any> {
   return new Promise((resolve, reject) => {
     const protocol = url.startsWith('https') ? https : http;
     const headers: Record<string, string> = {
-      'User-Agent': 'windsurf-pool-updater',
+      'User-Agent': 'kite-updater',
     };
     if (token) {
       headers['Authorization'] = `token ${token}`;
@@ -98,7 +98,7 @@ function downloadFile(url: string, token: string, destPath: string, maxRedirects
 
     const protocol = url.startsWith('https') ? https : http;
     const headers: Record<string, string> = {
-      'User-Agent': 'windsurf-pool-updater',
+      'User-Agent': 'kite-updater',
     };
     if (token) {
       headers['Authorization'] = `token ${token}`;
@@ -233,7 +233,7 @@ export async function checkForUpdates(silent: boolean = false): Promise<boolean>
  */
 async function downloadAndInstall(downloadUrl: string, token: string, version: string): Promise<void> {
   const tempDir = os.tmpdir();
-  const vsixPath = path.join(tempDir, `windsurf-pool-${version}.vsix`);
+  const vsixPath = path.join(tempDir, `kite-${version}.vsix`);
 
   await vscode.window.withProgress(
     {
@@ -275,7 +275,7 @@ async function downloadAndInstall(downloadUrl: string, token: string, version: s
  */
 async function downloadOnly(downloadUrl: string, token: string, version: string): Promise<void> {
   const tempDir = os.tmpdir();
-  const vsixPath = path.join(tempDir, `windsurf-pool-${version}.vsix`);
+  const vsixPath = path.join(tempDir, `kite-${version}.vsix`);
 
   await vscode.window.withProgress(
     {
@@ -348,7 +348,7 @@ export async function autoCheckOnStartup(): Promise<void> {
       }
     } catch (err) {
       // 静默失败，不影响启动
-      console.error('[windsurf-pool] Auto check update failed:', err);
+      console.error('[kite] Auto check update failed:', err);
     }
   }, 30000);
 }

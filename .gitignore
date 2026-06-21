@@ -1,11 +1,22 @@
 node_modules/
 out/
 *.vsix
-.DS_Store
 *.log
 *.har
 *.msi
+
+# 本地归档：历史分析、私有资料、旧包和不适合上传的文件保存在这里，不随 GitHub 发布。
+_local_archive/
+
+# Agent / IDE 本地状态
+AGENTS.md
+CLAUDE.md
 .claude/
 .codebuddy/
+.devin/
 .playwright-mcp/
-orderProject/
+.vscode/
+
+# 系统文件
+.DS_Store
+Thumbs.db

@@ -27,12 +27,15 @@ devin_result.png
 .gitattributes
 .git/**
 .github/**
+_local_archive/**
 .windsurf/**
 .devin/**
 .playwright-mcp/**
 .codebuddy/**
 .claude/**
 .claudeignore
+AGENTS.md
+CLAUDE.md
 node_modules/**
 *.vsix
 *.log
@@ -57,9 +60,6 @@ newlogo/**
 *.jpg
 *.webp
 resources/wechat-reward.jpg
-resources/byok-sidecar/node_modules/**
-resources/byok-sidecar/package-lock.json
-
 # 开发预览 HTML（不被代码引用）
 resources/webview/*-preview.html
 resources/webview/*-demo.html

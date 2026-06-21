@@ -1,2 +1,0 @@
-Matches: 1
-etWindsurfExtensionMetadata();C.instance=new C(A)}get EXTENSION_COMMAND_IDS(){const A={};for(const e in this.metadata.commands)Object.prototype.hasOwnProperty.call(this.metadata.commands,e)&&(A[e]=this.metadata.commands[e].id);return A}get EXTENSION_CONTEXT_KEYS(){return(0,r.mapValues)(this.metadata.contextKeys,A=>A.id)}get customEditorDecorations(){return this.metadata.customEditorDecorations}get blacklistedExtensionIds(){return this.metadata.blacklistedExtensionIds}get blacklistedPublishers(){

@@ -127,7 +127,7 @@ body {
     top: 0;
     z-index: 30;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 2px;
     padding: 8px 0 7px;
     background: var(--vscode-sideBar-background, var(--vscode-editor-background));
@@ -151,7 +151,6 @@ body {
     font-weight: 600;
     line-height: 1.2;
     white-space: nowrap;
-    cursor: pointer;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .app-tab svg {
@@ -233,7 +232,6 @@ body {
     font-size: 12px;
     font-weight: 600;
     line-height: 1.2;
-    cursor: pointer;
     transition: background 0.15s, color 0.15s;
 }
 .subtab svg {
@@ -273,8 +271,6 @@ body {
 /* ═══════ Details / Summary ═══════ */
 details { border: none; }
 details > summary {
-    list-style: none;
-    cursor: pointer;
     user-select: none;
 }
 details > summary::-webkit-details-marker { display: none; }
@@ -311,7 +307,6 @@ details > summary::marker { display: none; content: ''; }
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--muted);
-    cursor: pointer;
     transition: all 0.2s;
     white-space: nowrap;
 }
@@ -327,212 +322,6 @@ details > summary::marker { display: none; content: ''; }
     gap: 12px;
     animation: fadeSlideIn 0.2s ease-out;
 }
-
-/* ─── BYOK Panel ─── */
-.byok-details { border: none; }
-.byok-summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 11px 14px;
-    transition: background 0.15s;
-    border-bottom: 1px solid var(--card-border);
-}
-.byok-summary:hover { background: var(--hover-bg); }
-.byok-icon { color: var(--muted); flex-shrink: 0; }
-.byok-title { font-size: 13px; font-weight: 600; }
-.byok-arrow {
-    font-size: 8px;
-    color: var(--muted);
-    transition: transform 0.2s;
-    display: inline-flex;
-    align-items: center;
-}
-.byok-arrow::after { content: '▶'; }
-.byok-details[open] .byok-arrow { transform: rotate(90deg); }
-.byok-status-pill {
-    margin-left: auto;
-    padding: 3px 10px;
-    font-size: 10px;
-    font-weight: 600;
-    border-radius: 10px;
-    border: 1px solid var(--card-border);
-    background: transparent;
-    color: var(--muted);
-    cursor: default;
-    white-space: nowrap;
-}
-.byok-status-pill.is-on {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: rgba(16, 185, 129, 0.4);
-    color: var(--ac-emerald);
-}
-.byok-status-pill.is-warn {
-    background: rgba(245, 158, 11, 0.12);
-    border-color: rgba(245, 158, 11, 0.32);
-    color: var(--ac-amber);
-}
-.byok-body {
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    animation: fadeSlideIn 0.2s ease-out;
-}
-.byok-status-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-}
-.byok-status-cell {
-    min-width: 0;
-    padding: 7px 9px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--card-border);
-    background: var(--surface-bg);
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-.byok-status-cell.wide { grid-column: 1 / -1; }
-.byok-status-label {
-    font-size: 10px;
-    color: var(--muted);
-}
-.byok-status-value {
-    font-size: 11px;
-    color: var(--vscode-foreground);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.byok-status-value.is-ok { color: var(--ac-emerald); }
-.byok-status-value.is-warn { color: var(--ac-amber); }
-.byok-status-value.is-err { color: var(--danger); }
-.byok-status-value.mono {
-    font-family: var(--vscode-editor-font-family, monospace);
-}
-.byok-actions,
-.byok-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-.byok-row-spacer { flex: 1; min-width: 12px; }
-.byok-section-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 600;
-}
-.byok-mini {
-    font-size: 10px;
-    color: var(--muted);
-    font-weight: 500;
-}
-.byok-link-btn {
-    border: 1px solid var(--card-border);
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--muted);
-    padding: 2px 8px;
-    font-size: 10px;
-    cursor: pointer;
-}
-.byok-link-btn:hover {
-    color: var(--vscode-foreground);
-    background: var(--hover-bg);
-}
-.byok-provider-list,
-.byok-slot-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-.byok-provider-row,
-.byok-slot-row {
-    border: 1px solid var(--card-border);
-    border-radius: var(--radius-sm);
-    background: var(--surface-bg);
-    padding: 7px 9px;
-    cursor: pointer;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 4px 8px;
-}
-.byok-provider-row:hover,
-.byok-slot-row:hover,
-.byok-provider-row.is-active {
-    border-color: var(--vscode-focusBorder, var(--accent));
-}
-.byok-row-title {
-    min-width: 0;
-    font-size: 11px;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.byok-row-meta {
-    grid-column: 1 / -1;
-    font-size: 10px;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.byok-row-badge {
-    font-size: 9px;
-    padding: 2px 6px;
-    border-radius: 10px;
-    color: var(--muted);
-    border: 1px solid var(--card-border);
-}
-.byok-row-badge.is-on {
-    color: var(--ac-emerald);
-    border-color: rgba(16, 185, 129, 0.35);
-    background: rgba(16, 185, 129, 0.10);
-}
-.byok-form-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-}
-.byok-form-grid .span-2 { grid-column: 1 / -1; }
-.byok-input {
-    width: 100%;
-    min-width: 0;
-    padding: 7px 9px;
-    font-size: 11px;
-    border: 1px solid var(--card-border);
-    border-radius: var(--radius-sm);
-    background: var(--vscode-input-background, var(--elevated-bg));
-    color: var(--vscode-input-foreground, var(--vscode-foreground));
-    outline: none;
-}
-.byok-input:focus {
-    border-color: var(--vscode-focusBorder, var(--accent));
-}
-.byok-check {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    color: var(--muted);
-}
-.byok-check input { margin: 0; }
-.byok-msg {
-    min-height: 16px;
-    font-size: 10px;
-    color: var(--muted);
-}
-.byok-msg.is-ok { color: var(--ac-emerald); }
-.byok-msg.is-err { color: var(--danger); }
-.byok-log-details { margin-top: 2px; }
-.byok-log { margin: 0 12px 12px; }
 
 /* ─── Auto-Switch Panel ─── */
 .as-details { border: none; }
@@ -553,7 +342,6 @@ details > summary::marker { display: none; content: ''; }
     border-radius: var(--radius-sm);
     color: var(--muted);
     padding: 2px 4px;
-    cursor: pointer;
     display: inline-flex;
     align-items: center;
     transition: all 0.15s;
@@ -593,7 +381,6 @@ details > summary::marker { display: none; content: ''; }
 .as-switch {
     display: inline-flex;
     align-items: center;
-    cursor: pointer;
     margin-left: auto;
 }
 .as-switch input { display: none; }
@@ -658,7 +445,7 @@ details > summary::marker { display: none; content: ''; }
 .as-inline-num:hover { border-color: var(--vscode-focusBorder, var(--accent)); }
 .as-inline-num:focus { border-color: var(--vscode-focusBorder, #10b981); outline: none; }
 
-/* ─── Advanced Settings (collapsible) ─── */
+/* ─── Advanced Settings ─── */
 .as-adv-details {
     border: 1px solid var(--card-border);
     border-radius: 8px;
@@ -666,31 +453,16 @@ details > summary::marker { display: none; content: ''; }
     overflow: hidden;
     transition: border-color 0.15s;
 }
-.as-adv-details[open] {
-    border-color: var(--vscode-focusBorder, var(--accent));
-}
 .as-adv-summary {
-    cursor: pointer;
     font-size: 11px;
     color: var(--muted);
     padding: 8px 12px;
     user-select: none;
-    list-style: none;
     display: flex;
     align-items: center;
     gap: 4px;
 }
-.as-adv-summary::-webkit-details-marker { display: none; }
-.as-adv-summary::before {
-    content: '▸';
-    font-size: 10px;
-    transition: transform 0.15s;
-    display: inline-block;
-}
-.as-adv-details[open] .as-adv-summary::before {
-    transform: rotate(90deg);
-}
-.as-adv-summary:hover { color: var(--vscode-foreground); }
+.as-adv-details[open] .as-adv-summary:hover { color: var(--vscode-foreground); }
 
 /* ─── Tag Multi-Select Picker ─── */
 .as-tag-options, .as-tag-selected {
@@ -705,7 +477,6 @@ details > summary::marker { display: none; content: ''; }
     border-top: 1px dashed var(--card-border);
 }
 .as-tag-opt {
-    cursor: pointer;
     font-size: 11px;
     padding: 3px 10px;
     border-radius: 12px;
@@ -721,7 +492,6 @@ details > summary::marker { display: none; content: ''; }
     background: rgba(16, 185, 129, 0.08);
 }
 .as-tag-chip {
-    cursor: pointer;
     font-size: 11px;
     padding: 3px 10px;
     border-radius: 12px;
@@ -1014,7 +784,6 @@ details > summary::marker { display: none; content: ''; }
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
     display: inline-flex;
     align-items: center;
@@ -1186,7 +955,6 @@ details > summary::marker { display: none; content: ''; }
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .inst-card-btn:hover { background: var(--hover-bg); }
@@ -1263,7 +1031,6 @@ details > summary::marker { display: none; content: ''; }
     background: var(--ac-emerald);
     color: #fff;
     border: none;
-    cursor: pointer;
     transition: all 0.15s;
 }
 .add-account-btn:hover { background: #059669; }
@@ -1298,7 +1065,6 @@ details > summary::marker { display: none; content: ''; }
     border: none;
     color: var(--muted);
     font-size: 14px;
-    cursor: pointer;
     padding: 0 2px;
     line-height: 1;
 }
@@ -1334,7 +1100,6 @@ details > summary::marker { display: none; content: ''; }
     background-size: 14px;
     border: 1px solid var(--vscode-input-border, var(--card-border));
     border-radius: var(--radius-sm);
-    cursor: pointer;
     transition: border-color 0.15s, background-color 0.15s;
 }
 .group-select:hover,
@@ -1364,7 +1129,6 @@ details > summary::marker { display: none; content: ''; }
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .sort-direction-btn:hover,
@@ -1417,7 +1181,6 @@ details > summary::marker { display: none; content: ''; }
     background: var(--card-bg);
     border: 1px solid var(--card-border);
     border-radius: 5px;
-    cursor: pointer;
     user-select: none;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
@@ -1460,7 +1223,6 @@ details > summary::marker { display: none; content: ''; }
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--muted);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .balance-filter-btn:hover { background: var(--hover-bg); border-color: var(--card-border-hover); }
@@ -1476,7 +1238,6 @@ details > summary::marker { display: none; content: ''; }
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .group-select-mode-btn:hover { background: var(--hover-bg); }
@@ -1494,7 +1255,6 @@ details > summary::marker { display: none; content: ''; }
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .filter-trigger:hover { background: var(--hover-bg); }
@@ -1540,7 +1300,6 @@ details > summary::marker { display: none; content: ''; }
     padding: 4px 8px;
     border-radius: var(--radius-sm);
     font-size: 11px;
-    cursor: pointer;
     transition: background 0.1s;
 }
 .filter-option:hover { background: var(--hover-bg); }
@@ -1572,7 +1331,6 @@ details > summary::marker { display: none; content: ''; }
     border: none;
     background: transparent;
     color: var(--muted);
-    cursor: pointer;
     border-radius: var(--radius-sm);
 }
 .filter-clear-btn:hover { color: var(--ac-red); background: rgba(239, 68, 68, 0.06); }
@@ -1591,7 +1349,6 @@ details > summary::marker { display: none; content: ''; }
     font-size: 10px;
     font-weight: 500;
     border-radius: 4px;
-    cursor: pointer;
     transition: all 0.2s;
     border: 1px solid var(--border-dim);
     color: var(--muted);
@@ -1608,7 +1365,6 @@ details > summary::marker { display: none; content: ''; }
     border: 1px dashed var(--card-border);
     background: transparent;
     color: var(--muted);
-    cursor: pointer;
 }
 #tagAddBtn:hover { border-color: var(--ac-emerald); color: var(--ac-emerald); }
 
@@ -1628,7 +1384,6 @@ details > summary::marker { display: none; content: ''; }
     align-items: center;
     gap: 4px;
     font-size: 11px;
-    cursor: pointer;
 }
 .batch-check-all input { margin: 0; }
 .batch-count { font-size: 10px; color: var(--muted); font-family: var(--vscode-editor-font-family, monospace); }
@@ -1640,7 +1395,6 @@ details > summary::marker { display: none; content: ''; }
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .batch-action-btn:hover { background: var(--hover-bg); }
@@ -1788,7 +1542,6 @@ details > summary::marker { display: none; content: ''; }
     background: #8b5cf6;
     color: #fff;
     font-weight: 500;
-    cursor: pointer;
     border: none;
     transition: opacity 0.15s;
     line-height: 1.4;
@@ -1822,7 +1575,6 @@ details > summary::marker { display: none; content: ''; }
     width: 20px;
     height: 20px;
     border-radius: 50%;
-    cursor: pointer;
     border: 2px solid transparent;
     transition: transform 0.12s, border-color 0.12s;
 }
@@ -1841,13 +1593,11 @@ details > summary::marker { display: none; content: ''; }
     height: 28px;
     border: none;
     border-radius: 4px;
-    cursor: pointer;
     padding: 0;
     background: none;
 }
 .tag-color-reset {
     font-size: 16px;
-    cursor: pointer;
     color: var(--muted);
     transition: color 0.15s;
 }
@@ -1962,7 +1712,6 @@ details > summary::marker { display: none; content: ''; }
     border-top: 1px solid var(--card-border);
 }
 .grid-switch-btn {
-    cursor: pointer;
     font-size: 11px;
     padding: 4px 12px;
     border-radius: 999px;
@@ -1997,7 +1746,6 @@ details > summary::marker { display: none; content: ''; }
     background: transparent;
     border: none;
     color: var(--muted);
-    cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2007,7 +1755,6 @@ details > summary::marker { display: none; content: ''; }
 .icon-btn:hover { color: var(--vscode-foreground); background: var(--hover-bg); }
 .icon-btn.is-spinning svg { animation: spin 0.8s linear infinite; }
 .status-toggle-btn {
-    cursor: pointer;
     padding: 2px 8px;
     border-radius: 10px;
     font-size: 11px;
@@ -2057,7 +1804,6 @@ details > summary::marker { display: none; content: ''; }
     color: var(--muted);
     font-size: 11px;
     font-family: var(--vscode-editor-font-family, monospace);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .pagination button:hover { border-color: var(--card-border-hover); color: var(--vscode-foreground); }
@@ -2186,12 +1932,10 @@ details > summary::marker { display: none; content: ''; }
     align-items: center;
     gap: 6px;
     padding: 5px 0;
-    cursor: pointer;
     font-size: 12px;
     font-weight: 600;
     color: var(--muted);
     user-select: none;
-    list-style: none;
 }
 .usage-stats-summary::-webkit-details-marker { display: none; }
 .usage-stats-summary::after {
@@ -2433,7 +2177,6 @@ details > summary::marker { display: none; content: ''; }
     background: var(--ac-amber);
     color: #1a1a1a;
     border: none;
-    cursor: pointer;
     transition: filter 0.15s;
 }
 .external-banner-btn:hover { filter: brightness(1.1); }
@@ -2484,7 +2227,6 @@ details > summary::marker { display: none; content: ''; }
     background: transparent;
     color: var(--muted);
     font-size: 16px;
-    cursor: pointer;
     border-radius: var(--radius-sm);
     transition: all 0.15s;
 }
@@ -2536,7 +2278,6 @@ details > summary::marker { display: none; content: ''; }
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
     flex-shrink: 0;
@@ -2552,7 +2293,6 @@ button.primary {
     background: var(--ac-emerald);
     color: #fff;
     border: none;
-    cursor: pointer;
     transition: all 0.15s;
     display: inline-flex;
     align-items: center;
@@ -2570,7 +2310,6 @@ button.secondary {
     background: var(--subtle-bg);
     color: var(--vscode-foreground);
     border: 1px solid var(--card-border);
-    cursor: pointer;
     transition: all 0.15s;
 }
 button.secondary:hover { background: var(--hover-bg); border-color: var(--ac-emerald); }
@@ -2637,7 +2376,6 @@ button.secondary:active { transform: scale(0.98); }
     border: none;
     background: transparent;
     color: var(--muted);
-    cursor: pointer;
     border-radius: 6px;
     transition: all 0.2s;
 }
@@ -2671,7 +2409,6 @@ button.secondary:active { transform: scale(0.98); }
     background: var(--ac-emerald);
     color: #fff;
     border: none;
-    cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
 }
@@ -2707,7 +2444,6 @@ button.secondary:active { transform: scale(0.98); }
     align-items: center;
     gap: 4px;
     font-size: 11px;
-    cursor: pointer;
     color: var(--vscode-foreground);
 }
 .batch-radio input { margin: 0; }
@@ -2737,7 +2473,6 @@ button.secondary:active { transform: scale(0.98); }
     font-size: 12px;
     font-weight: 600;
     border-radius: var(--radius-sm);
-    cursor: pointer;
     transition: all 0.15s;
     box-sizing: border-box;
 }
@@ -2771,7 +2506,6 @@ button.secondary:active { transform: scale(0.98); }
 .batch-example summary {
     font-size: 10px;
     color: var(--muted);
-    cursor: pointer;
     padding: 4px 0;
 }
 .batch-example-content { padding: 6px 0; }
@@ -2823,7 +2557,6 @@ button.secondary:active { transform: scale(0.98); }
     font-weight: 600;
     border-radius: var(--radius-sm);
     border: none;
-    cursor: pointer;
     margin-top: 8px;
     transition: all 0.15s;
 }
@@ -2844,7 +2577,6 @@ button.secondary:active { transform: scale(0.98); }
     align-items: center;
     gap: 8px;
     padding: 6px 4px;
-    cursor: pointer;
     font-size: 12px;
     border-radius: 4px;
 }
@@ -2884,7 +2616,6 @@ button.secondary:active { transform: scale(0.98); }
     align-items: center;
     gap: 8px;
     font-size: 12px;
-    cursor: pointer;
 }
 .import-option input[type="checkbox"] {
     width: 16px;
@@ -2901,7 +2632,6 @@ button.secondary:active { transform: scale(0.98); }
     font-size: 12px;
     font-weight: 600;
     border-radius: var(--radius-sm);
-    cursor: pointer;
 }
 
 /* Batch import control buttons */
@@ -2919,7 +2649,6 @@ button.secondary:active { transform: scale(0.98); }
     border-radius: var(--radius-sm);
     background: var(--subtle-bg);
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .batch-ctrl-btn:hover { background: var(--hover-bg); }
@@ -2947,7 +2676,6 @@ button.secondary:active { transform: scale(0.98); }
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .alert-actions button:hover { background: var(--hover-bg); }
@@ -3002,7 +2730,6 @@ button.secondary:active { transform: scale(0.98); }
     flex-shrink: 0;
     background: rgba(255, 255, 255, 0.08);
     border-radius: 10px;
-    cursor: pointer;
     transition: background 0.25s;
     border: none;
 }
@@ -3069,7 +2796,6 @@ button.secondary:active { transform: scale(0.98); }
     font-size: 11px;
     font-weight: 500;
     border-radius: 4px;
-    cursor: pointer;
     transition: all 0.2s;
     border: 1px solid var(--card-border);
     color: var(--muted);
@@ -3090,7 +2816,6 @@ button.secondary:active { transform: scale(0.98); }
     padding: 5px 26px 5px 8px;
     border-radius: var(--radius-sm);
     outline: none;
-    cursor: pointer;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 5px center;
@@ -3130,7 +2855,6 @@ button.secondary:active { transform: scale(0.98); }
     padding: 2px 22px 2px 6px;
     border-radius: var(--radius-sm);
     outline: none;
-    cursor: pointer;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 4px center;
@@ -3150,7 +2874,6 @@ button.secondary:active { transform: scale(0.98); }
     border-radius: var(--radius-md);
     font-size: 12px;
     font-weight: 600;
-    cursor: pointer;
     border: none;
     transition: all 0.15s;
     display: inline-flex;
@@ -3197,7 +2920,6 @@ button.secondary:active { transform: scale(0.98); }
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .v2-btn-sm:hover { background: var(--hover-bg); }
@@ -3249,7 +2971,6 @@ button.secondary:active { transform: scale(0.98); }
     gap: 10px;
     padding: 8px 10px;
     border-radius: var(--radius-sm);
-    cursor: pointer;
     transition: all 0.15s;
     border: 1px solid var(--card-border);
     margin-bottom: 4px;
@@ -3295,7 +3016,6 @@ button.secondary:active { transform: scale(0.98); }
     padding: 7px 0;
     font-size: 12px; font-weight: 500;
     color: var(--muted);
-    cursor: pointer;
     z-index: 2;
     transition: color 0.25s;
     user-select: none;
@@ -3417,7 +3137,6 @@ button.secondary:active { transform: scale(0.98); }
     display: flex; align-items: center; gap: 8px;
     padding: 7px 10px;
     border-radius: var(--radius-sm);
-    cursor: pointer;
     transition: background 0.15s;
 }
 .v2-rule-row:hover { background: var(--surface-bg); }
@@ -3469,7 +3188,6 @@ button.secondary:active { transform: scale(0.98); }
     align-items: center;
     gap: 3px;
     font-size: 11px;
-    cursor: pointer;
     white-space: nowrap;
 }
 .v2-mini-checks label input { margin: 0; }
@@ -3646,7 +3364,6 @@ button.secondary:active { transform: scale(0.98); }
     padding: 7px 10px;
     border-radius: 6px;
     font-size: 11px; font-weight: 600;
-    cursor: pointer;
     transition: all 0.15s;
     border: 1px solid var(--card-border);
     background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
@@ -3694,7 +3411,6 @@ button.secondary:active { transform: scale(0.98); }
     border: 1px solid var(--card-border);
     background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
 }
@@ -3736,7 +3452,6 @@ button.secondary:active { transform: scale(0.98); }
     border: 1px solid var(--card-border);
     border-radius: var(--radius-sm);
     background: var(--elevated-bg);
-    cursor: pointer;
     transition: border-color 0.15s;
     text-align: left;
     color: var(--vscode-foreground);
@@ -3771,7 +3486,6 @@ button.secondary:active { transform: scale(0.98); }
 }
 .ap-item {
     padding: 8px 10px;
-    cursor: pointer;
     transition: background 0.1s;
     border-bottom: 1px solid var(--surface-bg);
 }
@@ -3874,7 +3588,6 @@ input[type="number"].v2-sel::-webkit-outer-spin-button { -webkit-appearance: non
     border-radius: 4px;
     background: rgba(99, 102, 241, 0.12);
     color: rgba(165, 180, 252, 0.95);
-    cursor: pointer;
     transition: all 0.15s ease;
     letter-spacing: 0.3px;
 }
@@ -3937,7 +3650,6 @@ body.vscode-light .grid-health-overlay-text { color: rgba(146, 64, 14, 0.9); }
 .grid-check-col input[type="checkbox"] {
     width: 16px;
     height: 16px;
-    cursor: pointer;
     accent-color: var(--accent, #10b981);
 }
 .grid-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -3947,7 +3659,6 @@ body.vscode-light .grid-health-overlay-text { color: rgba(146, 64, 14, 0.9); }
     border-radius: 3px;
     border: 1px dashed var(--card-border);
     color: var(--muted);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .grid-tag-add:hover { border-color: var(--ac-violet); color: var(--ac-violet); }
@@ -3969,7 +3680,6 @@ body.vscode-light .grid-health-overlay-text { color: rgba(146, 64, 14, 0.9); }
     background: transparent;
     border: none;
     color: var(--muted);
-    cursor: pointer;
     font-size: 12px;
     padding: 0 2px;
     line-height: 1;
@@ -4041,7 +3751,6 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .pager-btn:hover { background: var(--hover-bg); }
@@ -4085,7 +3794,6 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
     border: 1px solid var(--card-border);
     background: transparent;
     color: var(--vscode-foreground);
-    cursor: pointer;
     transition: all 0.15s;
 }
 .alert-btn:hover { background: var(--hover-bg); }
@@ -4131,7 +3839,6 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
     background: rgba(139, 92, 246, 0.08);
     color: var(--ac-violet);
     border: 1px solid rgba(139, 92, 246, 0.2);
-    cursor: pointer;
     transition: all 0.15s;
     letter-spacing: 0.02em;
 }
@@ -4146,7 +3853,6 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
 .inst-tag-badge:hover { background: rgba(139, 92, 246, 0.16); border-color: rgba(139, 92, 246, 0.4); }
 .inst-tag-none {
     font-size: 9.5px;
-    cursor: pointer;
     color: var(--muted);
     opacity: 0.55;
     transition: opacity 0.15s;
@@ -4263,7 +3969,6 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
     background: linear-gradient(135deg, #22c55e, #06b6d4, #3b82f6);
     color: #fff;
     font-weight: 500;
-    cursor: pointer;
     transition: transform 0.15s, box-shadow 0.15s;
 }
 .bubble-preview-item:hover {
@@ -4301,7 +4006,6 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
     background: var(--surface-bg);
     border: 1px solid transparent;
     border-radius: var(--radius-md);
-    cursor: pointer;
     transition: color 0.2s, background 0.2s, border-color 0.2s;
     position: relative;
     font-family: inherit;
@@ -4386,7 +4090,6 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
     font-size: 11.5px;
     font-weight: 500;
     color: var(--muted);
-    cursor: pointer;
     transition: background 0.15s, color 0.15s;
     border-left: 2px solid transparent;
     user-select: none;
@@ -4451,13 +4154,11 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
     background: transparent;
 }
 .split-content-body .enhance-summary,
-.split-content-body .byok-summary,
 .split-content-body .as-top-summary,
 .split-content-body .inst-summary {
     display: none;
 }
 .split-content-body .enhance-body,
-.split-content-body .byok-body,
 .split-content-body .as-body,
 .split-content-body .ac-body,
 .split-content-body .inst-body {
@@ -4471,1059 +4172,6 @@ body.vscode-high-contrast-light .grid-locked-tag { color: #4338ca; background: r
         gap: 4px;
     }
     .split-sidebar-item svg { display: none; }
-}
-
-/* ═══════ 8.4.18 BYOK Dashboard Shell ═══════ */
-#tab-byok > .card,
-#tab-byok .byok-card {
-    background: transparent;
-    border: none;
-    border-radius: 0;
-}
-.byok-overview {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 4px;
-    color: var(--vscode-foreground);
-}
-.byok-overview > svg {
-    color: var(--ac-emerald);
-    flex-shrink: 0;
-}
-.byok-overview-title {
-    font-size: 13px;
-    font-weight: 600;
-    flex: 1;
-}
-.byok-overview-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 10px;
-    font-weight: 700;
-    padding: 3px 9px;
-    border-radius: 10px;
-    background: rgba(16, 185, 129, 0.15);
-    color: var(--ac-emerald);
-    font-family: var(--vscode-editor-font-family, monospace);
-}
-.byok-overview-status.is-stopped {
-    background: rgba(139, 139, 139, 0.15);
-    color: var(--muted);
-}
-.byok-overview-status.is-dev {
-    background: rgba(245, 158, 11, 0.16);
-    color: var(--ac-amber);
-}
-.byok-dev-note {
-    margin: 0 0 8px;
-    padding: 8px 10px;
-    border: 1px solid rgba(245, 158, 11, 0.24);
-    border-radius: var(--radius-md);
-    background: rgba(245, 158, 11, 0.08);
-    color: var(--muted);
-    font-size: 11px;
-    line-height: 1.45;
-}
-.byok-metrics {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
-}
-.byok-metric {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px 10px;
-    background: var(--surface-bg);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    min-width: 0;
-}
-.byok-metric-label {
-    font-size: 10px;
-    color: var(--muted);
-    font-weight: 600;
-}
-.byok-metric-val {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--vscode-foreground);
-    font-family: var(--vscode-editor-font-family, monospace);
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
-    flex-wrap: wrap;
-}
-.byok-metric-sub {
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--muted);
-}
-.byok-subtabs {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 6px 0 8px;
-    overflow-x: auto;
-    scrollbar-width: none;
-    border-bottom: 1px solid var(--card-border);
-}
-.byok-subtabs::-webkit-scrollbar { display: none; }
-.byok-subtab {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--muted);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-    font-family: inherit;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-.byok-subtab:hover {
-    background: var(--hover-bg);
-    color: var(--vscode-foreground);
-}
-.byok-subtab.active {
-    background: var(--ac-emerald);
-    color: #fff;
-    border-color: var(--ac-emerald);
-}
-.byok-subtab svg {
-    width: 12px;
-    height: 12px;
-    flex-shrink: 0;
-    opacity: 0.85;
-}
-.byok-subtab-count {
-    font-size: 9px;
-    font-weight: 700;
-    padding: 0 5px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--muted);
-    font-family: var(--vscode-editor-font-family, monospace);
-    line-height: 1.5;
-}
-.byok-subtab.active .byok-subtab-count {
-    background: rgba(255, 255, 255, 0.28);
-    color: #fff;
-}
-.byok-subtab-content {
-    display: none;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px 2px 0;
-    animation: fadeIn 0.18s ease-out;
-}
-.byok-subtab-content.active { display: flex; }
-.byok-provider-card {
-    background: var(--surface-bg);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-    transition: border-color 0.15s;
-    cursor: pointer;
-}
-.byok-provider-card.is-active,
-.byok-provider-card.expanded {
-    border-color: rgba(16, 185, 129, 0.4);
-}
-.byok-provider-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 10px;
-}
-.byok-provider-head:hover { background: var(--hover-bg); }
-.byok-provider-logo {
-    width: 24px;
-    height: 24px;
-    border-radius: 5px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    font-weight: 800;
-    flex-shrink: 0;
-    color: #fff;
-    background: var(--ac-blue);
-}
-.byok-provider-info { flex: 1; min-width: 0; }
-.byok-provider-name {
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1.3;
-}
-.byok-provider-meta {
-    font-size: 10px;
-    color: var(--muted);
-    font-family: var(--vscode-editor-font-family, monospace);
-    line-height: 1.3;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.byok-provider-conn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10px;
-    color: var(--muted);
-    font-family: var(--vscode-editor-font-family, monospace);
-}
-.byok-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 11px;
-}
-.byok-table th {
-    text-align: left;
-    padding: 5px 6px;
-    font-size: 9px;
-    font-weight: 700;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    background: var(--elevated-bg);
-    border-bottom: 1px solid var(--card-border);
-}
-.byok-table td {
-    padding: 5px 6px;
-    border-bottom: 1px solid var(--border-subtle);
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 11px;
-}
-.byok-tag {
-    display: inline-block;
-    padding: 1px 6px;
-    font-size: 9px;
-    font-weight: 700;
-    border-radius: 3px;
-    font-family: var(--vscode-editor-font-family, monospace);
-}
-.byok-tag-status-ok {
-    background: rgba(16, 185, 129, 0.18);
-    color: #3fb950;
-}
-.byok-tag-status-pending {
-    background: rgba(245, 158, 11, 0.18);
-    color: #f59e0b;
-}
-.byok-tag-status-off {
-    background: rgba(139, 139, 139, 0.18);
-    color: var(--muted);
-}
-.byok-log-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 8px 10px;
-    background: var(--surface-bg);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-}
-.byok-log-count {
-    flex-shrink: 0;
-    padding: 2px 8px;
-    border-radius: 999px;
-    color: var(--ac-emerald);
-    background: color-mix(in srgb, var(--ac-emerald) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ac-emerald) 32%, transparent);
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 10px;
-    font-weight: 700;
-}
-.byok-log {
-    position: relative;
-    min-height: 190px;
-    max-height: min(360px, 42vh);
-    padding: 10px 12px;
-    margin: 0;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-subtle);
-    background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 88%, var(--vscode-foreground) 5%);
-    color: var(--vscode-editor-foreground, var(--vscode-foreground));
-    font-size: 10.5px;
-    line-height: 1.55;
-    font-family: var(--vscode-editor-font-family, monospace);
-    scrollbar-gutter: stable;
-}
-.byok-log.is-empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--muted);
-    text-align: center;
-    white-space: normal;
-}
-.byok-log.is-empty::before {
-    content: attr(data-empty);
-    max-width: 260px;
-    line-height: 1.6;
-}
-
-/* ═══════ 8.4.25 BYOK Provider / Model Mapping Editors ═══════ */
-.byok-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 8px 10px;
-    background: var(--surface-bg);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-}
-.byok-toolbar-title {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--vscode-foreground);
-}
-.byok-toolbar-sub {
-    margin-top: 1px;
-    font-size: 10px;
-    color: var(--muted);
-}
-.byok-toolbar .v2-btn svg,
-.byok-model-tools .v2-btn svg,
-.byok-editor-actions .v2-btn svg,
-.byok-panel-head .v2-btn svg {
-    width: 13px;
-    height: 13px;
-    flex-shrink: 0;
-}
-.byok-empty {
-    padding: 28px 16px;
-    text-align: center;
-    color: var(--muted);
-    font-size: 12px;
-    border: 1px dashed var(--border-dim);
-    border-radius: var(--radius-md);
-    background: var(--surface-bg);
-}
-.byok-model-tools {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-.byok-model-tools .byok-input {
-    flex: 1;
-}
-.byok-model-tools .v2-btn {
-    width: 34px;
-    min-width: 34px;
-    padding: 0;
-    justify-content: center;
-}
-.byok-map-summary {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    min-height: 18px;
-}
-.byok-summary-chip,
-.byok-model-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    max-width: 100%;
-    padding: 2px 7px;
-    border-radius: 7px;
-    border: 1px solid var(--border-subtle);
-    background: var(--surface-bg);
-    color: var(--muted);
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 1.5;
-}
-.byok-model-chip {
-    color: var(--vscode-foreground);
-    background: rgba(59, 130, 246, 0.10);
-    border-color: rgba(59, 130, 246, 0.24);
-}
-.byok-model-chip.is-default {
-    color: var(--ac-emerald);
-    background: rgba(16, 185, 129, 0.12);
-    border-color: rgba(16, 185, 129, 0.24);
-}
-.byok-model-chip span,
-.byok-summary-chip span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.byok-provider-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 8px;
-}
-.byok-provider-card {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    min-height: 170px;
-    padding: 10px;
-    cursor: default;
-}
-.byok-provider-card:hover {
-    border-color: var(--border-dim);
-}
-.byok-provider-head {
-    padding: 0;
-}
-.byok-provider-head:hover {
-    background: transparent;
-}
-.byok-provider-logo.logo-anthropic,
-.byok-catalog-icon.logo-anthropic { background: linear-gradient(135deg, #d4a574, #8b6f47); color: #14100b; }
-.byok-provider-logo.logo-openai,
-.byok-catalog-icon.logo-openai { background: linear-gradient(135deg, #3b82f6, #0e639c); }
-.byok-provider-logo.logo-deepseek,
-.byok-catalog-icon.logo-deepseek { background: linear-gradient(135deg, #6366f1, #4338ca); }
-.byok-provider-logo.logo-gemini,
-.byok-catalog-icon.logo-gemini { background: linear-gradient(135deg, #4285f4, #10b981); }
-.byok-provider-logo.logo-qwen,
-.byok-catalog-icon.logo-qwen { background: linear-gradient(135deg, #8b5cf6, #3b82f6); }
-.byok-provider-logo.logo-xai,
-.byok-catalog-icon.logo-xai { background: linear-gradient(135deg, #f59e0b, #f0883e); color: #14100b; }
-.byok-provider-body {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    flex: 1;
-    min-height: 0;
-}
-.byok-card-label {
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--muted);
-}
-.byok-model-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    max-height: 84px;
-    overflow: auto;
-}
-.byok-provider-footer,
-.byok-slot-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-top: auto;
-    padding-top: 8px;
-    border-top: 1px solid var(--border-subtle);
-}
-.byok-inline-actions {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    flex-wrap: wrap;
-}
-.byok-mini-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 24px;
-    padding: 3px 8px;
-    border-radius: 6px;
-    border: 1px solid var(--border-subtle);
-    background: var(--surface-bg);
-    color: var(--vscode-foreground);
-    font: inherit;
-    font-size: 10px;
-    font-weight: 700;
-    cursor: pointer;
-}
-.byok-mini-btn:hover {
-    background: var(--hover-bg);
-    border-color: var(--border-dim);
-}
-.byok-mini-btn.is-danger {
-    color: var(--danger);
-}
-.byok-slot-list {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-}
-.byok-slot-row {
-    padding: 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    background: var(--surface-bg);
-    cursor: default;
-}
-.byok-slot-main {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px;
-}
-.byok-row-title {
-    word-break: break-word;
-}
-.byok-slot-route {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    margin-top: 6px;
-    color: var(--muted);
-    font-size: 10px;
-    font-family: var(--vscode-editor-font-family, monospace);
-}
-.byok-slot-route span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.byok-editor-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    display: flex;
-    align-items: stretch;
-    justify-content: center;
-    padding: 0;
-    overflow: auto;
-    background: var(--vscode-sideBar-background, var(--vscode-editor-background));
-}
-.byok-editor-overlay[hidden] {
-    display: none !important;
-}
-.byok-editor-modal {
-    width: 100%;
-    min-height: 100vh;
-    height: auto;
-    display: flex;
-    flex-direction: column;
-    overflow: visible;
-    color: var(--vscode-foreground);
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    box-shadow: none;
-}
-.byok-editor-header,
-.byok-editor-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--elevated-bg);
-}
-.byok-editor-header {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-}
-.byok-editor-footer {
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
-    border-top: 1px solid var(--border-subtle);
-    border-bottom: none;
-}
-.byok-editor-heading,
-.byok-editor-actions,
-.byok-editor-status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-}
-.byok-editor-actions {
-    justify-content: flex-end;
-    flex-wrap: wrap;
-}
-.byok-back-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    min-height: 30px;
-    padding: 5px 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 7px;
-    background: var(--surface-bg);
-    color: var(--vscode-foreground);
-    font: inherit;
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-}
-.byok-back-btn:hover {
-    background: var(--hover-bg);
-    border-color: var(--border-dim);
-}
-.byok-back-btn svg {
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-}
-.byok-editor-title {
-    padding-left: 10px;
-    border-left: 1px solid var(--border-dim);
-    color: var(--muted);
-    font-size: 12px;
-    font-weight: 800;
-}
-.byok-editor-brand {
-    color: var(--muted);
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 10px;
-    white-space: nowrap;
-}
-.byok-editor-body {
-    flex: 1;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 10px;
-    padding: 10px 12px;
-    overflow: visible;
-}
-@media (min-width: 980px) {
-    .byok-editor-body--provider {
-        grid-template-columns: minmax(260px, 0.85fr) minmax(330px, 1.15fr);
-    }
-    .byok-editor-body--slot {
-        grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.05fr);
-    }
-}
-.byok-editor-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 0;
-    min-height: 0;
-    padding: 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    background: var(--surface-bg);
-}
-.byok-catalog-panel {
-    padding: 0;
-    overflow: hidden;
-}
-.byok-panel-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    flex-wrap: wrap;
-    padding: 12px;
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--elevated-bg);
-}
-.byok-panel-title {
-    font-size: 12px;
-    font-weight: 800;
-}
-.byok-panel-sub {
-    margin-top: 1px;
-    color: var(--muted);
-    font-size: 10px;
-}
-.byok-panel-search {
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border-subtle);
-}
-.byok-field {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-}
-.byok-field label,
-.byok-selected-head {
-    color: var(--muted);
-    font-size: 10px;
-    font-weight: 800;
-}
-.byok-editor-check {
-    padding: 8px 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 7px;
-    background: var(--surface-bg);
-}
-.byok-selected-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 4px;
-}
-.byok-count-pill {
-    display: inline-flex;
-    align-items: center;
-    min-height: 18px;
-    padding: 1px 7px;
-    border-radius: 8px;
-    background: rgba(16, 185, 129, 0.13);
-    color: var(--ac-emerald);
-    font-size: 10px;
-    font-weight: 800;
-}
-.byok-selected-models,
-.byok-model-catalog,
-.byok-slot-catalog,
-.byok-mapping-catalog {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    min-height: 120px;
-    overflow: auto;
-}
-.byok-selected-models {
-    max-height: none;
-}
-.byok-model-catalog,
-.byok-slot-catalog,
-.byok-mapping-catalog {
-    flex: 1 1 auto;
-    padding: 12px;
-}
-.byok-model-filter {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 9px 12px;
-    overflow-x: auto;
-    border-bottom: 1px solid var(--border-subtle);
-}
-.byok-model-filter button {
-    min-height: 26px;
-    padding: 3px 10px;
-    border-radius: 8px;
-    border: 1px solid var(--border-subtle);
-    background: var(--surface-bg);
-    color: var(--muted);
-    font: inherit;
-    font-size: 10px;
-    font-weight: 800;
-    cursor: pointer;
-    white-space: nowrap;
-}
-.byok-model-filter button.active,
-.byok-model-filter button:hover {
-    color: #fff;
-    border-color: var(--ac-emerald);
-    background: var(--ac-emerald);
-}
-.byok-catalog-item,
-.byok-selected-model-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 9px 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    background: var(--surface-bg);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-}
-.byok-catalog-item:hover,
-.byok-catalog-item.selected {
-    background: var(--hover-bg);
-    border-color: var(--border-dim);
-}
-.byok-catalog-item.selected {
-    border-color: rgba(16, 185, 129, 0.42);
-}
-.byok-catalog-item.disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-.byok-catalog-main {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-}
-.byok-catalog-icon {
-    width: 24px;
-    height: 24px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    color: #fff;
-    background: var(--ac-blue);
-    font-size: 10px;
-    font-weight: 900;
-}
-.byok-catalog-text {
-    min-width: 0;
-}
-.byok-catalog-title,
-.byok-catalog-meta {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.byok-catalog-title {
-    font-size: 11px;
-    font-weight: 800;
-}
-.byok-catalog-meta {
-    margin-top: 1px;
-    color: var(--muted);
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 9px;
-}
-.byok-catalog-tags {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 5px;
-    flex-shrink: 0;
-}
-.byok-custom-model-row {
-    display: flex;
-    gap: 7px;
-    padding: 10px 12px;
-    border-top: 1px solid var(--border-subtle);
-}
-.byok-custom-model-row .byok-input {
-    flex: 1;
-}
-.byok-slot-config {
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-    padding: 12px;
-    border-top: 1px solid var(--border-subtle);
-    background: var(--elevated-bg);
-}
-.byok-toolbar-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-.byok-runtime-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    padding: 9px 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    background: var(--surface-bg);
-}
-.byok-runtime-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 6px;
-}
-.byok-runtime-cell {
-    min-width: 0;
-    padding: 7px 8px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 7px;
-    background: var(--elevated-bg);
-}
-.byok-runtime-cell span,
-.byok-runtime-foot {
-    color: var(--muted);
-    font-size: 9px;
-    font-weight: 700;
-}
-.byok-runtime-cell b {
-    display: block;
-    margin-top: 2px;
-    overflow: hidden;
-    color: var(--vscode-foreground);
-    font-size: 12px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.byok-runtime-foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    min-width: 0;
-}
-.byok-runtime-foot span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.byok-small-editor {
-    width: 100%;
-    min-height: 100vh;
-    height: auto;
-}
-.byok-injected-editor {
-    width: 100%;
-}
-.byok-editor-body--single {
-    grid-template-columns: 1fr;
-}
-.byok-editor-body--injected {
-    grid-template-columns: 1fr;
-}
-.byok-template-hints {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-.byok-template-hints span,
-.byok-route-more {
-    display: inline-flex;
-    align-items: center;
-    min-height: 18px;
-    padding: 1px 7px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 7px;
-    background: var(--elevated-bg);
-    color: var(--muted);
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 9px;
-    font-weight: 800;
-}
-.byok-template-preview {
-    padding: 12px;
-    border: 1px solid rgba(16, 185, 129, 0.28);
-    border-radius: 8px;
-    background: rgba(16, 185, 129, 0.10);
-    color: var(--vscode-foreground);
-    font-size: 13px;
-    font-weight: 800;
-}
-.byok-failover-list,
-.byok-injected-list {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    min-height: 140px;
-    overflow: auto;
-}
-.byok-failover-row {
-    display: grid;
-    grid-template-columns: 34px minmax(120px, 0.8fr) minmax(160px, 1.2fr) auto;
-    gap: 7px;
-    align-items: center;
-    padding: 8px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    background: var(--elevated-bg);
-}
-.byok-row-index {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
-    background: var(--surface-bg);
-    color: var(--muted);
-    font-size: 10px;
-    font-weight: 900;
-}
-.byok-mini-btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.45;
-}
-.byok-injected-list {
-    flex: 1;
-    padding: 12px;
-}
-.byok-injected-row {
-    display: grid;
-    grid-template-columns: 72px minmax(190px, 1.3fr) minmax(130px, 0.8fr) minmax(150px, 1fr) 58px;
-    gap: 8px;
-    align-items: center;
-    padding: 8px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    background: var(--surface-bg);
-}
-.byok-injected-row.is-enabled {
-    border-color: rgba(16, 185, 129, 0.28);
-    background: rgba(16, 185, 129, 0.07);
-}
-.byok-injected-main {
-    min-width: 0;
-}
-.byok-injected-toggle,
-.byok-injected-vision {
-    margin: 0;
-    white-space: nowrap;
-}
-.byok-log-tools {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: 6px;
-}
-.byok-log-tools .byok-input {
-    min-width: 0;
-}
-.byok-log-tools .v2-btn {
-    min-height: 28px;
-    justify-content: center;
-    white-space: nowrap;
-}
-@media (max-width: 480px) {
-    .byok-toolbar,
-    .byok-editor-header,
-    .byok-editor-footer {
-        align-items: stretch;
-        flex-direction: column;
-    }
-    .byok-editor-brand {
-        display: none;
-    }
-    .byok-editor-actions .v2-btn,
-    .byok-editor-actions {
-        width: 100%;
-    }
-    .byok-editor-actions .v2-btn {
-        justify-content: center;
-    }
-    .byok-provider-list {
-        grid-template-columns: minmax(0, 1fr);
-    }
-    .byok-runtime-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .byok-runtime-foot {
-        align-items: stretch;
-        flex-direction: column;
-    }
-    .byok-log-tools {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    }
-    .byok-log-tools .byok-input {
-        grid-column: 1 / -1;
-        max-width: none;
-    }
-    .byok-failover-row,
-    .byok-injected-row {
-        grid-template-columns: 1fr;
-    }
 }
 
 /* ═══════ 8.4.25 Sidebar Polish ═══════ */
@@ -5630,7 +4278,6 @@ body {
 .card,
 .list-card,
 .instance-card,
-.byok-provider-card,
 .summary-stat,
 .usage-stat-cell,
 .v2-param-cell,
@@ -5670,8 +4317,7 @@ body {
 .list-summary,
 .inst-summary,
 .as-top-summary,
-.enhance-summary,
-.byok-summary {
+.enhance-summary {
     min-height: 42px;
     padding: 10px 12px;
     background: linear-gradient(180deg, color-mix(in srgb, var(--vscode-foreground) 5%, transparent), transparent);
@@ -5681,9 +4327,7 @@ body {
 .list-summary h3,
 .inst-title,
 .as-top-title,
-.enhance-title,
-.byok-title,
-.byok-overview-title {
+.enhance-title {
     font-size: 13px;
     font-weight: 700;
 }
@@ -5692,15 +4336,12 @@ body {
 .inst-icon,
 .as-top-icon,
 .enhance-icon,
-.byok-icon,
 .split-content-header svg {
     color: var(--ac-blue);
 }
 
 .grid-count,
-.byok-overview-status,
-.enhance-toggle-btn.is-on,
-.byok-status-pill.is-on {
+.enhance-toggle-btn.is-on {
     background: var(--ui-emerald-soft);
     border: 1px solid color-mix(in srgb, var(--ac-emerald) 35%, transparent);
     color: var(--ac-emerald);
@@ -5716,8 +4357,7 @@ body {
 .list-body,
 .inst-body,
 .as-body,
-.enhance-body,
-.byok-body {
+.enhance-body {
     padding: 12px;
 }
 
@@ -5856,7 +4496,6 @@ body {
 .inst-add-btn,
 .inst-refresh-btn,
 .as-open-panel-btn,
-.byok-link-btn,
 .v2-btn-sm,
 .pager-btn,
 .pagination button {
@@ -5872,7 +4511,6 @@ body {
 .inst-add-btn:hover,
 .inst-refresh-btn:hover,
 .as-open-panel-btn:hover,
-.byok-link-btn:hover,
 .v2-btn-sm:hover,
 .pager-btn:hover,
 .pagination button:hover {
@@ -5961,7 +4599,6 @@ body {
 .as-select,
 .page-size-select,
 .enhance-select,
-.byok-input,
 .v2-input-field,
 .v2-queue-text,
 input,
@@ -6009,7 +4646,6 @@ select {
 .grid-disabled-tag,
 .grid-locked-tag,
 .status-toggle-btn,
-.byok-tag,
 .v2-tag,
 .inst-tag-badge {
     border-radius: 999px;
@@ -6040,33 +4676,23 @@ select {
     color: var(--vscode-foreground);
 }
 
-.byok-overview,
-.byok-subtabs {
     padding-left: 2px;
     padding-right: 2px;
 }
 
-.byok-metric,
-.byok-provider-card,
-.byok-status-cell,
-.byok-provider-row,
-.byok-slot-row {
     border-color: var(--ui-border);
     background: var(--ui-surface-raised);
 }
 
-.byok-provider-card.is-active,
-.byok-provider-card.expanded,
-.byok-provider-row.is-active {
     border-color: color-mix(in srgb, var(--ac-emerald) 42%, transparent);
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--ac-emerald) 12%, transparent);
 }
 
 button:focus-visible,
-[role="button"]:focus-visible,
-summary:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
+[role="button"]:focus-visible {
+summary:focus-visible {
+input:focus-visible {
+textarea:focus-visible {
 select:focus-visible {
     outline: 2px solid var(--vscode-focusBorder, var(--ac-blue));
     outline-offset: 2px;
@@ -6131,13 +4757,9 @@ body.vscode-light .split-card {
     box-shadow: none;
 }
 
-body.vscode-light .byok-editor-overlay {
     background: #ffffff;
 }
 
-body.vscode-light .byok-editor-header,
-body.vscode-light .byok-editor-footer,
-body.vscode-light .byok-panel-head {
     background: #f6f8fa;
 }
 
@@ -6146,9 +4768,7 @@ body.vscode-light .split-sidebar {
 }
 
 body.vscode-light .grid-card,
-body.vscode-light .summary-stat,
-body.vscode-light .byok-metric,
-body.vscode-light .byok-provider-card {
+body.vscode-light .summary-stat {
     background:
         linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.58)),
         var(--vscode-sideBar-background, #ffffff);
@@ -6198,7 +4818,6 @@ body {
 #tab-automation .auto-switch-card,
 #tab-enhance .split-card,
 #tab-enhance .enhance-card,
-#tab-byok > .card,
 .list-card,
 .instance-card,
 .ac-root {
@@ -6221,8 +4840,7 @@ body {
 .list-summary,
 .inst-summary,
 .as-top-summary,
-.enhance-summary,
-.byok-summary {
+.enhance-summary {
     min-height: 38px;
     padding: 6px 0 10px;
     border-bottom: none;
@@ -6233,24 +4851,21 @@ body {
 .list-summary:hover,
 .inst-summary:hover,
 .as-top-summary:hover,
-.enhance-summary:hover,
-.byok-summary:hover {
+.enhance-summary:hover {
     background: transparent;
 }
 
 .list-arrow,
 .inst-arrow,
 .as-top-arrow,
-.enhance-arrow,
-.byok-arrow {
+.enhance-arrow {
     display: none !important;
 }
 
 .list-icon,
 .inst-icon,
 .as-top-icon,
-.enhance-icon,
-.byok-icon {
+.enhance-icon {
     width: 15px;
     height: 15px;
     color: var(--ac-blue);
@@ -6259,8 +4874,7 @@ body {
 .list-summary h3,
 .inst-title,
 .as-top-title,
-.enhance-title,
-.byok-title {
+.enhance-title {
     font-size: 13px;
     letter-spacing: 0;
 }
@@ -6269,7 +4883,6 @@ body {
 .inst-body,
 .as-body,
 .enhance-body,
-.byok-body,
 .ac-body {
     padding: 0 !important;
 }
@@ -6314,11 +4927,6 @@ body {
 .summary-stat,
 .grid-card,
 .inst-card,
-.byok-metric,
-.byok-provider-card,
-.byok-status-cell,
-.byok-provider-row,
-.byok-slot-row,
 .v2-param-cell,
 .v2-opt-row,
 .v2-status-row,
@@ -6336,7 +4944,6 @@ body {
 .summary-stat:hover,
 .grid-card:hover,
 .inst-card:hover,
-.byok-provider-card:hover,
 .v2-strip:hover {
     transform: none;
     border-color: var(--ui-border-strong);
@@ -6345,27 +4952,35 @@ body {
 
 .grid-card.is-active,
 .grid-card.is-selected,
-.inst-card.current,
-.byok-provider-card.is-active,
-.byok-provider-card.expanded,
-.byok-provider-row.is-active {
+.inst-card.current {
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--ac-emerald) 12%, transparent), var(--ui-shadow-soft);
 }
 
-.summary-status-grid,
-.byok-subtabs {
+.summary-status-grid {
     border-top-color: var(--ui-border);
     border-bottom-color: var(--ui-border);
 }
 
 .grid-count,
-.byok-overview-status,
-.enhance-toggle-btn.is-on,
-.byok-status-pill.is-on {
+.enhance-toggle-btn.is-on {
     border-color: color-mix(in srgb, var(--ac-emerald) 38%, transparent);
     background: linear-gradient(135deg, #10b981, #3b82f6);
     color: #fff;
     box-shadow: var(--ui-shadow-soft);
+}
+
+.grid-count {
+    min-width: 48px;
+    min-height: 24px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.2;
+    border-color: color-mix(in srgb, #ec4899 44%, transparent);
+    background: linear-gradient(135deg, #a855f7 0%, #ec4899 52%, #f43f5e 100%);
+    box-shadow:
+        0 7px 16px color-mix(in srgb, #ec4899 24%, transparent),
+        inset 0 1px 0 rgba(255, 255, 255, 0.26);
 }
 
 .sort-direction-btn,
@@ -6374,7 +4989,6 @@ body {
 .inst-add-btn,
 .inst-refresh-btn,
 .as-open-panel-btn,
-.byok-link-btn,
 .v2-btn-sm,
 .pager-btn,
 .pagination button,
@@ -6382,7 +4996,6 @@ body {
 .as-select,
 .page-size-select,
 .enhance-select,
-.byok-input,
 .v2-input-field,
 input,
 textarea,
@@ -6439,11 +5052,6 @@ body.vscode-light .app-tab.active {
 body.vscode-light .summary-stat,
 body.vscode-light .grid-card,
 body.vscode-light .inst-card,
-body.vscode-light .byok-metric,
-body.vscode-light .byok-provider-card,
-body.vscode-light .byok-status-cell,
-body.vscode-light .byok-provider-row,
-body.vscode-light .byok-slot-row,
 body.vscode-light .v2-param-cell,
 body.vscode-light .v2-opt-row,
 body.vscode-light .v2-status-row,
@@ -6537,12 +5145,9 @@ body.vscode-light .search-bar {
 .inst-icon,
 .as-top-icon,
 .enhance-icon,
-.byok-icon,
 .summary-stat-icon,
 .usage-stats-summary svg,
 .health-panel-summary svg,
-.byok-overview > svg,
-.byok-subtab svg,
 .split-content-header svg {
     color: var(--ui-tab-icon) !important;
 }
@@ -6704,7 +5309,6 @@ body.vscode-light .search-bar {
     opacity: 1;
 }
 
-/* BYOK model rows also avoid vertical brand rails. */
 .ms-current,
 .model-priority-item {
     padding-left: 26px;
@@ -6757,9 +5361,7 @@ body.vscode-light .search-bar {
 .v2-status-row,
 .v2-opt-row,
 .v2-param-cell,
-.v2-strip,
-.byok-metric,
-.byok-status-cell {
+.v2-strip {
     background: transparent !important;
     border: 0 !important;
     border-radius: 0 !important;
@@ -6847,9 +5449,8 @@ body.vscode-light .search-bar {
 .as-select,
 .page-size-select,
 .enhance-select,
-.byok-input,
 .v2-input-field,
-.v2-queue-text,
+.v2-queue-text {
 input:not([type="checkbox"]):not([type="radio"]),
 textarea,
 select {
@@ -6863,11 +5464,10 @@ select {
 .as-select:hover,
 .page-size-select:hover,
 .enhance-select:hover,
-.byok-input:hover,
 .v2-input-field:hover,
-.v2-queue-text:hover,
-input:not([type="checkbox"]):not([type="radio"]):hover,
-textarea:hover,
+.v2-queue-text:hover {
+input:not([type="checkbox"]):not([type="radio"]):hover {
+textarea:hover {
 select:hover {
     background-color: var(--ui-field-bg-hover) !important;
 }
@@ -6979,8 +5579,6 @@ input[type="hidden"] {
     color: var(--muted);
 }
 
-/* BYOK status blocks read as one status area instead of three small cards. */
-.byok-metrics {
     gap: 0 14px !important;
     padding: 9px 12px;
     border: 1px solid var(--ui-border);
@@ -6988,21 +5586,17 @@ input[type="hidden"] {
     background: var(--ui-section-bg);
 }
 
-.byok-metric {
     padding: 0 !important;
 }
 
-.byok-status-cell {
     padding: 6px 0 !important;
 }
 
 @media (max-width: 340px) {
-    .byok-metrics {
         grid-template-columns: 1fr !important;
         gap: 8px !important;
     }
 
-    .byok-metric + .byok-metric {
         padding-top: 8px !important;
         border-top: 1px solid var(--ui-row-divider) !important;
     }
@@ -7256,23 +5850,24 @@ body.vscode-light {
     box-shadow: none !important;
 }
 
-/* Account search should feel like a compact toolbar field, not another card. */
+/* Account search/tool area: keep the search field visually separate from controls. */
 #tab-account .search-bar {
-    min-height: 28px !important;
-    height: 28px !important;
-    margin: 2px 0 4px !important;
-    padding: 0 8px !important;
-    gap: 6px !important;
-    border: 0 !important;
-    border-bottom: 1px solid var(--ui-row-divider) !important;
-    border-radius: 0 !important;
-    background: transparent !important;
-    box-shadow: none !important;
+    min-height: 34px !important;
+    height: 34px !important;
+    margin: 6px 0 7px !important;
+    padding: 0 11px !important;
+    gap: 8px !important;
+    border: 1px solid var(--ui-field-border, color-mix(in srgb, var(--vscode-foreground, #1f2937) 14%, transparent)) !important;
+    border-radius: 8px !important;
+    background: color-mix(in srgb, var(--vscode-input-background, var(--ui-surface-raised, color-mix(in srgb, var(--vscode-foreground, #1f2937) 4%, transparent))) 90%, transparent) !important;
+    box-shadow:
+        inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent),
+        0 1px 0 color-mix(in srgb, var(--vscode-foreground, #1f2937) 4%, transparent) !important;
 }
 
 #tab-account .search-bar:focus-within {
-    border-bottom-color: color-mix(in srgb, var(--ui-tab-accent) 70%, transparent) !important;
-    box-shadow: none !important;
+    border-color: color-mix(in srgb, var(--ui-tab-accent, var(--ac-emerald, #10b981)) 62%, transparent) !important;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-tab-accent, var(--ac-emerald, #10b981)) 13%, transparent) !important;
 }
 
 #tab-account .search-icon {
@@ -7283,7 +5878,7 @@ body.vscode-light {
 }
 
 #tab-account .search-input {
-    height: 26px !important;
+    height: 30px !important;
     font-size: 12px !important;
 }
 
@@ -7293,261 +5888,29 @@ body.vscode-light {
     border-radius: 5px;
 }
 
-/* BYOK editor side-panel adaptation.
-   The editor lives inside a narrow webview, so the shell owns scrolling while
-   the header/footer stay outside the scroll region. This prevents grid rows
-   from squeezing form sections into each other. */
-.byok-editor-overlay {
-    overflow: hidden !important;
-}
-
-.byok-editor-modal {
-    height: 100vh;
-    min-height: 0 !important;
-    overflow: hidden !important;
-}
-
-@supports (height: 100dvh) {
-    .byok-editor-modal {
-        height: 100dvh;
-    }
-}
-
-.byok-editor-header,
-.byok-editor-footer {
-    position: relative !important;
-    flex: 0 0 auto;
-    z-index: 3;
-}
-
-.byok-editor-body {
-    flex: 1 1 auto;
-    min-height: 0 !important;
-    align-content: start;
-    grid-auto-rows: max-content;
-    overflow-x: hidden !important;
-    overflow-y: auto !important;
-    scrollbar-gutter: stable;
-}
-
-.byok-editor-panel {
-    min-height: auto !important;
-    overflow: visible;
-}
-
-.byok-catalog-panel {
-    overflow: hidden;
-}
-
-.byok-panel-head,
-.byok-panel-search,
-.byok-model-filter,
-.byok-custom-model-row,
-.byok-slot-config {
-    flex: 0 0 auto;
-}
-
-.byok-field,
-.byok-catalog-main,
-.byok-catalog-text,
-.byok-editor-heading,
-.byok-editor-status {
-    min-width: 0;
-}
-
-.byok-model-filter {
-    min-height: 44px;
+#tab-account .toolbar-bar {
     align-items: center;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
+    gap: 5px !important;
+    row-gap: 5px !important;
+    min-height: 27px;
+    margin: 0 0 5px !important;
+    padding: 0 !important;
 }
 
-.byok-model-filter::-webkit-scrollbar {
-    display: none;
+#tab-account .toolbar-bar > * {
+    flex-shrink: 0;
 }
 
-.byok-model-filter button {
-    flex: 0 0 auto;
+#tab-account .preflight-toggle-btn {
+    margin-left: 0 !important;
 }
 
-.byok-provider-editor .byok-selected-models {
-    min-height: 44px;
-    max-height: 120px;
-    padding-right: 2px;
-    overflow-x: hidden;
-    overflow-y: auto;
-}
-
-.byok-provider-editor .byok-model-catalog {
-    flex: 0 0 auto;
-    min-height: 172px;
-    max-height: min(34vh, 280px);
-    overflow-x: hidden;
-    overflow-y: auto;
-}
-
-.byok-catalog-item,
-.byok-selected-model-row {
-    min-width: 0;
-}
-
-.byok-catalog-item .byok-inline-actions,
-.byok-selected-model-row .byok-inline-actions,
-.byok-catalog-tags {
-    flex: 0 0 auto;
-}
-
-.byok-selected-model-row .byok-inline-actions {
-    justify-content: flex-end;
-}
-
-.byok-provider-editor .byok-selected-model-row {
-    min-height: 40px;
-    padding: 6px 8px;
-}
-
-.byok-provider-editor .byok-selected-model-row .byok-catalog-icon {
-    width: 22px;
-    height: 22px;
-    border-radius: 6px;
-}
-
-.byok-provider-editor .byok-selected-model-row .byok-catalog-meta {
-    display: none;
-}
-
-.byok-provider-editor .byok-selected-model-row .byok-mini-btn,
-.byok-provider-editor .byok-selected-model-row .byok-row-badge {
-    min-height: 22px;
-    padding: 2px 6px;
-}
-
-.byok-editor-footer {
-    min-height: 54px;
-}
-
-@media (min-width: 980px) {
-    .byok-editor-body {
-        grid-auto-rows: minmax(0, 1fr);
-    }
-
-    .byok-provider-editor .byok-catalog-panel,
-    .byok-slot-editor .byok-catalog-panel,
-    .byok-injected-editor .byok-catalog-panel {
-        min-height: 0 !important;
-    }
-
-    .byok-provider-editor .byok-model-catalog,
-    .byok-slot-editor .byok-slot-catalog,
-    .byok-slot-editor .byok-mapping-catalog,
-    .byok-injected-editor .byok-injected-list {
-        flex: 1 1 auto;
-        max-height: none;
-    }
-}
-
-@media (max-width: 760px) {
-    .byok-editor-header {
-        gap: 8px;
-    }
-
-    .byok-editor-brand {
-        max-width: 34%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .byok-editor-body {
-        padding: 10px 12px 12px;
-        gap: 10px;
-    }
-
-    .byok-provider-editor .byok-editor-panel {
-        padding: 12px;
-    }
-
-    .byok-provider-editor .byok-catalog-panel {
-        padding: 0;
-    }
-}
-
-@media (min-width: 641px) and (max-width: 979px) {
-    .byok-provider-editor .byok-editor-body > .byok-editor-panel:not(.byok-catalog-panel) {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        align-items: start;
-        gap: 8px 10px;
-    }
-
-    .byok-provider-editor .byok-field:has(#byokProviderKey),
-    .byok-provider-editor .byok-editor-check,
-    .byok-provider-editor .byok-selected-head,
-    .byok-provider-editor .byok-selected-models {
-        grid-column: 1 / -1;
-    }
-
-    .byok-provider-editor .byok-selected-models {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 6px;
-        max-height: 104px;
-    }
-}
-
-@media (max-width: 640px) {
-    .byok-editor-header,
-    .byok-editor-footer {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .byok-editor-brand {
-        display: none;
-    }
-
-    .byok-editor-heading,
-    .byok-editor-actions,
-    .byok-editor-status {
-        width: 100%;
-    }
-
-    .byok-editor-heading {
-        justify-content: space-between;
-    }
-
-    .byok-editor-title {
-        flex: 1 1 auto;
-        text-align: right;
-    }
-
-    .byok-editor-actions .v2-btn {
-        flex: 1 1 0;
-        min-width: 0;
-    }
-
-    .byok-panel-head {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .byok-panel-head .v2-btn,
-    .byok-custom-model-row .v2-btn {
-        width: 100%;
-    }
-
-    .byok-custom-model-row {
-        flex-direction: column;
-    }
-
-    .byok-selected-model-row,
-    .byok-catalog-item {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .byok-selected-model-row .byok-inline-actions,
-    .byok-catalog-tags {
-        justify-content: flex-start;
-    }
+#tab-account .filter-trigger,
+#tab-account .sort-direction-btn,
+#tab-account .toolbar-icon-btn,
+#tab-account .balance-filter-btn,
+#tab-account .group-select-mode-btn,
+#tab-account .page-size-select,
+#tab-account .preflight-toggle-btn {
+    height: 26px;
 }

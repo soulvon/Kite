@@ -7,6 +7,9 @@ import { CACHE_TTL } from './config';
 
 const ACCOUNTS_KEY = 'windsurfPool.accounts.v1';
 const ACCOUNTS_FILE = 'accounts.json';
+const ACCOUNT_SECRET_PREFIX = 'windsurfPool.accountSecret.v1.';
+
+type SecretField = 'apiKey' | 'devinAuth1Token' | 'password' | 'rawToken';
 
 function getAccountsFilePath(): string {
   return path.join(getPoolRoot(), ACCOUNTS_FILE);
@@ -14,6 +17,110 @@ function getAccountsFilePath(): string {
 
 let _accountsCache: StoredAccount[] | null = null;
 let _accountsCacheTs = 0;
+
+function accountSecretKey(email: string, field: SecretField): string {
+  return `${ACCOUNT_SECRET_PREFIX}${encodeURIComponent(email)}.${field}`;
+}
+
+function cloneAccount(account: StoredAccount): StoredAccount {
+  return {
+    ...account,
+    tags: account.tags ? [...account.tags] : undefined,
+    importMeta: account.importMeta ? { ...account.importMeta } : undefined,
+  };
+}
+
+function sanitizeAccountForDisk(account: StoredAccount): StoredAccount {
+  const sanitized = cloneAccount(account);
+  sanitized.apiKey = '';
+  delete sanitized.devinAuth1Token;
+  if (sanitized.importMeta) {
+    delete sanitized.importMeta.password;
+    delete sanitized.importMeta.rawToken;
+    if (Object.keys(sanitized.importMeta).length === 0) {
+      delete sanitized.importMeta;
+    }
+  }
+  return sanitized;
+}
+
+function sanitizeAccountsForDisk(accounts: StoredAccount[]): StoredAccount[] {
+  return accounts.map(account => sanitizeAccountForDisk(account));
+}
+
+function hasInlineSecrets(account: StoredAccount): boolean {
+  return !!(
+    account.apiKey ||
+    account.devinAuth1Token ||
+    account.importMeta?.password ||
+    account.importMeta?.rawToken
+  );
+}
+
+async function storeAccountSecrets(context: vscode.ExtensionContext, account: StoredAccount): Promise<void> {
+  const stores: Array<[SecretField, string | undefined]> = [
+    ['apiKey', account.apiKey],
+    ['devinAuth1Token', account.devinAuth1Token],
+    ['password', account.importMeta?.password],
+    ['rawToken', account.importMeta?.rawToken],
+  ];
+
+  for (const [field, value] of stores) {
+    if (typeof value === 'string' && value.length > 0) {
+      await context.secrets.store(accountSecretKey(account.email, field), value);
+    }
+  }
+}
+
+async function deleteAccountSecrets(context: vscode.ExtensionContext, email: string): Promise<void> {
+  await Promise.all((['apiKey', 'devinAuth1Token', 'password', 'rawToken'] as SecretField[])
+    .map(field => context.secrets.delete(accountSecretKey(email, field))));
+}
+
+async function hydrateAccount(context: vscode.ExtensionContext, account: StoredAccount): Promise<{ account: StoredAccount; hadInlineSecrets: boolean }> {
+  const hadInlineSecrets = hasInlineSecrets(account);
+  if (hadInlineSecrets) {
+    await storeAccountSecrets(context, account);
+  }
+
+  const hydrated = cloneAccount(account);
+  hydrated.apiKey = account.apiKey || await context.secrets.get(accountSecretKey(account.email, 'apiKey')) || '';
+  const devinAuth1Token = account.devinAuth1Token || await context.secrets.get(accountSecretKey(account.email, 'devinAuth1Token'));
+  if (devinAuth1Token) hydrated.devinAuth1Token = devinAuth1Token;
+
+  const password = account.importMeta?.password || await context.secrets.get(accountSecretKey(account.email, 'password'));
+  const rawToken = account.importMeta?.rawToken || await context.secrets.get(accountSecretKey(account.email, 'rawToken'));
+  if (password || rawToken || hydrated.importMeta) {
+    hydrated.importMeta = { ...(hydrated.importMeta || {}) };
+    if (password) hydrated.importMeta.password = password;
+    if (rawToken) hydrated.importMeta.rawToken = rawToken;
+  }
+
+  return { account: normalizeAccountTags(hydrated), hadInlineSecrets };
+}
+
+async function hydrateAccounts(context: vscode.ExtensionContext, accounts: StoredAccount[]): Promise<{ accounts: StoredAccount[]; hadInlineSecrets: boolean }> {
+  let hadInlineSecrets = false;
+  const hydrated: StoredAccount[] = [];
+  for (const account of accounts) {
+    const result = await hydrateAccount(context, account);
+    hydrated.push(result.account);
+    hadInlineSecrets = hadInlineSecrets || result.hadInlineSecrets;
+  }
+  return { accounts: hydrated, hadInlineSecrets };
+}
+
+function readAccountsFileRaw(): StoredAccount[] {
+  const p = getAccountsFilePath();
+  if (!fs.existsSync(p)) return [];
+  try {
+    const raw = fs.readFileSync(p, 'utf8');
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter(isValidAccount).map(normalizeAccountTags) : [];
+  } catch {
+    return [];
+  }
+}
 
 function readAccountsFromFile(forceFresh = false): StoredAccount[] {
   const now = Date.now();
@@ -23,9 +130,7 @@ function readAccountsFromFile(forceFresh = false): StoredAccount[] {
   const p = getAccountsFilePath();
   if (!fs.existsSync(p)) return [];
   try {
-    const raw = fs.readFileSync(p, 'utf8');
-    const arr = JSON.parse(raw);
-    _accountsCache = Array.isArray(arr) ? arr.filter(isValidAccount).map(normalizeAccountTags) : [];
+    _accountsCache = readAccountsFileRaw().map(account => normalizeAccountTags(sanitizeAccountForDisk(account)));
     _accountsCacheTs = now;
     return _accountsCache;
   } catch {
@@ -39,11 +144,12 @@ function invalidateAccountsCache(): void {
 
 function saveAccountsToFile(accounts: StoredAccount[]): void {
   ensureDir(getPoolRoot());
+  const safeAccounts = sanitizeAccountsForDisk(accounts);
   const p = getAccountsFilePath();
   const tmp = p + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(accounts, null, 2), 'utf8');
+  fs.writeFileSync(tmp, JSON.stringify(safeAccounts, null, 2), 'utf8');
   fs.renameSync(tmp, p);
-  _accountsCache = accounts;
+  _accountsCache = safeAccounts;
   _accountsCacheTs = Date.now();
 }
 
@@ -143,8 +249,14 @@ export function readAccountsSync(_context: vscode.ExtensionContext): StoredAccou
  */
 export async function readAccounts(context: vscode.ExtensionContext): Promise<StoredAccount[]> {
   // 优先从共享文件读取
-  const fileAccounts = readAccountsFromFile();
-  if (fileAccounts.length > 0) return fileAccounts;
+  const fileAccounts = readAccountsFileRaw();
+  if (fileAccounts.length > 0) {
+    const hydrated = await hydrateAccounts(context, fileAccounts);
+    if (hydrated.hadInlineSecrets) {
+      await saveAccounts(context, hydrated.accounts);
+    }
+    return hydrated.accounts;
+  }
 
   // 回退：从 secrets 读取（首次迁移）
   const raw = await context.secrets.get(ACCOUNTS_KEY);
@@ -154,9 +266,10 @@ export async function readAccounts(context: vscode.ExtensionContext): Promise<St
     const accounts = Array.isArray(arr) ? arr.filter(isValidAccount) : [];
     // 迁移到共享文件
     if (accounts.length > 0) {
-      saveAccountsToFile(accounts);
+      await saveAccounts(context, accounts);
     }
-    return accounts;
+    const hydrated = await hydrateAccounts(context, accounts);
+    return hydrated.accounts;
   } catch {
     return [];
   }
@@ -166,9 +279,12 @@ export async function readAccounts(context: vscode.ExtensionContext): Promise<St
  * 保存账号列表（到共享文件）
  */
 export async function saveAccounts(context: vscode.ExtensionContext, accounts: StoredAccount[]): Promise<void> {
+  for (const account of accounts) {
+    await storeAccountSecrets(context, account);
+  }
   saveAccountsToFile(accounts);
-  // 同时备份到 secrets（兼容旧版本）
-  await context.secrets.store(ACCOUNTS_KEY, JSON.stringify(accounts));
+  // 同时备份非敏感索引到 secrets（兼容旧版本，不再写入凭据明文）
+  await context.secrets.store(ACCOUNTS_KEY, JSON.stringify(sanitizeAccountsForDisk(accounts)));
 }
 
 /**
@@ -287,6 +403,7 @@ export async function removeAccount(context: vscode.ExtensionContext, email: str
     const filtered = accounts.filter(a => a.email !== email);
     if (filtered.length === accounts.length) return false;
     await saveAccounts(context, filtered);
+    await deleteAccountSecrets(context, email);
     return true;
   });
 }
@@ -303,6 +420,7 @@ export async function batchRemove(context: vscode.ExtensionContext, emails: stri
     const removed = accounts.length - filtered.length;
     if (removed > 0) {
       await saveAccounts(context, filtered);
+      await Promise.all([...emailSet].map(email => deleteAccountSecrets(context, email)));
     }
     return removed;
   });

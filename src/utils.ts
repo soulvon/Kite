@@ -26,7 +26,7 @@ export function getAppDataDir(): string {
 }
 
 /**
- * 获取 Windsurf Pool 根目录
+ * 获取兼容数据根目录（路径保持不变，用于老用户数据连续）
  */
 export function getPoolRoot(): string {
   return path.join(getAppDataDir(), '.windsurf-pool');

@@ -1218,7 +1218,7 @@
 		['Devin Local', 'Devin 本地'],
 		['Devin AI coding agent via Devin CLI', '通过 Devin CLI 的 Devin AI 编程智能体'],
 		['Devin Cloud', 'Devin 云端'],
-		['Claude Agent', 'Claude 智能体'],
+		['Claude Agent', 'Claude Code'],
 		['ACP wrapper for Anthropic\'s Claude', 'Anthropic Claude 的 ACP 封装器'],
 		['Codex CLI', 'Codex CLI'],
 		['ACP adapter for OpenAI\'s coding assistant', 'OpenAI 编程助手的 ACP 适配器'],

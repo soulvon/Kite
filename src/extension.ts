@@ -24,14 +24,11 @@ import { setExtensionPath } from './cascadeProbe';
 import { warmupSoundPlayer } from './soundPlayer';
 import { reloadWindsurfAcpConnections, scheduleAcpAgentRepair, scheduleAcpConnectionRecovery } from './acpRecovery';
 import { getIdeDisplayName, getIdeExeName } from './ideDetector';
-import { ByokProxyManager } from './byokProxyManager';
-import { BYOK_DEVELOPMENT_NOTICE, BYOK_FEATURE_IN_DEVELOPMENT } from './byokFeatureGate';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
 let statusBar: StatusBarManager;
 let usageTracker: UsageTracker;
-let byokProxyManager: ByokProxyManager;
 let _context: vscode.ExtensionContext;
 
 export function activate(context: vscode.ExtensionContext) {
@@ -73,10 +70,6 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(autoSwitcher);
   autoSwitcher.start();
 
-  // BYOK 本地 sidecar 管理器（按需启动）
-  byokProxyManager = new ByokProxyManager(context);
-  context.subscriptions.push(byokProxyManager);
-
   // 底部状态栏（独立于侧栏面板，启动即显示）
   statusBar = new StatusBarManager(context, autoSwitcher);
   context.subscriptions.push(statusBar);
@@ -95,7 +88,7 @@ export function activate(context: vscode.ExtensionContext) {
   checkInstallPermission(context);
 
   // 创建侧栏提供器
-  sidebarProvider = new SidebarProvider(context.extensionUri, context, autoSwitcher, usageTracker, byokProxyManager);
+  sidebarProvider = new SidebarProvider(context.extensionUri, context, autoSwitcher, usageTracker);
   // 侧栏手动切号成功后立即更新状态栏
   sidebarProvider.onManualSwitch = () => statusBar?.update();
   // 注册到 subscriptions，让 VSCode 在卸载时自动调用 dispose 清理 OutputChannel 和监听器
@@ -157,42 +150,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
   context.subscriptions.push(recoverCascadeInputCmd);
-
-  const byokStartCmd = vscode.commands.registerCommand('windsurfPool.byokStart', async () => {
-    if (BYOK_FEATURE_IN_DEVELOPMENT) {
-      vscode.window.showInformationMessage(BYOK_DEVELOPMENT_NOTICE);
-      return;
-    }
-    await byokProxyManager.start();
-    vscode.window.showInformationMessage('BYOK sidecar 已启动');
-  });
-  context.subscriptions.push(byokStartCmd);
-
-  const byokStopCmd = vscode.commands.registerCommand('windsurfPool.byokStop', async () => {
-    await byokProxyManager.stop();
-    vscode.window.showInformationMessage('BYOK sidecar 已停止');
-  });
-  context.subscriptions.push(byokStopCmd);
-
-  const byokApplyPatchCmd = vscode.commands.registerCommand('windsurfPool.byokApplyPatch', async () => {
-    if (BYOK_FEATURE_IN_DEVELOPMENT) {
-      vscode.window.showInformationMessage(BYOK_DEVELOPMENT_NOTICE);
-      return;
-    }
-    await byokProxyManager.applyPatch();
-    vscode.window.showInformationMessage('BYOK patch 已应用，重启窗口后生效。', '立即重启').then(action => {
-      if (action === '立即重启') vscode.commands.executeCommand('workbench.action.reloadWindow');
-    });
-  });
-  context.subscriptions.push(byokApplyPatchCmd);
-
-  const byokRestorePatchCmd = vscode.commands.registerCommand('windsurfPool.byokRestorePatch', async () => {
-    await byokProxyManager.restorePatch();
-    vscode.window.showInformationMessage('BYOK patch 已恢复，重启窗口后生效。', '立即重启').then(action => {
-      if (action === '立即重启') vscode.commands.executeCommand('workbench.action.reloadWindow');
-    });
-  });
-  context.subscriptions.push(byokRestorePatchCmd);
 
   const refreshSidebarCmd = vscode.commands.registerCommand('windsurfPool.refreshSidebar', () => {
     sidebarProvider.refresh();
@@ -334,10 +291,10 @@ export function activate(context: vscode.ExtensionContext) {
     // 端口/token 不再写入 enh-settings.json，改由 sidebar webview 的 HTML 内联
     // 后通过 window.top.postMessage 告知同进程的 workbench renderer。
     startBridgeServer().then(info => {
-      console.log(`[windsurf-pool] bridge ready at 127.0.0.1:${info.port}`);
+      console.log(`[kite] bridge ready at 127.0.0.1:${info.port}`);
       try { sidebarProvider?.refreshBridgeInfo?.(); } catch {}
     }).catch(err => {
-      console.warn('[windsurf-pool] bridge server failed to start:', err);
+      console.warn('[kite] bridge server failed to start:', err);
     });
   }
 
@@ -348,12 +305,12 @@ export function activate(context: vscode.ExtensionContext) {
     const currentVersion: string = (context.extension?.packageJSON?.version as string) || '0.0.0';
     const m = resetContinueModeOnUpgrade(currentVersion);
     if (m.changed) {
-      console.log(`[windsurf-pool] reset continueMode on upgrade ${m.lastVersion ?? '(none)'} → ${currentVersion}: ${m.from} → simple`);
+      console.log(`[kite] reset continueMode on upgrade ${m.lastVersion ?? '(none)'} → ${currentVersion}: ${m.from} → simple`);
     } else if (m.lastVersion !== currentVersion) {
-      console.log(`[windsurf-pool] continueMode reset skipped (current=${m.from}) on upgrade ${m.lastVersion ?? '(none)'} → ${currentVersion}`);
+      console.log(`[kite] continueMode reset skipped (current=${m.from}) on upgrade ${m.lastVersion ?? '(none)'} → ${currentVersion}`);
     }
   } catch (err) {
-    console.warn('[windsurf-pool] resetContinueModeOnUpgrade failed:', err);
+    console.warn('[kite] resetContinueModeOnUpgrade failed:', err);
   }
 
   // [Windsurf 增强] 自动注入 DOM 增强脚本到 workbench.html
@@ -371,7 +328,7 @@ export function activate(context: vscode.ExtensionContext) {
       });
     }
   } catch (err) {
-    console.error('[windsurf-pool] Enhancement injection failed:', err);
+    console.error('[kite] Enhancement injection failed:', err);
   }
 
   // 提交所有启动阶段的文件写操作（无需提权时零开销；需要时仅一次 UAC）
@@ -393,14 +350,14 @@ export function activate(context: vscode.ExtensionContext) {
         }
       });
     } else {
-      console.error('[windsurf-pool] Elevated batch flush failed:', err);
+      console.error('[kite] Elevated batch flush failed:', err);
     }
   }
 
   // 统一在 flushElevatedBatch 之后执行 checksum 修复：
   // 必须在 flush 之后，因为 flush 才真正把新 workbench.html 写入磁盘，
   // 此时 computeChecksum 读到的才是最新文件内容
-  try { autoFixChecksums(); } catch (err) { console.error('[windsurf-pool] Checksum fix failed:', err); }
+  try { autoFixChecksums(); } catch (err) { console.error('[kite] Checksum fix failed:', err); }
 
   // [Windsurf 增强] 恢复原始 workbench.html 命令（一并恢复 product.json）
   const restoreCmd = vscode.commands.registerCommand('windsurfPool.restoreWorkbench', async () => {
@@ -444,7 +401,7 @@ export function activate(context: vscode.ExtensionContext) {
       ? `（⚠️ ${result.missing.length} 个文件未找到，已跳过）`
       : '';
     if (result.missing.length > 0) {
-      console.warn('[windsurf-pool] checksum missing files:', result.missing);
+      console.warn('[kite] checksum missing files:', result.missing);
     }
 
     if (result.fixed === 0) {
@@ -468,7 +425,7 @@ export function activate(context: vscode.ExtensionContext) {
   try {
     ensureBubbleRules();
   } catch (err) {
-    console.error('[windsurf-pool] Bubble rules injection failed:', err);
+    console.error('[kite] Bubble rules injection failed:', err);
   }
 
   // [Windsurf 增强] 手动注入/移除回复建议规则命令
@@ -657,19 +614,18 @@ function autoFixChecksums(): void {
   try {
     const r = fixChecksums(false);
     if (r.error) {
-      console.warn('[windsurf-pool] checksum fix:', r.error);
+      console.warn('[kite] checksum fix:', r.error);
     } else if (r.fixed > 0) {
-      console.log(`[windsurf-pool] product.json checksums 已修复 ${r.fixed}/${r.total} 项`);
+      console.log(`[kite] product.json checksums 已修复 ${r.fixed}/${r.total} 项`);
     }
   } catch (err) {
-    console.warn('[windsurf-pool] checksum fix exception:', err);
+    console.warn('[kite] checksum fix exception:', err);
   }
 }
 
 export async function deactivate(): Promise<void> {
   try { stopHeartbeat(); } catch {}
   try { releaseLock(); } catch {}
-  try { await byokProxyManager?.stop(); } catch {}
   try { stopBridgeServer(); } catch {}
   try { const { shutdownSoundPlayer } = require('./soundPlayer'); shutdownSoundPlayer(); } catch {}
 

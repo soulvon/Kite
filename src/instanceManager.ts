@@ -27,7 +27,7 @@ export interface InstanceConfig {
 
 export interface InstanceView extends InstanceConfig {
   running: boolean;
-  current: boolean;  // 是否为当前 windsurf-pool 所在窗口对应的实例
+  current: boolean;  // 是否为当前 Kite 所在窗口对应的实例
 }
 
 interface InstanceStore {

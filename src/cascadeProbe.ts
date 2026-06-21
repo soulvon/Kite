@@ -404,8 +404,8 @@ async function getIsolatedLsInfo(): Promise<LsInfo> {
 
   const bin = findLsBinary();
   const port = await getFreePort();
-  const csrf = `windsurf-pool-${crypto.randomUUID()}`;
-  const root = path.join(os.tmpdir(), `windsurf-pool-isolated-ls-${process.pid}-${crypto.randomUUID()}`);
+  const csrf = `kite-${crypto.randomUUID()}`;
+  const root = path.join(os.tmpdir(), `kite-isolated-ls-${process.pid}-${crypto.randomUUID()}`);
   const db = path.join(root, 'db');
   fs.mkdirSync(db, { recursive: true });
 
@@ -588,8 +588,8 @@ export function getLsPoolSize(): number {
 async function spawnOneLs(): Promise<LsInfo> {
   const bin = findLsBinary();
   const port = await getFreePort();
-  const csrf = `windsurf-pool-${crypto.randomUUID()}`;
-  const root = path.join(os.tmpdir(), `windsurf-pool-ls-pool-${process.pid}-${crypto.randomUUID()}`);
+  const csrf = `kite-${crypto.randomUUID()}`;
+  const root = path.join(os.tmpdir(), `kite-ls-pool-${process.pid}-${crypto.randomUUID()}`);
   const db = path.join(root, 'db');
   fs.mkdirSync(db, { recursive: true });
   const homeDir = process.env.USERPROFILE || process.env.HOME || os.homedir();

@@ -142,7 +142,7 @@ function getWorkbenchHtmlPath(): string | null {
 let _scriptCache: string | null = null;
 function getScriptContent(): string | null {
   if (_scriptCache !== null) return _scriptCache;
-  const ext = vscode.extensions.getExtension('local.windsurf-pool');
+  const ext = vscode.extensions.getExtension('local.kite') || vscode.extensions.getExtension('local.windsurf-pool');
   if (!ext) return null;
   const scriptName = getEnhancementScriptName();
   const scriptPath = path.join(ext.extensionPath, 'resources', scriptName);

@@ -1,1 +1,0 @@
-WindsurfInsiders)()||(0,C.isWindsurfNext)()||(0,I.hasDevExtension)()||(0,E.isDevelopment)()||A.isEnabled("acp-custom-enabled")}function u(A){s.commands.executeCommand("setContext","windsurf:acpEnabled",!0),s.commands.executeCommand("setContext","windsurf:acpCustomEnabled",A)}let d,h,D=!1;function p(

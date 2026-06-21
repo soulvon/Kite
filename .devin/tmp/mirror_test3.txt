@@ -1,4 +1,0 @@
-=== Domain类型镜像测试 03/19/2026 03:15:31 ===
-kkgithub.com => FAIL: The SSL connection could not be established, see inner excep...
-githubfast.com => FAIL: 不知道这样的主机。 (raw.githubfast.com:443)
-bgithub.xyz => OK (1114ms)
