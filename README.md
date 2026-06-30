@@ -2,9 +2,9 @@
 
 # Kite — AI IDE 增强套件
 
-**面向 Windsurf / Devin 的界面增强、多实例、BYOK（开发中）与多账号号池工具**
+**面向 Windsurf / Devin 的界面增强、多实例、[AnyBridge](https://github.com/soulvon/AnyBridge) 模型路由与多账号号池工具**
 
-界面增强 · BYOK（开发中）自带 Key · 多实例分身 · 多账号号池 · 自动恢复 · 长任务自动化
+界面增强 · [AnyBridge](https://github.com/soulvon/AnyBridge) 模型路由 · 多实例分身 · 多账号号池 · 自动恢复 · 长任务自动化
 
 [![Version](https://img.shields.io/badge/version-8.7.5-blue?style=flat-square)](https://github.com/soulvon/Kite/releases/latest) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
@@ -42,7 +42,7 @@
 
 Windsurf 的 AI 配额用完就得等重置，手动切号要退出登录、重启编辑器，**正在进行的对话直接丢失**。多开窗口还会互相踢号。
 
-Kite 在 **不退出、不重启、不丢失会话** 的前提下，把界面增强、BYOK、多实例和多账号能力整合成一个 IDE 增强套件：配额快用完 → 自动切到最优账号 → 接着上次进度继续 → 你甚至感知不到发生了什么。
+Kite 在 **不退出、不重启、不丢失会话** 的前提下，把界面增强、[AnyBridge](https://github.com/soulvon/AnyBridge) 模型路由、多实例和多账号能力整合成一个 IDE 增强套件：配额快用完 → 自动切到最优账号 → 接着上次进度继续 → 你甚至感知不到发生了什么。
 
 ## 核心能力
 
@@ -164,6 +164,13 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 - **新增 BYOK 显示名模板与运行统计**：支持 `{prefix}` / `{label}` / `{provider}` / `{apiModel}` 模板，侧栏显示请求、Token、重试、错误和最近
 
 </details>
+
+## 相关项目
+
+模型路由、API 中转、自带 Key、BYOK 等能力由独立项目 [AnyBridge](https://github.com/soulvon/AnyBridge) 承担。
+
+> **Kite →** 轻量的 IDE 增强与账号工作流工具
+> **AnyBridge →** 模型路由与 API 层能力
 
 ---
 
