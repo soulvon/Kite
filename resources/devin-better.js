@@ -315,28 +315,89 @@
 	}
 	
 	let _cachedInput = null;
-	function findInputEl() {
-		if (_cachedInput && _cachedInput.isConnected && _cachedInput.getBoundingClientRect().width > 0) return _cachedInput;
-		const scopes = [findChatRoot(), document].filter(Boolean);
+	function isUsableInputCandidate(el) {
+		if (!el || !el.isConnected) return false;
+		if (el.closest && el.closest('.ws-bubbles,.ws-better-panel,#ws-recovery-toast')) return false;
+		if ((el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && (el.disabled || el.readOnly)) return false;
+		const r = el.getBoundingClientRect();
+		if (r.width < 100 || r.height < 12) return false;
+		if (r.bottom <= 0 || r.top >= window.innerHeight || r.right <= 0 || r.left >= window.innerWidth) return false;
+		const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+		if (style && (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none')) return false;
+		return true;
+	}
+
+	function scoreInputCandidate(el, anchorEl) {
+		const r = el.getBoundingClientRect();
+		let score = r.bottom;
+		if (el.getAttribute('data-lexical-editor') === 'true') score += 2000;
+		if ((el.getAttribute('role') || '').toLowerCase() === 'textbox') score += 800;
+		if (el.tagName === 'TEXTAREA') score += 500;
+		if (anchorEl && anchorEl.getBoundingClientRect) {
+			const ar = anchorEl.getBoundingClientRect();
+			const ax = ar.left + ar.width / 2;
+			const ix = r.left + r.width / 2;
+			score -= Math.abs(ax - ix) * 0.35;
+			if (r.top >= ar.top - 20) score += 600;
+		}
+		return score;
+	}
+
+	function collectInputCandidates(scope) {
+		const found = [];
+		const seen = new Set();
+		if (!scope || !scope.querySelectorAll) return found;
+		for (const sel of INPUT_CANDIDATES) {
+			scope.querySelectorAll(sel).forEach(el => {
+				if (seen.has(el) || !isUsableInputCandidate(el)) return;
+				seen.add(el);
+				found.push(el);
+			});
+		}
+		return found;
+	}
+
+	function findNearestInputScope(anchorEl) {
+		if (!anchorEl || !anchorEl.closest) return null;
+		let cur = anchorEl.parentElement;
+		for (let depth = 0; cur && depth < 12; depth++, cur = cur.parentElement) {
+			if (collectInputCandidates(cur).length > 0) return cur;
+		}
+		return anchorEl.closest(CHAT_ROOT_SELECTOR);
+	}
+
+	function findInputEl(anchorEl) {
+		if (anchorEl && !anchorEl.isConnected && isUsableInputCandidate(_cachedInput)) return _cachedInput;
+		const scopes = [];
+		const seenScopes = new Set();
+		function addScope(scope) {
+			if (!scope || seenScopes.has(scope)) return;
+			seenScopes.add(scope);
+			scopes.push(scope);
+		}
+		addScope(findNearestInputScope(anchorEl));
+		if (anchorEl && anchorEl.closest) addScope(anchorEl.closest(CHAT_ROOT_SELECTOR));
+		addScope(findChatRoot());
+		addScope(document);
+
+		let best = null;
+		let bestScore = -Infinity;
 		for (const scope of scopes) {
-			for (const sel of INPUT_CANDIDATES) {
-				const el = scope.querySelector(sel);
-				if (el) { _cachedInput = el; return el; }
+			for (const el of collectInputCandidates(scope)) {
+				const score = scoreInputCandidate(el, anchorEl);
+				if (score > bestScore) {
+					best = el;
+					bestScore = score;
+				}
 			}
+			if (best && scope !== document) break;
 		}
-		for (const el of document.querySelectorAll('[contenteditable="true"]')) {
-			const r = el.getBoundingClientRect();
-			if (r.width > 100 && r.bottom > window.innerHeight * 0.5) { _cachedInput = el; return el; }
-		}
-		for (const ta of document.querySelectorAll('textarea')) {
-			const r = ta.getBoundingClientRect();
-			if (r.width > 100 && r.height > 20) { _cachedInput = ta; return ta; }
-		}
-		return null;
+		_cachedInput = best || null;
+		return _cachedInput;
 	}
 	
-	async function setInputText(text) {
-		const inputEl = findInputEl();
+	async function setInputText(text, anchorEl) {
+		const inputEl = findInputEl(anchorEl);
 		if (!inputEl) { console.log(LOG_PREFIX, '[setInputText] 找不到输入框'); return false; }
 		console.log(LOG_PREFIX, '[setInputText] 找到输入框:', inputEl.tagName, 'lexical:', inputEl.getAttribute('data-lexical-editor'), 'ce:', inputEl.contentEditable);
 		inputEl.focus();
@@ -470,8 +531,8 @@
 
 	// 统一发送策略：标准按钮 → 最右边按钮 → Enter键
 	// v6.6.1：queued 状态下优先走 Enter（按钮策略在配额耗尽/queued 时不可靠）
-	function trySendMessage() {
-		const inputEl = findInputEl();
+	function trySendMessage(anchorEl) {
+		const inputEl = findInputEl(anchorEl);
 		if (!inputEl) return null;
 
 		// v6.6.1 关键修复：检测到 queued 状态时，直接走 Enter 键
@@ -485,7 +546,7 @@
 		}
 
 		// 策略1: 标准选择器找发送按钮
-		const sendBtn = findSendBtnAdvanced();
+		const sendBtn = findSendBtnAdvanced(inputEl);
 		if (sendBtn && !sendBtn.disabled) {
 			sendBtn.click();
 			console.log(LOG_PREFIX, '[trySend] ✅ 策略1: 标准选择器');
@@ -530,40 +591,56 @@
 		return 'enter';
 	}
 
-	function findSendBtnAdvanced() {
-		const root = findChatRoot();
-		const scope = root || document;
-		console.log(LOG_PREFIX, '[findSendBtn] chatRoot:', root ? root.tagName + '.' + root.className.substring(0, 40) : 'null', '→ scope:', scope === document ? 'document' : 'element');
-		for (const sel of SEND_BTN_CANDIDATES) {
-			const el = scope.querySelector(sel);
-			if (el) { console.log(LOG_PREFIX, '[findSendBtn] 命中选择器:', sel); return el; }
+	function findSendBtnAdvanced(inputEl) {
+		const scopes = [];
+		const seenScopes = new Set();
+		function addScope(scope) {
+			if (!scope || !scope.querySelectorAll || seenScopes.has(scope)) return;
+			seenScopes.add(scope);
+			scopes.push(scope);
 		}
-		const btns = scope.querySelectorAll('button');
-		for (const btn of btns) {
-			const a = (btn.getAttribute('aria-label') || '').toLowerCase();
-			const t = (btn.getAttribute('title') || '').toLowerCase();
-			const tt = (btn.getAttribute('data-tooltip-id') || '').toLowerCase();
-			if (a.includes('send') || t.includes('send') || tt.includes('send') || a.includes('submit') || t.includes('submit')) return btn;
+		let container = inputEl ? inputEl.parentElement : null;
+		for (let i = 0; i < 7 && container; i++, container = container.parentElement) addScope(container);
+		addScope(findChatRoot());
+		addScope(document);
+
+		const inputRect = inputEl ? inputEl.getBoundingClientRect() : null;
+		function isVisibleButton(btn) {
+			if (!btn || btn.disabled) return false;
+			const r = btn.getBoundingClientRect();
+			return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
 		}
-		const inputEl = findInputEl();
-		if (inputEl) {
-			let container = inputEl.parentElement;
-			for (let i = 0; i < 5 && container; i++) {
-				const btnsNear = container.querySelectorAll('button');
-				for (const btn of btnsNear) {
+		function buttonNearInput(btn) {
+			if (!inputRect) return true;
+			const r = btn.getBoundingClientRect();
+			return Math.abs(r.top - inputRect.bottom) < 80 || Math.abs(r.bottom - inputRect.bottom) < 80 || (r.top >= inputRect.top - 20 && r.bottom <= inputRect.bottom + 80);
+		}
+		console.log(LOG_PREFIX, '[findSendBtn] scoped to input:', inputEl ? inputEl.tagName : 'null');
+		for (const scope of scopes) {
+			for (const sel of SEND_BTN_CANDIDATES) {
+				const el = scope.querySelector(sel);
+				if (el && isVisibleButton(el) && buttonNearInput(el)) { console.log(LOG_PREFIX, '[findSendBtn] 命中选择器:', sel); return el; }
+			}
+			const btns = scope.querySelectorAll('button');
+			for (const btn of btns) {
+				if (!isVisibleButton(btn) || !buttonNearInput(btn)) continue;
+				const a = (btn.getAttribute('aria-label') || '').toLowerCase();
+				const t = (btn.getAttribute('title') || '').toLowerCase();
+				const tt = (btn.getAttribute('data-tooltip-id') || '').toLowerCase();
+				if (a.includes('send') || t.includes('send') || tt.includes('send') || a.includes('submit') || t.includes('submit')) return btn;
+			}
+			if (scope !== document) {
+				for (const btn of btns) {
+					if (!isVisibleButton(btn) || !buttonNearInput(btn)) continue;
 					const svg = btn.querySelector('svg');
-					if (svg && !btn.disabled) {
-						const paths = svg.querySelectorAll('path');
-						if (paths.length <= 3) { logBubbles('找到输入框附近SVG按钮'); return btn; }
-					}
+					if (svg && svg.querySelectorAll('path').length <= 3) { logBubbles('找到输入框附近SVG按钮'); return btn; }
 				}
-				container = container.parentElement;
 			}
 		}
 		return null;
 	}
 	
-	function submitBubbleText(text) {
+	function submitBubbleText(text, anchorEl) {
 		if (!text) return;
 		// v7.8.3: 提前短路 — bubbles 已关掉时根本不该写入输入框
 		if (!settings.bubblesEnabled) {
@@ -572,13 +649,13 @@
 		}
 		// v7.8.3: 抽取清空残留 helper（与 sendContinueMessage 的 before-trySend 一致）
 		const _cleanupBubbleResidual = (stage) => {
-			const cleanupEl = findInputEl();
+			const cleanupEl = findInputEl(anchorEl);
 			if (cleanupEl) {
 				try { cleanupEl.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch {}
 			}
 			console.log(LOG_PREFIX + '[Bubbles] ' + stage + ' 短路: bubbles 已关闭，已清空输入框残留');
 		};
-		setInputText(text).then(ok => {
+		setInputText(text, anchorEl).then(ok => {
 			if (!ok) return;
 			// v7.8.3: setInputText 完成后立即检查 — bubbles 总开关或 autoSend 关掉时清残留
 			if (!settings.bubblesEnabled || !settings.bubblesAutoSend) {
@@ -591,7 +668,7 @@
 					_cleanupBubbleResidual('setTimeout');
 					return;
 				}
-				trySendMessage();
+				trySendMessage(anchorEl);
 			}, 400);
 		});
 	}
@@ -644,11 +721,11 @@
 				opt.appendChild(text);
 				opt.style.pointerEvents = 'all';
 				opt.addEventListener('click', e => {
-					e.stopPropagation(); e.stopImmediatePropagation();
-					submitBubbleText(LETTERS[i] + '. ' + item);
+					e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+					submitBubbleText(LETTERS[i] + '. ' + item, wrapper);
 					wrapper.remove();
 				});
-				opt.addEventListener('mousedown', e => e.stopPropagation());
+				opt.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); });
 				wrapper.appendChild(opt);
 			});
 			const co = document.createElement('div');
@@ -674,18 +751,21 @@
 			const csb = document.createElement('button');
 			csb.className = 'ws-bubble-custom-send';
 			csb.textContent = 'Send';
-			csb.addEventListener('click', () => {
+			csb.addEventListener('click', e => {
+				e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
 				const v = ci.value.trim();
-				if (v) { submitBubbleText(v); wrapper.remove(); }
+				if (v) { submitBubbleText(v, wrapper); wrapper.remove(); }
 			});
 			ci.addEventListener('keydown', e => { if (e.key === 'Enter') csb.click(); });
 			cir.appendChild(ci);
 			cir.appendChild(csb);
 			co.addEventListener('click', e => {
+				e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
 				if (e.target === ci || e.target === csb) return;
 				cir.style.display = cir.style.display === 'none' ? 'flex' : 'none';
 				if (cir.style.display === 'flex') setTimeout(() => ci.focus(), 50);
 			});
+			co.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); });
 			wrapper.appendChild(co);
 			wrapper.appendChild(cir);
 		} else if (data.type === 'suggest') {
@@ -697,11 +777,11 @@
 				chip.style.pointerEvents = 'all';
 				chip.textContent = item;
 				chip.addEventListener('click', e => {
-					e.stopPropagation(); e.stopImmediatePropagation();
-					submitBubbleText(item);
+					e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+					submitBubbleText(item, wrapper);
 					wrapper.remove();
 				});
-				chip.addEventListener('mousedown', e => e.stopPropagation());
+				chip.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); });
 				chips.appendChild(chip);
 			});
 			wrapper.appendChild(chips);
@@ -712,11 +792,11 @@
 				b.style.pointerEvents = 'all';
 				b.textContent = item;
 				b.addEventListener('click', e => {
-					e.stopPropagation(); e.stopImmediatePropagation();
-					submitBubbleText(item);
+					e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+					submitBubbleText(item, wrapper);
 					wrapper.remove();
 				});
-				b.addEventListener('mousedown', e => e.stopPropagation());
+				b.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); });
 				wrapper.appendChild(b);
 			});
 		}

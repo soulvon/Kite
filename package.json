@@ -2,7 +2,7 @@
   "name": "kite",
   "displayName": "Kite",
   "description": "Kite 是面向 Windsurf / Devin 的 AI IDE 增强套件：界面增强、多实例分身、多账号号池、自动恢复与长任务自动化。",
-  "version": "8.7.4",
+  "version": "8.7.5",
   "publisher": "local",
   "repository": {
     "type": "git",
