@@ -6,7 +6,7 @@
 
 界面增强 · [AnyBridge](https://github.com/soulvon/AnyBridge) 模型路由 · 多实例分身 · 多账号号池 · 自动恢复 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-8.7.6-blue?style=flat-square)](https://github.com/soulvon/Kite/releases/latest) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-8.7.7-blue?style=flat-square)](https://github.com/soulvon/Kite/releases/latest) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 > 本项目由旧版 [windsurf-pool-releases](https://github.com/soulvon/windsurf-pool-releases) 迁移并重构而来。
 
@@ -132,6 +132,11 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
+
+### v8.7.7
+- **迁移 globalState 设置**：扩展名变更后 `globalState` 也按扩展 ID 隔离，导致自动切号设置（`as.*`）、`lastEmail`、切号日志、用量统计、配额历史等全部丢失。新增启动时自动从 `state.vscdb` 读取旧扩展 `local.windsurf-pool` 的 globalState 并写入新扩展。
+- **迁移 globalStorage 文件**：磁盘缓存（`usage-cache.json`）、日志文件等存储在 `globalStorage/<extensionId>/` 下，路径随扩展名变化。新增启动时自动从旧目录复制文件到新目录。
+- **修复自动切号设置重置**：用户无需重新配置自动切号策略、阈值、冷却时间等参数。
 
 ### v8.7.6
 - **兼容旧版 windsurf-pool 凭据**：扩展名从 `windsurf-pool` 改为 `kite` 后，旧版存储在 VS Code secrets 中的 apiKey 无法直接读取。新增启动时自动尝试从旧版扩展 `local.windsurf-pool` 的加密 secrets 中恢复凭据（Windows DPAPI 解密），并新增命令面板命令 **"Kite: 修复缺失凭据"** 供手动触发。

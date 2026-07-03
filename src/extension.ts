@@ -24,7 +24,7 @@ import { setExtensionPath } from './cascadeProbe';
 import { warmupSoundPlayer } from './soundPlayer';
 import { reloadWindsurfAcpConnections, scheduleAcpAgentRepair, scheduleAcpConnectionRecovery } from './acpRecovery';
 import { getIdeDisplayName, getIdeExeName } from './ideDetector';
-import { tryRecoverLegacyAccounts, resetLegacyRecoveryAttempt, getLegacyRecoveryLog } from './legacySecretMigration';
+import { tryRecoverLegacyAccounts, resetLegacyRecoveryAttempt, getLegacyRecoveryLog, tryMigrateLegacyGlobalState, tryMigrateLegacyStorageFiles } from './legacySecretMigration';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
@@ -35,6 +35,12 @@ let _context: vscode.ExtensionContext;
 export function activate(context: vscode.ExtensionContext) {
   _context = context;
   setExtensionPath(context.extensionPath);
+
+  // v8.7.6 兼容迁移：从旧扩展 local.windsurf-pool 恢复 globalState 和 globalStorage 文件
+  // 必须在任何组件读取 globalState 之前执行
+  try { tryMigrateLegacyStorageFiles(context); } catch (e) { console.warn('[migrate-storage] 失败:', e); }
+  try { tryMigrateLegacyGlobalState(context); } catch (e) { console.warn('[migrate-globalState] 失败:', e); }
+
   if (readEnhSettings().acpUnlock !== false) {
     ensureAcpLocalRegistryFallback();
   }

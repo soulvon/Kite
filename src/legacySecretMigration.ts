@@ -260,3 +260,147 @@ export function resetLegacyRecoveryAttempt(): void {
   _legacyRecoveryAttempted = false;
   _legacyRecoveryLog = [];
 }
+
+// ── globalState 迁移 ──────────────────────────────────────────
+
+let _globalStateMigrated = false;
+
+/**
+ * 从 state.vscdb 读取所有以指定前缀开头的 key-value 对。
+ * VS Code 将 extension globalState 存储在 state.vscdb 的 ItemTable 中，
+ * key 格式为 `globalState/<extensionId>/<key>` 或 `<extensionId>.<key>` 等。
+ */
+function readVscdbByPrefix(dbPath: string, keyPrefix: string): Map<string, any> {
+  const result = new Map<string, any>();
+  if (!fs.existsSync(dbPath)) return result;
+  const sqlitePath = path.join(vscode.env.appRoot, 'node_modules/@vscode/sqlite3');
+  try {
+    const sqlite = require(sqlitePath);
+    const db = new sqlite.Database(dbPath, sqlite.OPEN_READONLY);
+    try {
+      const rows = db.prepare('SELECT key, value FROM ItemTable WHERE key LIKE ?').all(`${keyPrefix}%`);
+      for (const row of rows) {
+        result.set(row.key, row.value);
+      }
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    log(`readVscdbByPrefix 失败: ${err}`);
+  }
+  return result;
+}
+
+/**
+ * 尝试从旧扩展迁移 globalState 数据。
+ * VS Code globalState 按扩展 ID 隔离，改扩展名后所有设置丢失。
+ * 这里直接从 state.vscdb 读取旧扩展的数据并写入新扩展的 globalState。
+ */
+export async function tryMigrateLegacyGlobalState(context: vscode.ExtensionContext): Promise<boolean> {
+  if (_globalStateMigrated) return false;
+  _globalStateMigrated = true;
+
+  // 检查是否已有数据（如果新扩展已有 lastEmail 说明之前已迁移过）
+  const hasExisting = context.globalState.get<string>('lastEmail');
+  if (hasExisting) {
+    log('globalState 已有 lastEmail，跳过迁移');
+    return false;
+  }
+
+  const dbPath = getStateDbPath();
+  // VS Code globalState key 格式: globalState/<extensionId>/<key>
+  const prefix = `globalState/${LEGACY_EXTENSION_ID}/`;
+  const entries = readVscdbByPrefix(dbPath, prefix);
+
+  if (entries.size === 0) {
+    log(`未找到旧扩展 globalState 数据 (prefix=${prefix})`);
+    // 也尝试不带 globalState/ 前缀的格式
+    const altPrefix = `${LEGACY_EXTENSION_ID}.`;
+    const altEntries = readVscdbByPrefix(dbPath, altPrefix);
+    if (altEntries.size === 0) {
+      log(`也未找到 altPrefix=${altPrefix} 的数据`);
+      return false;
+    }
+    // 使用 alt 格式
+    for (const [fullKey, value] of altEntries) {
+      const shortKey = fullKey.substring(altPrefix.length);
+      try {
+        const parsed = JSON.parse(value);
+        await context.globalState.update(shortKey, parsed);
+        log(`迁移 globalState: ${shortKey}`);
+      } catch {
+        await context.globalState.update(shortKey, value);
+        log(`迁移 globalState (raw): ${shortKey}`);
+      }
+    }
+    log(`globalState 迁移完成（alt 格式），共 ${altEntries.size} 项`);
+    return true;
+  }
+
+  let migrated = 0;
+  for (const [fullKey, value] of entries) {
+    const shortKey = fullKey.substring(prefix.length);
+    try {
+      const parsed = JSON.parse(value);
+      await context.globalState.update(shortKey, parsed);
+    } catch {
+      await context.globalState.update(shortKey, value);
+    }
+    migrated++;
+    log(`迁移 globalState: ${shortKey}`);
+  }
+  log(`globalState 迁移完成，共 ${migrated} 项`);
+  return true;
+}
+
+// ── globalStorageUri 文件迁移 ──────────────────────────────────
+
+let _storageFilesMigrated = false;
+
+/**
+ * 尝试从旧扩展的 globalStorage 目录迁移文件到新扩展。
+ * globalStorageUri 路径为 .../User/globalStorage/<extensionId>/
+ * 改扩展名后路径变化，磁盘缓存和日志文件找不到。
+ */
+export function tryMigrateLegacyStorageFiles(context: vscode.ExtensionContext): boolean {
+  if (_storageFilesMigrated) return false;
+  _storageFilesMigrated = true;
+
+  const newDir = context.globalStorageUri.fsPath;
+  // 旧路径：把 newDir 中的 local.kite 替换为 local.windsurf-pool
+  const oldDir = newDir.replace('local.kite', LEGACY_EXTENSION_ID);
+
+  if (!fs.existsSync(oldDir)) {
+    log(`旧 globalStorage 目录不存在: ${oldDir}`);
+    return false;
+  }
+
+  if (!fs.existsSync(newDir)) {
+    fs.mkdirSync(newDir, { recursive: true });
+  }
+
+  let copied = 0;
+  try {
+    const files = fs.readdirSync(oldDir);
+    for (const file of files) {
+      const src = path.join(oldDir, file);
+      const dst = path.join(newDir, file);
+      if (fs.existsSync(dst)) {
+        log(`跳过已存在的文件: ${file}`);
+        continue;
+      }
+      const stat = fs.statSync(src);
+      if (stat.isFile()) {
+        fs.copyFileSync(src, dst);
+        copied++;
+        log(`迁移文件: ${file}`);
+      }
+    }
+  } catch (err) {
+    log(`迁移 globalStorage 文件失败: ${err}`);
+    return false;
+  }
+
+  log(`globalStorage 文件迁移完成，共复制 ${copied} 个文件`);
+  return true;
+}
