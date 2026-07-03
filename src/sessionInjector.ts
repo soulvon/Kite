@@ -358,6 +358,17 @@ export async function injectSession(
   const seqNo = ++_switchSeqNo;
   const t0 = Date.now();
   _lastInjectFailure = null;
+
+  if (!account.apiKey) {
+    const reason = '缺少 apiKey，请使用命令面板 "Kite: 修复缺失凭据" 或重新导入账号';
+    console.warn(`[injectSession] ✗ ${reason}`);
+    setInjectFailure(account.email, reason, 'error');
+    if (!silent) {
+      vscode.window.showErrorMessage(reason);
+    }
+    return false;
+  }
+
   const caller = new Error().stack?.split('\n').slice(2, 5).map(l => l.trim()).join(' <- ') || 'unknown';
   console.log(`[injectSession][#${seqNo}] ▶ 入口: email=${account.email}, silent=${silent}, auto=${isAuto}, caller=${caller}`);
 

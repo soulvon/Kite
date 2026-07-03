@@ -4,6 +4,7 @@ import * as path from 'path';
 import { StoredAccount } from './types';
 import { getPoolRoot, ensureDir } from './utils';
 import { CACHE_TTL } from './config';
+import { tryRecoverLegacyAccounts, tryReadLegacyAccountsFile } from './legacySecretMigration';
 
 const ACCOUNTS_KEY = 'windsurfPool.accounts.v1';
 const ACCOUNTS_FILE = 'accounts.json';
@@ -252,9 +253,22 @@ export async function readAccounts(context: vscode.ExtensionContext): Promise<St
   const fileAccounts = readAccountsFileRaw();
   if (fileAccounts.length > 0) {
     const hydrated = await hydrateAccounts(context, fileAccounts);
-    if (hydrated.hadInlineSecrets) {
-      await saveAccounts(context, hydrated.accounts);
+    // 兼容：从旧扩展 windsurf-pool 恢复凭据
+    const recovered = await tryRecoverLegacyAccounts(context, hydrated.accounts);
+    const finalAccounts = recovered.accounts;
+    if (hydrated.hadInlineSecrets || recovered.recovered) {
+      await saveAccounts(context, finalAccounts);
     }
+    warnMissingCredentials(finalAccounts);
+    return finalAccounts;
+  }
+
+  // 回退：从旧扩展 accounts.json 文件读取（兼容路径）
+  const legacyFileAccounts = tryReadLegacyAccountsFile();
+  if (legacyFileAccounts.length > 0) {
+    const hydrated = await hydrateAccounts(context, legacyFileAccounts);
+    await saveAccounts(context, hydrated.accounts);
+    warnMissingCredentials(hydrated.accounts);
     return hydrated.accounts;
   }
 
@@ -269,10 +283,24 @@ export async function readAccounts(context: vscode.ExtensionContext): Promise<St
       await saveAccounts(context, accounts);
     }
     const hydrated = await hydrateAccounts(context, accounts);
-    return hydrated.accounts;
+    const recovered = await tryRecoverLegacyAccounts(context, hydrated.accounts);
+    warnMissingCredentials(recovered.accounts);
+    return recovered.accounts;
   } catch {
     return [];
   }
+}
+
+let _missingCredentialsWarned = false;
+
+function warnMissingCredentials(accounts: StoredAccount[]): void {
+  const empty = accounts.filter(a => !a.apiKey);
+  if (empty.length === 0 || _missingCredentialsWarned) return;
+  _missingCredentialsWarned = true;
+  console.warn(
+    `[accountStore] ${empty.length} 个账号缺少 apiKey，刷新/切号会失败。` +
+    `请尝试命令面板 "Kite: 修复缺失凭据" 或重新导入账号。`
+  );
 }
 
 /**

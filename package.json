@@ -2,7 +2,7 @@
   "name": "kite",
   "displayName": "Kite",
   "description": "Kite 是面向 Windsurf / Devin 的 AI IDE 增强套件：界面增强、多实例分身、多账号号池、自动恢复与长任务自动化。",
-  "version": "8.7.5",
+  "version": "8.7.6",
   "publisher": "local",
   "repository": {
     "type": "git",
@@ -144,6 +144,12 @@
         "title": "恢复 Cascade 输入",
         "category": "Kite",
         "icon": "$(debug-restart)"
+      },
+      {
+        "command": "windsurfPool.repairMissingCredentials",
+        "title": "修复缺失凭据",
+        "category": "Kite",
+        "icon": "$(key)"
       }
     ],
     "keybindings": [

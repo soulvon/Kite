@@ -24,6 +24,7 @@ import { setExtensionPath } from './cascadeProbe';
 import { warmupSoundPlayer } from './soundPlayer';
 import { reloadWindsurfAcpConnections, scheduleAcpAgentRepair, scheduleAcpConnectionRecovery } from './acpRecovery';
 import { getIdeDisplayName, getIdeExeName } from './ideDetector';
+import { tryRecoverLegacyAccounts, resetLegacyRecoveryAttempt, getLegacyRecoveryLog } from './legacySecretMigration';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
@@ -150,6 +151,46 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
   context.subscriptions.push(recoverCascadeInputCmd);
+
+  const repairMissingCredentialsCmd = vscode.commands.registerCommand('windsurfPool.repairMissingCredentials', async () => {
+    resetLegacyRecoveryAttempt();
+    const accounts = await accountStore.readAccounts(context);
+    const empty = accounts.filter(a => !a.apiKey);
+    if (empty.length === 0) {
+      vscode.window.showInformationMessage('所有账号凭据已完整，无需修复');
+      return;
+    }
+    vscode.window.showInformationMessage(
+      `正在尝试从旧版扩展恢复 ${empty.length} 个账号的凭据...`
+    );
+    const { accounts: recovered, recovered: anyRecovered } = await tryRecoverLegacyAccounts(context, accounts);
+    const stillEmpty = recovered.filter(a => !a.apiKey);
+    if (anyRecovered) {
+      // 触发侧栏刷新，显示已恢复的账号
+      sidebarProvider?.refresh();
+      if (stillEmpty.length === 0) {
+        vscode.window.showInformationMessage('凭据修复成功！所有账号已恢复。');
+      } else {
+        vscode.window.showWarningMessage(
+          `已恢复 ${empty.length - stillEmpty.length} 个账号，仍有 ${stillEmpty.length} 个账号无法恢复，请重新导入。`
+        );
+      }
+    } else {
+      const log = getLegacyRecoveryLog().join('\n');
+      vscode.window.showWarningMessage(
+        '未能从旧版扩展自动恢复凭据。建议：从旧版扩展导出账号，或在 Kite 中重新导入。',
+        '查看日志'
+      ).then(action => {
+        if (action === '查看日志') {
+          const panel = vscode.window.createOutputChannel('Kite 凭据修复');
+          panel.clear();
+          panel.append(log || '无详细日志');
+          panel.show();
+        }
+      });
+    }
+  });
+  context.subscriptions.push(repairMissingCredentialsCmd);
 
   const refreshSidebarCmd = vscode.commands.registerCommand('windsurfPool.refreshSidebar', () => {
     sidebarProvider.refresh();

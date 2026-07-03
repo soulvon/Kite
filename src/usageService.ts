@@ -310,6 +310,9 @@ export async function testModelAccess(
   probeMessage?: string,
   lsInfo?: LsInfo
 ): Promise<{ ok: boolean; reason?: string; status?: number; raw?: string }> {
+  if (!account.apiKey) {
+    return { ok: false, reason: '缺少 apiKey，请使用命令面板 "Kite: 修复缺失凭据" 或重新导入账号' };
+  }
   const baseUrl = (account.apiServerUrl || 'https://server.codeium.com').replace(/\/$/, '');
   const headers = { 'Connect-Protocol-Version': '1', 'Accept': 'application/json' };
   const meta = {
@@ -474,6 +477,9 @@ export interface FetchUsageOptions {
 }
 
 export async function fetchUsage(account: StoredAccount, options: FetchUsageOptions = {}): Promise<{ snapshot: UsageSnapshot | null; error?: string }> {
+  if (!account.apiKey) {
+    return { snapshot: null, error: '缺少 apiKey，请使用命令面板 "Kite: 修复缺失凭据" 或重新导入账号' };
+  }
   try {
     const baseUrl = (account.apiServerUrl || 'https://server.codeium.com').replace(/\/$/, '');
     const res = await post(
