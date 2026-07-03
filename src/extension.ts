@@ -37,7 +37,7 @@ export function activate(context: vscode.ExtensionContext) {
   setExtensionPath(context.extensionPath);
 
   // v8.7.6 兼容迁移：从旧扩展 local.windsurf-pool 恢复 globalState 和 globalStorage 文件
-  // 必须在任何组件读取 globalState 之前执行
+  // 必须在任何组件读取 globalState 之前执行（同步完成）
   try { tryMigrateLegacyStorageFiles(context); } catch (e) { console.warn('[migrate-storage] 失败:', e); }
   try { tryMigrateLegacyGlobalState(context); } catch (e) { console.warn('[migrate-globalState] 失败:', e); }
 

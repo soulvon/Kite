@@ -267,8 +267,6 @@ let _globalStateMigrated = false;
 
 /**
  * 从 state.vscdb 读取所有以指定前缀开头的 key-value 对。
- * VS Code 将 extension globalState 存储在 state.vscdb 的 ItemTable 中，
- * key 格式为 `globalState/<extensionId>/<key>` 或 `<extensionId>.<key>` 等。
  */
 function readVscdbByPrefix(dbPath: string, keyPrefix: string): Map<string, any> {
   const result = new Map<string, any>();
@@ -292,11 +290,40 @@ function readVscdbByPrefix(dbPath: string, keyPrefix: string): Map<string, any> 
 }
 
 /**
+ * 从 state.vscdb 读取单个 key 的值。
+ */
+function readVscdbSingleKey(dbPath: string, key: string): string | null {
+  if (!fs.existsSync(dbPath)) return null;
+  const sqlitePath = path.join(vscode.env.appRoot, 'node_modules/@vscode/sqlite3');
+  try {
+    const sqlite = require(sqlitePath);
+    const db = new sqlite.Database(dbPath, sqlite.OPEN_READONLY);
+    try {
+      const row = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get(key);
+      return row ? row.value : null;
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    log(`readVscdbSingleKey 失败: ${err}`);
+    return null;
+  }
+}
+
+/**
  * 尝试从旧扩展迁移 globalState 数据。
  * VS Code globalState 按扩展 ID 隔离，改扩展名后所有设置丢失。
- * 这里直接从 state.vscdb 读取旧扩展的数据并写入新扩展的 globalState。
+ *
+ * 同步函数：globalState.update() 的 in-memory 缓存同步更新，
+ * Thenable 仅用于磁盘持久化。不 await 以确保 activate() 中同步完成。
+ *
+ * 搜索策略（按优先级）：
+ * 1. globalState/<extensionId>/<key> — 前缀格式
+ * 2. <extensionId>/<key> — 简化前缀
+ * 3. globalState.<extensionId> — 单个 JSON blob
+ * 4. 任意包含 <extensionId> 的 key — 兜底搜索
  */
-export async function tryMigrateLegacyGlobalState(context: vscode.ExtensionContext): Promise<boolean> {
+export function tryMigrateLegacyGlobalState(context: vscode.ExtensionContext): boolean {
   if (_globalStateMigrated) return false;
   _globalStateMigrated = true;
 
@@ -308,48 +335,120 @@ export async function tryMigrateLegacyGlobalState(context: vscode.ExtensionConte
   }
 
   const dbPath = getStateDbPath();
-  // VS Code globalState key 格式: globalState/<extensionId>/<key>
-  const prefix = `globalState/${LEGACY_EXTENSION_ID}/`;
-  const entries = readVscdbByPrefix(dbPath, prefix);
 
+  // 策略 1: globalState/<extensionId>/<key>
+  const prefix1 = `globalState/${LEGACY_EXTENSION_ID}/`;
+  let entries = readVscdbByPrefix(dbPath, prefix1);
+  let prefixUsed = prefix1;
+
+  // 策略 2: <extensionId>/<key>
   if (entries.size === 0) {
-    log(`未找到旧扩展 globalState 数据 (prefix=${prefix})`);
-    // 也尝试不带 globalState/ 前缀的格式
-    const altPrefix = `${LEGACY_EXTENSION_ID}.`;
-    const altEntries = readVscdbByPrefix(dbPath, altPrefix);
-    if (altEntries.size === 0) {
-      log(`也未找到 altPrefix=${altPrefix} 的数据`);
-      return false;
-    }
-    // 使用 alt 格式
-    for (const [fullKey, value] of altEntries) {
-      const shortKey = fullKey.substring(altPrefix.length);
-      try {
-        const parsed = JSON.parse(value);
-        await context.globalState.update(shortKey, parsed);
-        log(`迁移 globalState: ${shortKey}`);
-      } catch {
-        await context.globalState.update(shortKey, value);
-        log(`迁移 globalState (raw): ${shortKey}`);
-      }
-    }
-    log(`globalState 迁移完成（alt 格式），共 ${altEntries.size} 项`);
-    return true;
+    const prefix2 = `${LEGACY_EXTENSION_ID}/`;
+    entries = readVscdbByPrefix(dbPath, prefix2);
+    prefixUsed = prefix2;
   }
 
+  // 策略 3: globalState.<extensionId> 单个 JSON blob
+  if (entries.size === 0) {
+    const blobKey = `globalState.${LEGACY_EXTENSION_ID}`;
+    const blob = readVscdbSingleKey(dbPath, blobKey);
+    if (blob) {
+      log(`找到 globalState JSON blob (key=${blobKey})`);
+      try {
+        const obj = JSON.parse(blob);
+        if (obj && typeof obj === 'object') {
+          let migrated = 0;
+          for (const [key, value] of Object.entries(obj)) {
+            try {
+              context.globalState.update(key, value);
+              migrated++;
+              log(`迁移 globalState (blob): ${key}`);
+            } catch (err) {
+              log(`迁移 globalState (blob) 失败: key=${key}, err=${err}`);
+            }
+          }
+          if (migrated > 0) {
+            log(`globalState 迁移完成（blob 格式），共 ${migrated} 项`);
+            return true;
+          }
+        }
+      } catch (err) {
+        log(`解析 globalState blob 失败: ${err}`);
+      }
+    }
+  }
+
+  // 策略 4: 任意包含 <extensionId> 的 key（兜底）
+  if (entries.size === 0) {
+    const broadPrefix = `%${LEGACY_EXTENSION_ID}%`;
+    // 使用 SQL LIKE 的中间匹配
+    if (!fs.existsSync(dbPath)) {
+      log('state.vscdb 不存在，globalState 迁移终止');
+      return false;
+    }
+    const sqlitePath = path.join(vscode.env.appRoot, 'node_modules/@vscode/sqlite3');
+    try {
+      const sqlite = require(sqlitePath);
+      const db = new sqlite.Database(dbPath, sqlite.OPEN_READONLY);
+      try {
+        const rows = db.prepare('SELECT key, value FROM ItemTable WHERE key LIKE ?').all(broadPrefix);
+        for (const row of rows) {
+          entries.set(row.key, row.value);
+        }
+        log(`策略4 兜底搜索: 找到 ${entries.size} 个匹配 key`);
+      } finally {
+        db.close();
+      }
+    } catch (err) {
+      log(`策略4 兜底搜索失败: ${err}`);
+    }
+
+    if (entries.size === 0) {
+      log('所有策略均未找到旧扩展 globalState 数据');
+      return false;
+    }
+
+    // 对于兜底搜索结果，提取 key 中扩展 ID 后面的部分作为 shortKey
+    let migrated = 0;
+    for (const [fullKey, value] of entries) {
+      // 尝试从 key 中提取扩展 ID 后的部分
+      const idx = fullKey.indexOf(LEGACY_EXTENSION_ID);
+      if (idx < 0) continue;
+      const afterExt = fullKey.substring(idx + LEGACY_EXTENSION_ID.length);
+      // 去掉开头的 / 或 .
+      const shortKey = afterExt.replace(/^[/\.]/, '');
+      if (!shortKey || shortKey.length === 0) continue;
+
+      try {
+        const parsed = JSON.parse(value);
+        context.globalState.update(shortKey, parsed);
+      } catch {
+        context.globalState.update(shortKey, value);
+      }
+      migrated++;
+      log(`迁移 globalState (broad): ${fullKey} → ${shortKey}`);
+    }
+    if (migrated > 0) {
+      log(`globalState 迁移完成（兜底搜索），共 ${migrated} 项`);
+      return true;
+    }
+    return false;
+  }
+
+  // 正常前缀格式处理
   let migrated = 0;
   for (const [fullKey, value] of entries) {
-    const shortKey = fullKey.substring(prefix.length);
+    const shortKey = fullKey.substring(prefixUsed.length);
     try {
       const parsed = JSON.parse(value);
-      await context.globalState.update(shortKey, parsed);
+      context.globalState.update(shortKey, parsed);
     } catch {
-      await context.globalState.update(shortKey, value);
+      context.globalState.update(shortKey, value);
     }
     migrated++;
     log(`迁移 globalState: ${shortKey}`);
   }
-  log(`globalState 迁移完成，共 ${migrated} 项`);
+  log(`globalState 迁移完成（prefix=${prefixUsed}），共 ${migrated} 项`);
   return true;
 }
 
@@ -370,6 +469,12 @@ export function tryMigrateLegacyStorageFiles(context: vscode.ExtensionContext): 
   // 旧路径：把 newDir 中的 local.kite 替换为 local.windsurf-pool
   const oldDir = newDir.replace('local.kite', LEGACY_EXTENSION_ID);
 
+  // 安全检查：如果替换后路径没变，说明路径中不含 local.kite，无法定位旧目录
+  if (oldDir === newDir) {
+    log(`globalStorageUri 路径中未找到 local.kite，无法推导旧路径: ${newDir}`);
+    return false;
+  }
+
   if (!fs.existsSync(oldDir)) {
     log(`旧 globalStorage 目录不存在: ${oldDir}`);
     return false;
@@ -380,22 +485,28 @@ export function tryMigrateLegacyStorageFiles(context: vscode.ExtensionContext): 
   }
 
   let copied = 0;
-  try {
-    const files = fs.readdirSync(oldDir);
-    for (const file of files) {
-      const src = path.join(oldDir, file);
-      const dst = path.join(newDir, file);
-      if (fs.existsSync(dst)) {
-        log(`跳过已存在的文件: ${file}`);
-        continue;
-      }
+  function copyRecursive(srcDir: string, dstDir: string): void {
+    if (!fs.existsSync(dstDir)) fs.mkdirSync(dstDir, { recursive: true });
+    const items = fs.readdirSync(srcDir);
+    for (const item of items) {
+      const src = path.join(srcDir, item);
+      const dst = path.join(dstDir, item);
       const stat = fs.statSync(src);
-      if (stat.isFile()) {
+      if (stat.isDirectory()) {
+        copyRecursive(src, dst);
+      } else if (stat.isFile()) {
+        if (fs.existsSync(dst)) {
+          log(`跳过已存在的文件: ${path.relative(oldDir, src)}`);
+          continue;
+        }
         fs.copyFileSync(src, dst);
         copied++;
-        log(`迁移文件: ${file}`);
+        log(`迁移文件: ${path.relative(oldDir, src)}`);
       }
     }
+  }
+  try {
+    copyRecursive(oldDir, newDir);
   } catch (err) {
     log(`迁移 globalStorage 文件失败: ${err}`);
     return false;
