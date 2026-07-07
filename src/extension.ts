@@ -2,20 +2,20 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { SidebarProvider } from './sidebarProvider';
-import { applyPatch, applyI18nOnly, ensureAcpLocalRegistryFallback, getLastInjectFailure } from './sessionInjector';
+import { applyPatch, applyI18nOnly, ensureAcpLocalRegistryFallback, getLastInjectFailure, restoreWindsurfExtensionJs } from './sessionInjector';
 import * as accountStore from './accountStore';
 import { readBindMark, getCurrentUserDataDir, getCurrentInstanceName, getCurrentInstanceId, migrateAllInstancesToAuto } from './instanceManager';
 import { AutoSwitcher } from './autoSwitcher';
 import { initDiskCache } from './usageDiskCache';
 import { StatusBarManager } from './statusBar';
 import { checkForUpdates, autoCheckOnStartup } from './updater';
-import { ensureEnhancement, restoreWorkbench } from './enhancementInjector';
+import { ensureEnhancement, restoreWorkbench, getInjectionStatus } from './enhancementInjector';
 import { ensureBubbleRules, injectBubbleRules, removeBubbleRules, hasBubbleRules, injectScriptDisciplineRules, removeScriptDisciplineRules, removeAllEnhancementRules } from './rulesInjector';
 import { fixChecksums, restoreProductJson, getChecksumStatus } from './checksumFixer';
 import { startBridgeServer, stopBridgeServer } from './bridgeServer';
 import { initAccountLock, acquireLock, releaseLock, startHeartbeat, stopHeartbeat } from './accountLock';
 import { mergeEnhSettings, readEnhSettings, resetContinueModeOnUpgrade } from './enhSettingsStore';
-import { isWindows, isMac, isWritable } from './utils';
+import { isWindows, isMac, isWritable, safeRegisterCommand } from './utils';
 import { beginElevatedBatch, flushElevatedBatch, cancelElevatedBatch, ElevationError } from './elevatedFs';
 import { UsageTracker } from './usageTracker';
 import { openLogPanel } from './logPanelProvider';
@@ -23,8 +23,8 @@ import { openHealthCheckPanel } from './healthCheckPanel';
 import { setExtensionPath } from './cascadeProbe';
 import { warmupSoundPlayer } from './soundPlayer';
 import { reloadWindsurfAcpConnections, scheduleAcpAgentRepair, scheduleAcpConnectionRecovery } from './acpRecovery';
-import { getIdeDisplayName, getIdeExeName } from './ideDetector';
-import { tryRecoverLegacyAccounts, resetLegacyRecoveryAttempt, getLegacyRecoveryLog, tryMigrateLegacyGlobalState, tryMigrateLegacyStorageFiles } from './legacySecretMigration';
+import { getIdeDisplayName, getIdeExeName, detectIdeFlavor } from './ideDetector';
+import { tryRecoverLegacyAccounts, resetLegacyRecoveryAttempt, getLegacyRecoveryLog } from './legacySecretMigration';
 
 let sidebarProvider: SidebarProvider;
 let autoSwitcher: AutoSwitcher;
@@ -32,38 +32,29 @@ let statusBar: StatusBarManager;
 let usageTracker: UsageTracker;
 let _context: vscode.ExtensionContext;
 
+function warnIfRenamedKiteExtensionPresent(context: vscode.ExtensionContext): void {
+  // The stable extension id stays local.windsurf-pool; local.kite was a short-lived
+  // rename that creates a second extension namespace and can collide with commands.
+  if (context.extension.id.toLowerCase() === 'local.kite') return;
+  const renamed = vscode.extensions.getExtension('local.kite');
+  if (!renamed) return;
+  const message = '检测到临时改名版本 local.kite 仍与当前 Kite 同时安装，会导致命令冲突和扩展崩溃。请卸载 local.kite，只保留 local.windsurf-pool（显示名仍为 Kite）。';
+  const openExt = '打开扩展面板';
+  const ignore = '忽略';
+  vscode.window.showErrorMessage(message, openExt, ignore).then(choice => {
+    if (choice === openExt) {
+      vscode.commands.executeCommand('workbench.extensions.action.showExtensionsWithIds', ['local.kite']);
+    }
+  });
+}
+
 export function activate(context: vscode.ExtensionContext) {
   _context = context;
   setExtensionPath(context.extensionPath);
 
-  // v8.7.6 兼容迁移：从旧扩展 local.windsurf-pool 恢复 globalState 和 globalStorage 文件
-  // 必须在任何组件读取 globalState 之前执行（同步完成）
-  try { tryMigrateLegacyStorageFiles(context); } catch (e) { console.warn('[migrate-storage] 失败:', e); }
-  try { tryMigrateLegacyGlobalState(context); } catch (e) { console.warn('[migrate-globalState] 失败:', e); }
-
-  if (readEnhSettings().acpUnlock !== false) {
-    ensureAcpLocalRegistryFallback();
-  }
-  scheduleAcpAgentRepair('extension-activate', 10_000);
-  scheduleAcpConnectionRecovery('extension-activate', 12_000);
-
-  // v6.0.3 一次性迁移：将所有实例统一改为智能选号（旧策略余额追踪不准）
-  try { migrateAllInstancesToAuto(); } catch (e) { console.warn('[migrate] 失败:', e); }
-
-  // 多实例：检测绑定标记并自动切号（后台异步，不阻塞启动）
-  // 注意：不能 await — autoSwitchByBindMark 内部的 injectSession 在 silent 模式下
-  // 会等待 PATCHED_CMD 最多 30s，会阻塞所有命令注册和 UI 显示。
-  // AutoSwitcher._switching 互斥能避免与定时器切号冲突。
-  autoSwitchByBindMark(context);
-
-  // 批量模式：将启动阶段所有安装目录写操作合并，需要提权时仅弹一次 UAC
-  beginElevatedBatch();
-
-  // 预热声音播放器（Windows 上预启动 PowerShell 进程，首次播放零延迟）
-  warmupSoundPlayer();
-
-  // 静默应用汉化（不影响扩展启动）
-  applyI18nOnly();
+  // Detect the short-lived renamed extension id. Keeping the stable old id avoids
+  // globalState/globalStorage/secrets migration during Devin startup.
+  try { warnIfRenamedKiteExtensionPresent(context); } catch (e) { console.warn('[renamed-extension-check] 失败:', e); }
 
   // 初始化跨窗口共享的额度文件缓存（必须在 AutoSwitcher 创建前）
   initDiskCache(context);
@@ -75,7 +66,6 @@ export function activate(context: vscode.ExtensionContext) {
   // 创建后端自动切号引擎
   autoSwitcher = new AutoSwitcher(context, usageTracker);
   context.subscriptions.push(autoSwitcher);
-  autoSwitcher.start();
 
   // 底部状态栏（独立于侧栏面板，启动即显示）
   statusBar = new StatusBarManager(context, autoSwitcher);
@@ -87,12 +77,6 @@ export function activate(context: vscode.ExtensionContext) {
   const curEmail = context.globalState.get<string>('lastEmail');
   if (curEmail) acquireLock(curEmail);
   startHeartbeat();
-
-  // 自动检查更新（延迟 30 秒）
-  autoCheckOnStartup();
-
-  // macOS/Linux: 检测安装目录是否可写，不可写则提示一次
-  checkInstallPermission(context);
 
   // 创建侧栏提供器
   sidebarProvider = new SidebarProvider(context.extensionUri, context, autoSwitcher, usageTracker);
@@ -109,27 +93,27 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(sidebarView);
 
   // 注册命令
-  const openSidebarCmd = vscode.commands.registerCommand('windsurfPool.openSidebar', () => {
+  const openSidebarCmd = safeRegisterCommand('windsurfPool.openSidebar', () => {
     vscode.commands.executeCommand('workbench.view.extension.windsurfPool');
   });
   context.subscriptions.push(openSidebarCmd);
 
-  const applyPatchCmd = vscode.commands.registerCommand('windsurfPool.applyPatch', async () => {
+  const applyPatchCmd = safeRegisterCommand('windsurfPool.applyPatch', async () => {
     await applyPatch(context);
   });
   context.subscriptions.push(applyPatchCmd);
 
-  const showLogCmd = vscode.commands.registerCommand('windsurfPool.showLog', () => {
+  const showLogCmd = safeRegisterCommand('windsurfPool.showLog', () => {
     sidebarProvider.showLog();
   });
   context.subscriptions.push(showLogCmd);
 
-  const openLogFileCmd = vscode.commands.registerCommand('windsurfPool.openLogFile', () => {
+  const openLogFileCmd = safeRegisterCommand('windsurfPool.openLogFile', () => {
     sidebarProvider.openLogFile();
   });
   context.subscriptions.push(openLogFileCmd);
 
-  const openLogPanelCmd = vscode.commands.registerCommand('windsurfPool.openLogPanel', (tab?: string) => {
+  const openLogPanelCmd = safeRegisterCommand('windsurfPool.openLogPanel', (tab?: string) => {
     // 确保 bridge info 已广播，否则 syncLogs 命令无法送达 windsurf-better.js
     try { sidebarProvider?.refreshBridgeInfo?.(); } catch {}
     openLogPanel(context, usageTracker, context.extensionUri, tab, autoSwitcher);
@@ -137,17 +121,17 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(openLogPanelCmd);
 
   // 内部命令：统计面板检测完成后通知侧边栏更新异常徽章
-  const anomalyCountUpdateCmd = vscode.commands.registerCommand('windsurfPool._anomalyCountUpdate', (count: number) => {
+  const anomalyCountUpdateCmd = safeRegisterCommand('windsurfPool._anomalyCountUpdate', (count: number) => {
     sidebarProvider?.updateAnomalyCount?.(count);
   });
   context.subscriptions.push(anomalyCountUpdateCmd);
 
-  const openHealthCheckCmd = vscode.commands.registerCommand('windsurfPool.openHealthCheck', () => {
+  const openHealthCheckCmd = safeRegisterCommand('windsurfPool.openHealthCheck', () => {
     openHealthCheckPanel(context, context.extensionUri, usageTracker);
   });
   context.subscriptions.push(openHealthCheckCmd);
 
-  const recoverCascadeInputCmd = vscode.commands.registerCommand('windsurfPool.recoverCascadeInput', async () => {
+  const recoverCascadeInputCmd = safeRegisterCommand('windsurfPool.recoverCascadeInput', async () => {
     const ok = await reloadWindsurfAcpConnections('manual-command');
     if (ok) {
       vscode.window.showInformationMessage('已刷新 Cascade 连接');
@@ -158,7 +142,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(recoverCascadeInputCmd);
 
-  const repairMissingCredentialsCmd = vscode.commands.registerCommand('windsurfPool.repairMissingCredentials', async () => {
+  const repairMissingCredentialsCmd = safeRegisterCommand('windsurfPool.repairMissingCredentials', async () => {
     resetLegacyRecoveryAttempt();
     const accounts = await accountStore.readAccounts(context);
     const empty = accounts.filter(a => !a.apiKey);
@@ -198,17 +182,17 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(repairMissingCredentialsCmd);
 
-  const refreshSidebarCmd = vscode.commands.registerCommand('windsurfPool.refreshSidebar', () => {
+  const refreshSidebarCmd = safeRegisterCommand('windsurfPool.refreshSidebar', () => {
     sidebarProvider.refresh();
   });
   context.subscriptions.push(refreshSidebarCmd);
 
-  const addAccountCmd = vscode.commands.registerCommand('windsurfPool.addAccount', () => {
+  const addAccountCmd = safeRegisterCommand('windsurfPool.addAccount', () => {
     vscode.commands.executeCommand('workbench.view.extension.windsurfPool');
   });
   context.subscriptions.push(addAccountCmd);
 
-  const switchAccountCmd = vscode.commands.registerCommand('windsurfPool.switchAccount', async () => {
+  const switchAccountCmd = safeRegisterCommand('windsurfPool.switchAccount', async () => {
     const accounts = await accountStore.readAccounts(context);
     if (accounts.length === 0) {
       vscode.window.showInformationMessage('暂无账号，请先登录');
@@ -245,7 +229,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(switchAccountCmd);
 
-  const switchNextCmd = vscode.commands.registerCommand('windsurfPool.switchNextAccount', async () => {
+  const switchNextCmd = safeRegisterCommand('windsurfPool.switchNextAccount', async () => {
     const accounts = await accountStore.readAccounts(context);
     if (accounts.length < 2) {
       vscode.window.showInformationMessage('账号数量不足，无法切换');
@@ -273,7 +257,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(switchNextCmd);
 
-  const removeAccountCmd = vscode.commands.registerCommand('windsurfPool.removeAccount', async () => {
+  const removeAccountCmd = safeRegisterCommand('windsurfPool.removeAccount', async () => {
     const accounts = await accountStore.readAccounts(context);
     if (accounts.length === 0) {
       vscode.window.showInformationMessage('暂无账号');
@@ -307,7 +291,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(removeAccountCmd);
 
-  const showStatusCmd = vscode.commands.registerCommand('windsurfPool.showStatus', async () => {
+  const showStatusCmd = safeRegisterCommand('windsurfPool.showStatus', async () => {
     const accounts = await accountStore.readAccounts(context);
     const currentEmail = context.globalState.get<string>('lastEmail');
 
@@ -324,92 +308,16 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(showStatusCmd);
 
-  const checkUpdatesCmd = vscode.commands.registerCommand('windsurfPool.checkForUpdates', async () => {
+  const checkUpdatesCmd = safeRegisterCommand('windsurfPool.checkForUpdates', async () => {
     await checkForUpdates(false);
   });
   context.subscriptions.push(checkUpdatesCmd);
 
-  // [Bridge] 启动跨 origin 桥（HTTP localhost）—— 仅当增强已启用时才启动
-  // 多实例隔离：每个扩展宿主进程起独立 bridge，端口/token 由 sidebar webview iframe
-  // 通过 window.top.postMessage 告知同进程 workbench renderer，天然按进程隔离。
-  const _enhEnabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
-  if (_enhEnabled) {
-    // 多实例隔离：每个扩展宿主起自己的 bridge（OS 分配端口 + 随机 token）。
-    // 端口/token 不再写入 enh-settings.json，改由 sidebar webview 的 HTML 内联
-    // 后通过 window.top.postMessage 告知同进程的 workbench renderer。
-    startBridgeServer().then(info => {
-      console.log(`[kite] bridge ready at 127.0.0.1:${info.port}`);
-      try { sidebarProvider?.refreshBridgeInfo?.(); } catch {}
-    }).catch(err => {
-      console.warn('[kite] bridge server failed to start:', err);
-    });
-  }
-
-  // [v7.7.11+ 升级重置] 每次版本升级都强制将 continueMode 重置为 'simple'（除长任务运行中和已禁用）
-  // 必须在 ensureEnhancement() 之前执行，确保注入到 workbench.html 的设置已是重置后状态
-  // 同版本启动不重复触发，跨版本升级时强制重置
-  try {
-    const currentVersion: string = (context.extension?.packageJSON?.version as string) || '0.0.0';
-    const m = resetContinueModeOnUpgrade(currentVersion);
-    if (m.changed) {
-      console.log(`[kite] reset continueMode on upgrade ${m.lastVersion ?? '(none)'} → ${currentVersion}: ${m.from} → simple`);
-    } else if (m.lastVersion !== currentVersion) {
-      console.log(`[kite] continueMode reset skipped (current=${m.from}) on upgrade ${m.lastVersion ?? '(none)'} → ${currentVersion}`);
-    }
-  } catch (err) {
-    console.warn('[kite] resetContinueModeOnUpgrade failed:', err);
-  }
-
-  // [Windsurf 增强] 自动注入 DOM 增强脚本到 workbench.html
-  try {
-    const result = ensureEnhancement();
-    if (result.needRestart) {
-      const ideNameEnh = getIdeDisplayName();
-      vscode.window.showInformationMessage(
-        `${ideNameEnh} 增强已更新，重启后生效。`,
-        '立即重启'
-      ).then(action => {
-        if (action === '立即重启') {
-          vscode.commands.executeCommand('workbench.action.reloadWindow');
-        }
-      });
-    }
-  } catch (err) {
-    console.error('[kite] Enhancement injection failed:', err);
-  }
-
-  // 提交所有启动阶段的文件写操作（无需提权时零开销；需要时仅一次 UAC）
-  try {
-    flushElevatedBatch();
-  } catch (err) {
-    cancelElevatedBatch();
-    if (err instanceof ElevationError) {
-      const actions = err.userDenied
-        ? ['重试（需点击"是"）', '以管理员身份运行']
-        : ['以管理员身份运行'];
-      vscode.window.showErrorMessage(err.message, ...actions).then(action => {
-        if (action === '重试（需点击"是"）') {
-          vscode.commands.executeCommand('workbench.action.reloadWindow');
-        } else if (action === '以管理员身份运行') {
-          const psCmd = getIdeExeName().replace(/\.exe$/i, '');
-          vscode.env.clipboard.writeText(`Start-Process ${psCmd} -Verb RunAs`);
-          vscode.window.showInformationMessage('PowerShell 命令已复制到剪贴板，请在终端中粘贴运行。');
-        }
-      });
-    } else {
-      console.error('[kite] Elevated batch flush failed:', err);
-    }
-  }
-
-  // 统一在 flushElevatedBatch 之后执行 checksum 修复：
-  // 必须在 flush 之后，因为 flush 才真正把新 workbench.html 写入磁盘，
-  // 此时 computeChecksum 读到的才是最新文件内容
-  try { autoFixChecksums(); } catch (err) { console.error('[kite] Checksum fix failed:', err); }
-
   // [Windsurf 增强] 恢复原始 workbench.html 命令（一并恢复 product.json）
-  const restoreCmd = vscode.commands.registerCommand('windsurfPool.restoreWorkbench', async () => {
+  const restoreCmd = safeRegisterCommand('windsurfPool.restoreWorkbench', async () => {
     const restored = restoreWorkbench();
     const productRestored = restoreProductJson();
+    const extJsRestored = restoreWindsurfExtensionJs();
     // 同步关闭开关，避免下次 activate 又自动注入；并清理增强相关规则（气泡+脚本纪律）
     await vscode.workspace.getConfiguration('windsurfPool.enhancement').update('enabled', false, vscode.ConfigurationTarget.Global);
     removeAllEnhancementRules();
@@ -417,10 +325,11 @@ export function activate(context: vscode.ExtensionContext) {
     // 通知 webview 刷新状态
     try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
 
-    if (restored || productRestored) {
+    if (restored || productRestored || extJsRestored) {
       const parts: string[] = [];
       if (restored) parts.push('workbench.html');
       if (productRestored) parts.push('product.json');
+      if (extJsRestored) parts.push('extension.js');
       const action = await vscode.window.showInformationMessage(`已恢复原始 ${parts.join(' + ')}，重启后生效。`, '立即重启');
       if (action === '立即重启') {
         vscode.commands.executeCommand('workbench.action.reloadWindow');
@@ -432,7 +341,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(restoreCmd);
 
   // [Checksum 修复] 手动重算 product.json 校验值命令
-  const fixChecksumsCmd = vscode.commands.registerCommand('windsurfPool.fixChecksums', async () => {
+  const fixChecksumsCmd = safeRegisterCommand('windsurfPool.fixChecksums', async () => {
     // 单次调用即可完成检测+修复（fixed=0 时不写文件，相当于 dryRun）
     const result = fixChecksums(false);
     if (result.error) {
@@ -468,15 +377,8 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(fixChecksumsCmd);
 
-  // [Windsurf 增强] 自动注入回复建议提示规则
-  try {
-    ensureBubbleRules();
-  } catch (err) {
-    console.error('[kite] Bubble rules injection failed:', err);
-  }
-
   // [Windsurf 增强] 手动注入/移除回复建议规则命令
-  const injectRulesCmd = vscode.commands.registerCommand('windsurfPool.injectBubbleRules', () => {
+  const injectRulesCmd = safeRegisterCommand('windsurfPool.injectBubbleRules', () => {
     const result = injectBubbleRules();
     try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
     if (result.injected) {
@@ -487,7 +389,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(injectRulesCmd);
 
-  const removeRulesCmd = vscode.commands.registerCommand('windsurfPool.removeBubbleRules', () => {
+  const removeRulesCmd = safeRegisterCommand('windsurfPool.removeBubbleRules', () => {
     const removed = removeBubbleRules();
     try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
     if (removed) {
@@ -499,7 +401,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(removeRulesCmd);
 
   // [Windsurf 增强] 手动注入/移除脚本纪律规则命令
-  const injectScriptCmd = vscode.commands.registerCommand('windsurfPool.injectScriptDisciplineRules', () => {
+  const injectScriptCmd = safeRegisterCommand('windsurfPool.injectScriptDisciplineRules', () => {
     const result = injectScriptDisciplineRules();
     try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
     if (result.injected) {
@@ -510,7 +412,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(injectScriptCmd);
 
-  const removeScriptCmd = vscode.commands.registerCommand('windsurfPool.removeScriptDisciplineRules', () => {
+  const removeScriptCmd = safeRegisterCommand('windsurfPool.removeScriptDisciplineRules', () => {
     const removed = removeScriptDisciplineRules();
     try { sidebarProvider?.refreshEnhancementStatus?.(); } catch {}
     if (removed) {
@@ -522,7 +424,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(removeScriptCmd);
 
   // [Windsurf 增强] 重新注入命令
-  const reinjectCmd = vscode.commands.registerCommand('windsurfPool.reinjectEnhancement', async () => {
+  const reinjectCmd = safeRegisterCommand('windsurfPool.reinjectEnhancement', async () => {
     // 增强开关被用户关闭时，ensureEnhancement 会直接 return 且无 error，友好提示而非报"未知错误"
     const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
     if (!enabled) {
@@ -556,6 +458,312 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
   context.subscriptions.push(reinjectCmd);
+
+  setTimeout(() => runDeferredStartupTasks(context), 0);
+}
+
+function runDeferredStartupTasks(context: vscode.ExtensionContext): void {
+  const startupLog = (msg: string) => {
+    try { sidebarProvider?.diagnosticLog?.(`[startup] ${msg}`); } catch {}
+    console.log(`[kite][startup] ${msg}`);
+  };
+  startupLog('deferred tasks:start');
+  // ── 启动后清理旧版扩展残留补丁 ──
+  // 放到侧栏/命令注册之后执行，避免安装目录写入、提权或补丁兼容问题卡住首屏。
+  beginElevatedBatch();
+  startupLog('elevated batch:begin');
+
+  if (detectIdeFlavor() === 'devin') {
+    runDevinSafeStartup(context, startupLog);
+    return;
+  }
+
+  let cleanupNeeded = false;
+  try {
+    startupLog('legacy cleanup:ensureEnhancement start');
+    const enhResult = ensureEnhancement();
+    startupLog(`legacy cleanup:ensureEnhancement result injected=${enhResult.injected} needRestart=${enhResult.needRestart} error=${enhResult.error || ''}`);
+    if (enhResult.needRestart && !enhResult.injected) {
+      cleanupNeeded = true;
+    }
+    startupLog('legacy cleanup:restoreWindsurfExtensionJs start');
+    const extJsRestored = restoreWindsurfExtensionJs();
+    startupLog(`legacy cleanup:restoreWindsurfExtensionJs restored=${extJsRestored}`);
+    if (extJsRestored) {
+      cleanupNeeded = true;
+    }
+    if (cleanupNeeded) {
+      startupLog('legacy cleanup:cleanupNeeded=true flushing and stopping startup tasks');
+      try { flushElevatedBatch(); } catch (e) {
+        cancelElevatedBatch();
+        startupLog(`legacy cleanup:flush failed ${e}`);
+        console.warn('[kite] cleanup flush failed:', e);
+      }
+      vscode.window.showInformationMessage(
+        `检测到旧版 ${getIdeDisplayName()} 补丁残留，已自动恢复原始文件，请立即重启。`,
+        '立即重启'
+      ).then(action => {
+        if (action === '立即重启') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        }
+      });
+      return;
+    }
+  } catch (err) {
+    startupLog(`legacy cleanup failed: ${err}`);
+    console.warn('[kite] legacy cleanup failed:', err);
+  }
+
+  if (readEnhSettings().acpUnlock !== false) {
+    startupLog('acp local registry fallback:start');
+    ensureAcpLocalRegistryFallback();
+    startupLog('acp local registry fallback:done');
+  }
+  startupLog('schedule ACP repair/recovery');
+  scheduleAcpAgentRepair('extension-activate', 10_000);
+  scheduleAcpConnectionRecovery('extension-activate', 12_000);
+
+  // v6.0.3 一次性迁移：将所有实例统一改为智能选号（旧策略余额追踪不准）
+  try {
+    startupLog('migrateAllInstancesToAuto:start');
+    migrateAllInstancesToAuto();
+    startupLog('migrateAllInstancesToAuto:done');
+  } catch (e) {
+    startupLog(`migrateAllInstancesToAuto failed: ${e}`);
+    console.warn('[migrate] 失败:', e);
+  }
+
+  // 多实例：检测绑定标记并自动切号（后台异步，不阻塞启动）
+  startupLog('autoSwitchByBindMark:schedule');
+  autoSwitchByBindMark(context);
+
+  // 预热声音播放器（Windows 上预启动 PowerShell 进程，首次播放零延迟）
+  startupLog('warmupSoundPlayer:start');
+  warmupSoundPlayer();
+  startupLog('warmupSoundPlayer:done');
+
+  // 静默应用汉化（不影响扩展启动）
+  startupLog('applyI18nOnly:start');
+  applyI18nOnly();
+  startupLog('applyI18nOnly:done');
+
+  startupLog('autoSwitcher.start:start');
+  autoSwitcher?.start();
+  startupLog('autoSwitcher.start:done');
+
+  // 自动检查更新（延迟 30 秒）
+  startupLog('autoCheckOnStartup:schedule');
+  autoCheckOnStartup();
+
+  // macOS/Linux: 检测安装目录是否可写，不可写则提示一次
+  startupLog('checkInstallPermission:start');
+  checkInstallPermission(context);
+  startupLog('checkInstallPermission:done');
+
+  // [Bridge] 启动跨 origin 桥（HTTP localhost）—— 仅当增强已启用时才启动
+  const _enhEnabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
+  startupLog(`bridge enabled=${_enhEnabled}`);
+  if (_enhEnabled) {
+    startBridgeServer().then(info => {
+      startupLog(`bridge ready port=${info.port}`);
+      console.log(`[kite] bridge ready at 127.0.0.1:${info.port}`);
+      try { sidebarProvider?.refreshBridgeInfo?.(); } catch {}
+    }).catch(err => {
+      startupLog(`bridge failed: ${err}`);
+      console.warn('[kite] bridge server failed to start:', err);
+    });
+  }
+
+  // [v7.7.11+ 升级重置] 每次版本升级都强制将 continueMode 重置为 'simple'（除长任务运行中和已禁用）
+  try {
+    startupLog('resetContinueModeOnUpgrade:start');
+    const currentVersion: string = (context.extension?.packageJSON?.version as string) || '0.0.0';
+    const m = resetContinueModeOnUpgrade(currentVersion);
+    if (m.changed) {
+      console.log(`[kite] reset continueMode on upgrade ${m.lastVersion ?? '(none)'} → ${currentVersion}: ${m.from} → simple`);
+    } else if (m.lastVersion !== currentVersion) {
+      console.log(`[kite] continueMode reset skipped (current=${m.from}) on upgrade ${m.lastVersion ?? '(none)'} → ${currentVersion}`);
+    }
+    startupLog(`resetContinueModeOnUpgrade:done changed=${m.changed} last=${m.lastVersion ?? ''}`);
+  } catch (err) {
+    startupLog(`resetContinueModeOnUpgrade failed: ${err}`);
+    console.warn('[kite] resetContinueModeOnUpgrade failed:', err);
+  }
+
+  // [Windsurf 增强] 自动注入 DOM 增强脚本到 workbench.html
+  try {
+    startupLog('enhancement injection:start');
+    const result = ensureEnhancement();
+    startupLog(`enhancement injection:result injected=${result.injected} needRestart=${result.needRestart} error=${result.error || ''}`);
+    if (result.needRestart) {
+      if (!result.injected) {
+        try { restoreWindsurfExtensionJs(); } catch {}
+      }
+      const ideNameEnh = getIdeDisplayName();
+      vscode.window.showInformationMessage(
+        `${ideNameEnh} 增强已更新，重启后生效。`,
+        '立即重启'
+      ).then(action => {
+        if (action === '立即重启') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        }
+      });
+    }
+  } catch (err) {
+    startupLog(`enhancement injection failed: ${err}`);
+    console.error('[kite] Enhancement injection failed:', err);
+  }
+
+  // 提交所有启动阶段的文件写操作（无需提权时零开销；需要时仅一次 UAC）
+  try {
+    startupLog('elevated batch:flush start');
+    flushElevatedBatch();
+    startupLog('elevated batch:flush done');
+  } catch (err) {
+    cancelElevatedBatch();
+    startupLog(`elevated batch:flush failed ${err}`);
+    if (err instanceof ElevationError) {
+      const actions = err.userDenied
+        ? ['重试（需点击"是"）', '以管理员身份运行']
+        : ['以管理员身份运行'];
+      vscode.window.showErrorMessage(err.message, ...actions).then(action => {
+        if (action === '重试（需点击"是"）') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        } else if (action === '以管理员身份运行') {
+          const psCmd = getIdeExeName().replace(/\.exe$/i, '');
+          vscode.env.clipboard.writeText(`Start-Process ${psCmd} -Verb RunAs`);
+          vscode.window.showInformationMessage('PowerShell 命令已复制到剪贴板，请在终端中粘贴运行。');
+        }
+      });
+    } else {
+      console.error('[kite] Elevated batch flush failed:', err);
+    }
+  }
+
+  // 统一在 flushElevatedBatch 之后执行 checksum 修复：
+  // 必须在 flush 之后，因为 flush 才真正把新 workbench.html 写入磁盘，
+  // 此时 computeChecksum 读到的才是最新文件内容
+  try {
+    startupLog('autoFixChecksums:start');
+    autoFixChecksums();
+    startupLog('autoFixChecksums:done');
+  } catch (err) {
+    startupLog(`autoFixChecksums failed: ${err}`);
+    console.error('[kite] Checksum fix failed:', err);
+  }
+
+  // [Windsurf 增强] 自动注入回复建议提示规则
+  try {
+    startupLog('ensureBubbleRules:start');
+    ensureBubbleRules();
+    startupLog('ensureBubbleRules:done');
+  } catch (err) {
+    startupLog(`ensureBubbleRules failed: ${err}`);
+    console.error('[kite] Bubble rules injection failed:', err);
+  }
+  startupLog('deferred tasks:done');
+}
+
+function runDevinSafeStartup(
+  context: vscode.ExtensionContext,
+  startupLog: (msg: string) => void
+): void {
+  startupLog('devin safe startup:start');
+
+  let workbenchWasInjected = false;
+  try {
+    const status = getInjectionStatus();
+    workbenchWasInjected = status.injected;
+    startupLog(`devin safe startup:workbench injected=${status.injected} patch=${status.patchVersion || ''}`);
+    if (status.injected) {
+      const restored = restoreWorkbench();
+      startupLog(`devin safe startup:restoreWorkbench restored=${restored}`);
+    }
+  } catch (err) {
+    startupLog(`devin safe startup:restoreWorkbench failed ${err}`);
+  }
+
+  if (workbenchWasInjected) {
+    try {
+      const productRestored = restoreProductJson();
+      startupLog(`devin safe startup:restoreProductJson restored=${productRestored}`);
+    } catch (err) {
+      startupLog(`devin safe startup:restoreProductJson failed ${err}`);
+    }
+  } else {
+    startupLog('devin safe startup:restoreProductJson skipped');
+  }
+
+  try {
+    const extJsRestored = restoreWindsurfExtensionJs();
+    startupLog(`devin safe startup:restoreExtensionJs restored=${extJsRestored}`);
+  } catch (err) {
+    startupLog(`devin safe startup:restoreExtensionJs failed ${err}`);
+  }
+
+  vscode.workspace.getConfiguration('windsurfPool.enhancement')
+    .update('enabled', false, vscode.ConfigurationTarget.Global)
+    .then(
+      () => startupLog('devin safe startup:enhancement.enabled=false'),
+      err => startupLog(`devin safe startup:disable enhancement failed ${err}`)
+    );
+  try {
+    mergeEnhSettings({ acpUnlock: false, autoSwitchEnabled: false });
+    startupLog('devin safe startup:enh settings acpUnlock=false autoSwitchEnabled=false');
+  } catch (err) {
+    startupLog(`devin safe startup:disable enh settings failed ${err}`);
+  }
+
+  try {
+    startupLog('devin safe startup:elevated batch flush start');
+    flushElevatedBatch();
+    startupLog('devin safe startup:elevated batch flush done');
+  } catch (err) {
+    cancelElevatedBatch();
+    startupLog(`devin safe startup:elevated batch flush failed ${err}`);
+    if (err instanceof ElevationError) {
+      vscode.window.showErrorMessage(
+        'Devin 安全恢复需要写入安装目录，但当前没有权限。请以管理员身份运行 Devin 后再启动 Kite。',
+        '以管理员身份运行'
+      ).then(action => {
+        if (action === '以管理员身份运行') {
+          const psCmd = getIdeExeName().replace(/\.exe$/i, '');
+          vscode.env.clipboard.writeText(`Start-Process ${psCmd} -Verb RunAs`);
+          vscode.window.showInformationMessage('PowerShell 命令已复制到剪贴板，请在终端中粘贴运行。');
+        }
+      });
+    }
+  }
+
+  try {
+    startupLog('devin safe startup:migrateAllInstancesToAuto start');
+    migrateAllInstancesToAuto();
+    startupLog('devin safe startup:migrateAllInstancesToAuto done');
+  } catch (err) {
+    startupLog(`devin safe startup:migrateAllInstancesToAuto failed ${err}`);
+  }
+
+  void context.globalState.update('as.enabled', false).then(
+    () => startupLog('devin safe startup:autoSwitch.enabled=false'),
+    err => startupLog(`devin safe startup:disable autoSwitch failed ${err}`)
+  );
+  startupLog('devin safe startup:autoSwitcher.start skipped');
+
+  try {
+    startupLog('devin safe startup:checkInstallPermission start');
+    checkInstallPermission(context);
+    startupLog('devin safe startup:checkInstallPermission done');
+  } catch (err) {
+    startupLog(`devin safe startup:checkInstallPermission failed ${err}`);
+  }
+
+  startupLog('devin safe startup:done');
+  if (workbenchWasInjected && !context.globalState.get<boolean>('devinSafeModeRestoreNotified')) {
+    context.globalState.update('devinSafeModeRestoreNotified', true);
+    vscode.window.showWarningMessage(
+      'Kite 已在 Devin 中启用安全模式：已关闭自动增强注入并尝试恢复原始 Workbench。请手动重启 Devin 一次，让恢复生效。'
+    );
+  }
 }
 
 /**

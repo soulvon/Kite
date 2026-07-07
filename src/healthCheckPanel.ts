@@ -170,7 +170,7 @@ export function openHealthCheckPanel(
   );
 
   const webview = _panel.webview;
-  const ext = vscode.extensions.getExtension('local.kite') || vscode.extensions.getExtension('local.windsurf-pool');
+  const ext = vscode.extensions.getExtension('local.windsurf-pool') || vscode.extensions.getExtension('local.kite');
   const ver = ext?.packageJSON?.version || '0.0.0';
   const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webview', 'health-check.css'));
   const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webview', 'health-check.js'));

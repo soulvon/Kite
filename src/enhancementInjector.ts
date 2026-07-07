@@ -29,16 +29,30 @@ export function ensureEnhancement(): EnhancementResult {
   // 默认值与 package.json 中 windsurfPool.enhancement.enabled 的 default=false 保持一致，
   // 避免读到的值与用户在设置 UI 中看到的不一致造成误导。
   const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
-  if (!enabled) {
-    return { injected: false, needRestart: false };
-  }
-
   const workbenchPath = getWorkbenchHtmlPath();
   if (!workbenchPath) {
     return { injected: false, needRestart: false, error: '未找到 workbench.html' };
   }
 
   const html = fs.readFileSync(workbenchPath, 'utf8');
+
+  if (!enabled) {
+    const blockStartIdx = html.indexOf(BLOCK_START);
+    const blockEndIdx = html.indexOf(BLOCK_END);
+    if (blockStartIdx >= 0 && blockEndIdx >= 0) {
+      const originPath = workbenchPath + '.origin';
+      if (fs.existsSync(originPath)) {
+        copyFileWithElevation(originPath, workbenchPath);
+      } else {
+        let cleaned = html.substring(0, blockStartIdx) +
+                      html.substring(blockEndIdx + BLOCK_END.length);
+        writeFileWithElevation(workbenchPath, cleaned, 'utf8');
+      }
+      return { injected: false, needRestart: true };
+    }
+    return { injected: false, needRestart: false };
+  }
+
   const patchVersion = getPatchVersion();
   const settings = readEnhSettings();
   const settingsHash = hashSettings(settings);
@@ -142,7 +156,7 @@ function getWorkbenchHtmlPath(): string | null {
 let _scriptCache: string | null = null;
 function getScriptContent(): string | null {
   if (_scriptCache !== null) return _scriptCache;
-  const ext = vscode.extensions.getExtension('local.kite') || vscode.extensions.getExtension('local.windsurf-pool');
+  const ext = vscode.extensions.getExtension('local.windsurf-pool') || vscode.extensions.getExtension('local.kite');
   if (!ext) return null;
   const scriptName = getEnhancementScriptName();
   const scriptPath = path.join(ext.extensionPath, 'resources', scriptName);

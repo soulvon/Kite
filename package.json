@@ -1,8 +1,8 @@
 {
-  "name": "kite",
+  "name": "windsurf-pool",
   "displayName": "Kite",
-  "description": "Kite 是面向 Windsurf / Devin 的 AI IDE 增强套件：界面增强、多实例分身、多账号号池、自动恢复与长任务自动化。",
-  "version": "8.7.8",
+  "description": "Kite 是面向 Windsurf / Devin 的 AI IDE 增强套件：界面增强、多实例分身、AnyBridge 模型路由、多账号号池、自动恢复与长任务自动化。",
+  "version": "8.7.29",
   "publisher": "local",
   "repository": {
     "type": "git",
@@ -18,6 +18,9 @@
   ],
   "activationEvents": [
     "onStartupFinished"
+  ],
+  "extensionKind": [
+    "ui"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -218,6 +221,16 @@
           "type": "boolean",
           "default": true,
           "description": "自动修复 product.json 中的 SHA256 校验值。增强/补丁会修改 workbench.html 等被校验的文件，导致每次启动弹\"installation appears corrupt\"提示；开启后会重算并写回正确哈希，从根本消除提示。"
+        },
+        "windsurfPool.devin.allowProcessProbing": {
+          "type": "boolean",
+          "default": false,
+          "description": "Devin 专用：允许 Kite 在 Devin 扩展宿主内执行 wmic/PowerShell 进程探测（实例运行状态、ACP 重复进程清理）。默认关闭，因为 Devin 1.110+/Node 22 中启动或侧栏阶段执行这些子进程可能导致扩展宿主崩溃。"
+        },
+        "windsurfPool.devin.autoRecoverLegacyCredentials": {
+          "type": "boolean",
+          "default": false,
+          "description": "Devin 专用：读取账号时自动尝试恢复历史凭据。默认关闭，因为该恢复依赖 Windows DPAPI/PowerShell，可能在 Devin 扩展宿主启动阶段触发崩溃；如需恢复请优先使用命令面板中的“修复缺失凭据”。"
         }
       }
     }

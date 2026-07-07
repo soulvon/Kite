@@ -6,6 +6,8 @@ import { getStateDbPath } from './ideDetector';
 import { getPoolRoot } from './utils';
 
 const LEGACY_EXTENSION_ID = 'local.windsurf-pool';
+const STALE_KITE_EXTENSION_ID = 'local.kite';
+const RECOVERY_EXTENSION_IDS = [STALE_KITE_EXTENSION_ID, LEGACY_EXTENSION_ID];
 const LEGACY_ACCOUNTS_KEY = 'windsurfPool.accounts.v1';
 const LEGACY_SECRET_PREFIX = 'windsurfPool.accountSecret.v1.';
 const KITE_ACCOUNTS_KEY = 'windsurfPool.accounts.v1';
@@ -114,8 +116,25 @@ function kiteSecretKey(email: string, field: string): string {
   return `${KITE_SECRET_PREFIX}${encodeURIComponent(email)}.${field}`;
 }
 
+function secretDbKeys(extensionId: string, key: string): string[] {
+  return [
+    `secret://${JSON.stringify({ extensionId, key })}`,
+    `secret://${extensionId}/${key}`,
+  ];
+}
+
+function readFirstSecretValue(dbPath: string, extensionId: string, key: string): any | null {
+  for (const candidate of secretDbKeys(extensionId, key)) {
+    const raw = readVscdbKey(dbPath, candidate);
+    if (raw) {
+      return raw;
+    }
+  }
+  return null;
+}
+
 /**
- * 尝试从旧扩展 windsurf-pool 的 secrets 中恢复账号凭据。
+ * 尝试从旧扩展/短暂改名扩展的 secrets 中恢复账号凭据。
  * 仅当当前账号列表中存在 apiKey 为空的账号时才执行。
  * 仅在 Windows 上有效（依赖 DPAPI）。
  */
@@ -133,56 +152,60 @@ export async function tryRecoverLegacyAccounts(
     log('当前账号列表中无 apiKey 为空，无需恢复');
     return { accounts, recovered: false };
   }
-  log(`检测到 ${missing.length} 个账号缺少 apiKey，尝试从旧扩展 ${LEGACY_EXTENSION_ID} 恢复`);
+  log(`检测到 ${missing.length} 个账号缺少 apiKey，尝试从扩展 ${RECOVERY_EXTENSION_IDS.join(', ')} 恢复`);
 
   const dbPath = getStateDbPath();
   const recoveredSecrets: Map<string, Map<string, string>> = new Map();
   let anyRecovered = false;
 
-  // 1. 尝试读取旧扩展的 ACCOUNTS_KEY 备份（可能包含明文账号列表）
-  const legacyAccountsKey = `secret://${LEGACY_EXTENSION_ID}/${LEGACY_ACCOUNTS_KEY}`;
-  const legacyAccountsRaw = readVscdbKey(dbPath, legacyAccountsKey);
-  if (legacyAccountsRaw) {
-    log('找到旧扩展 ACCOUNTS_KEY 加密记录');
-    const decrypted = tryDecryptValue(legacyAccountsRaw);
-    if (decrypted) {
-      try {
-        const arr = JSON.parse(decrypted);
-        if (Array.isArray(arr)) {
-          for (const a of arr) {
-            if (a && a.email && a.apiKey) {
-              const map = recoveredSecrets.get(a.email) || new Map();
-              map.set('apiKey', a.apiKey);
-              recoveredSecrets.set(a.email, map);
-              anyRecovered = true;
+  // 1. 尝试读取历史 ACCOUNTS_KEY 备份（可能包含明文账号列表）
+  for (const extensionId of RECOVERY_EXTENSION_IDS) {
+    const accountsRaw = readFirstSecretValue(dbPath, extensionId, LEGACY_ACCOUNTS_KEY);
+    if (accountsRaw) {
+      log(`找到 ${extensionId} ACCOUNTS_KEY 加密记录`);
+      const decrypted = tryDecryptValue(accountsRaw);
+      if (decrypted) {
+        try {
+          const arr = JSON.parse(decrypted);
+          if (Array.isArray(arr)) {
+            for (const a of arr) {
+              if (a && a.email && a.apiKey) {
+                const map = recoveredSecrets.get(a.email) || new Map();
+                map.set('apiKey', a.apiKey);
+                recoveredSecrets.set(a.email, map);
+                anyRecovered = true;
+              }
             }
+            log(`从 ${extensionId} ACCOUNTS_KEY 恢复 ${recoveredSecrets.size} 个账号`);
           }
-          log(`从旧扩展 ACCOUNTS_KEY 恢复 ${recoveredSecrets.size} 个账号`);
+        } catch (err) {
+          log(`解析 ${extensionId} ACCOUNTS_KEY 失败: ${err}`);
         }
-      } catch (err) {
-        log(`解析旧扩展 ACCOUNTS_KEY 失败: ${err}`);
+      } else {
+        log(`${extensionId} ACCOUNTS_KEY 解密失败（可能不是 DPAPI 或数据格式不同）`);
       }
     } else {
-      log('旧扩展 ACCOUNTS_KEY 解密失败（可能不是 DPAPI 或数据格式不同）');
+      log(`未找到 ${extensionId} ACCOUNTS_KEY 记录`);
     }
-  } else {
-    log('未找到旧扩展 ACCOUNTS_KEY 记录');
   }
 
-  // 2. 逐个尝试读取旧扩展的 accountSecret 记录
+  // 2. 逐个尝试读取历史 accountSecret 记录
   for (const m of missing) {
     const fields = ['apiKey', 'devinAuth1Token', 'password', 'rawToken'] as const;
     for (const field of fields) {
-      const legacyKey = `secret://${LEGACY_EXTENSION_ID}/${encodeAccountSecretKey(m.email, field)}`;
-      const raw = readVscdbKey(dbPath, legacyKey);
-      if (!raw) continue;
-      const decrypted = tryDecryptValue(raw);
-      if (decrypted) {
-        const map = recoveredSecrets.get(m.email) || new Map();
-        map.set(field, decrypted);
-        recoveredSecrets.set(m.email, map);
-        anyRecovered = true;
-        log(`恢复 ${m.email} 的 ${field}`);
+      if (recoveredSecrets.get(m.email)?.has(field)) continue;
+      for (const extensionId of RECOVERY_EXTENSION_IDS) {
+        const raw = readFirstSecretValue(dbPath, extensionId, encodeAccountSecretKey(m.email, field));
+        if (!raw) continue;
+        const decrypted = tryDecryptValue(raw);
+        if (decrypted) {
+          const map = recoveredSecrets.get(m.email) || new Map();
+          map.set(field, decrypted);
+          recoveredSecrets.set(m.email, map);
+          anyRecovered = true;
+          log(`从 ${extensionId} 恢复 ${m.email} 的 ${field}`);
+          break;
+        }
       }
     }
   }

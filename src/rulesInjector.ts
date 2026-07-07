@@ -39,7 +39,7 @@ function getGlobalRulesPath(): string {
 }
 
 function getRuleContent(kind: RuleKind): string | null {
-  const ext = vscode.extensions.getExtension('local.kite') || vscode.extensions.getExtension('local.windsurf-pool');
+  const ext = vscode.extensions.getExtension('local.windsurf-pool') || vscode.extensions.getExtension('local.kite');
   if (!ext) return null;
   const rulesPath = path.join(ext.extensionPath, 'resources', RULE_META[kind].filename);
   if (!fs.existsSync(rulesPath)) return null;

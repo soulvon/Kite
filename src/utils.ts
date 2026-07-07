@@ -1,10 +1,33 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as vscode from 'vscode';
 
 export const isWindows = process.platform === 'win32';
 export const isMac = process.platform === 'darwin';
 export const isLinux = process.platform === 'linux';
+
+/**
+ * 安全注册命令：当稳定扩展 local.windsurf-pool 与临时改名版本 local.kite 同时安装时，
+ * 相同命令 ID 会导致 registerCommand 抛出 "already exists" 错误，
+ * 进而使整个 activate 函数崩溃。
+ * 此包装器捕获该错误并返回 no-op disposable，让扩展继续激活。
+ */
+export function safeRegisterCommand(
+  commandId: string,
+  callback: (...args: any[]) => any,
+  thisArg?: any
+): vscode.Disposable {
+  try {
+    return vscode.commands.registerCommand(commandId, callback, thisArg);
+  } catch (err: any) {
+    if (err?.message?.includes('already exists')) {
+      console.warn(`[kite] 命令 '${commandId}' 已被其他 Kite 扩展注册，跳过。请卸载临时改名版本 local.kite，只保留 local.windsurf-pool。`);
+      return { dispose() {} };
+    }
+    throw err;
+  }
+}
 
 /**
  * 获取跨平台应用数据目录

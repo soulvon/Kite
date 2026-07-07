@@ -50,6 +50,8 @@
 		bubblesShape: 'rounded',
 		// 汉化设置
 		localizationEnabled: true,
+		// 汉化模式：'realtime' = MutationObserver 实时翻译（全面但可能卡顿）；'patch' = 启动时一次性翻译 + 轻量定时补扫（流畅但新内容有延迟）
+		localizationMode: 'realtime',
 		// ACP 智能体解锁（仅 Devin，Windsurf 不使用此设置）
 		acpUnlock: true,
 		// 自动操作
@@ -2717,7 +2719,23 @@
 	
 	let _locRescanTimer = 0;
 	function startLocalizationObserver() {
-		if (localizationObserver) localizationObserver.disconnect();
+		stopLocalizationObserver();
+		const mode = settings.localizationMode || 'realtime';
+
+		if (mode === 'patch') {
+			// 补丁模式：不启动 MutationObserver，仅用轻量定时补扫（10 秒）
+			// 启动时一次性全量翻译已在 init() 中通过 enqueue(document.body) 完成
+			if (!_locRescanTimer) {
+				_locRescanTimer = setInterval(() => {
+					if (!settings.localizationEnabled) return;
+					enqueue(document.body);
+				}, 10000);
+			}
+			logLocalization('✅汉化已启用（补丁模式：定时补扫 10s）');
+			return;
+		}
+
+		// 实时模式：MutationObserver + 3s 定时兜底
 		localizationObserver = new MutationObserver((mutations) => {
 			// 忽略自身翻译产生的 mutations（断掉 translate→observe→translate 反馈环）
 			if (_isTranslating) return;
@@ -2751,6 +2769,11 @@
 				enqueue(document.body);
 			}, 3000);
 		}
+	}
+
+	function stopLocalizationObserver() {
+		if (localizationObserver) { localizationObserver.disconnect(); localizationObserver = null; }
+		if (_locRescanTimer) { clearInterval(_locRescanTimer); _locRescanTimer = 0; }
 	}
 	
 	// (Settings UI removed — moved to sidebar panel)
@@ -6256,7 +6279,7 @@
 		if (settings.localizationEnabled) {
 			startLocalizationObserver();
 			enqueue(document.body);
-			logLocalization('✅汉化已启用');
+			logLocalization('✅汉化已启用（模式: ' + (settings.localizationMode || 'realtime') + '）');
 		}
 
 		// 统一 storage 事件监听（合并命令分发 + 设置同步，减少调度开销）
@@ -6292,7 +6315,7 @@
 		try { saveSettings(settings); } catch {}
 
 		// v7.8.2: 关键开关变更日志 — 帮助用户/开发者排查"关了开关为什么还在动作"类 bug
-		const trackedKeys = ['continueMode', 'autoRecoveryEnabled', 'autoSwitchEnabled', 'bubblesEnabled', 'bubblesAutoSend', 'localizationEnabled', 'acpUnlock', 'notifyEnabled', 'dismissCorruptEnabled', 'autoApproveWebRequests'];
+		const trackedKeys = ['continueMode', 'autoRecoveryEnabled', 'autoSwitchEnabled', 'bubblesEnabled', 'bubblesAutoSend', 'localizationEnabled', 'localizationMode', 'acpUnlock', 'notifyEnabled', 'dismissCorruptEnabled', 'autoApproveWebRequests'];
 		const changedKeys = trackedKeys.filter(k => old[k] !== settings[k]);
 		if (changedKeys.length > 0) {
 			const diff = changedKeys.map(k => k + ': ' + JSON.stringify(old[k]) + ' → ' + JSON.stringify(settings[k])).join(', ');
@@ -6323,9 +6346,16 @@
 				startLocalizationObserver();
 				enqueue(document.body);
 			} else {
-				if (localizationObserver) { localizationObserver.disconnect(); localizationObserver = null; }
+				stopLocalizationObserver();
 				try { revertLocalization(); } catch (err) { console.warn(LOG_PREFIX + '[Localization] 还原失败:', err); }
 			}
+		}
+		// 响应汉化模式变化（realtime ↔ patch）—— 仅在汉化启用时处理
+		if (settings.localizationEnabled && old.localizationMode !== settings.localizationMode) {
+			console.log(LOG_PREFIX + '[Localization] 模式切换: ' + (old.localizationMode || 'realtime') + ' → ' + settings.localizationMode);
+			stopLocalizationObserver();
+			startLocalizationObserver();
+			enqueue(document.body);
 		}
 		// 响应自动继续模式变化
 		const oldGd = old.guardian || {};

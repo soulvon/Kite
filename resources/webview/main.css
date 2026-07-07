@@ -206,6 +206,64 @@ body {
     display: flex;
 }
 
+/* ═══════ BYOK Placeholder Page ═══════ */
+.byok-card {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px;
+    margin: 8px 10px 16px;
+}
+.byok-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.byok-header svg {
+    flex-shrink: 0;
+    color: var(--ac-blue, #3b82f6);
+}
+.byok-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+}
+.byok-subtitle {
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, #888);
+    margin-top: 2px;
+}
+.byok-body {
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--vscode-foreground);
+}
+.byok-body p {
+    margin: 0 0 10px;
+}
+.byok-body ul {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--vscode-descriptionForeground, #888);
+}
+.byok-body li {
+    margin: 4px 0;
+}
+.byok-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding-top: 8px;
+    border-top: 1px solid var(--card-border);
+}
+.byok-url {
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, #888);
+    font-family: var(--vscode-editor-font-family, monospace);
+    word-break: break-all;
+}
+
 /* ═══════ Sub Tabs ═══════ */
 .subtabs-bar {
     display: grid;
@@ -1779,11 +1837,48 @@ details > summary::marker { display: none; content: ''; }
 
 /* Card error */
 .grid-card-error {
-    font-size: 10px;
-    color: var(--ac-red);
-    padding: 4px 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    color: var(--muted);
+    padding: 6px 8px;
     border-radius: var(--radius-sm);
+    background: rgba(210, 153, 34, 0.08);
+    border: 1px solid rgba(210, 153, 34, 0.18);
+}
+.grid-card-error.is-critical {
+    color: var(--ac-red);
     background: rgba(239, 68, 68, 0.06);
+    border-color: rgba(239, 68, 68, 0.18);
+}
+.grid-card-error-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: #d29922;
+    flex: none;
+}
+.grid-card-error.is-critical .grid-card-error-dot {
+    background: var(--ac-red);
+}
+.grid-card-error-text {
+    min-width: 0;
+    flex: 1;
+    overflow-wrap: anywhere;
+}
+.grid-card-error-action {
+    flex: none;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid rgba(210, 153, 34, 0.28);
+    background: rgba(210, 153, 34, 0.10);
+    color: #d29922;
+    font-size: 10px;
+    font-family: inherit;
+}
+.grid-card-error-action:hover {
+    background: rgba(210, 153, 34, 0.18);
 }
 
 /* Pagination */
@@ -2744,7 +2839,7 @@ button.secondary:active { transform: scale(0.98); }
     transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
     box-shadow: 0 1px 2px rgba(0,0,0,0.3);
 }
-.v2-mini-toggle.is-on::after { transform: translateX(12px); }
+.v2-mini-toggle.is-on::after { transform: translateX(10px); }
 
 /* ─── Section Title ─── */
 .v2-section-title {
@@ -4689,10 +4784,10 @@ select {
 }
 
 button:focus-visible,
-[role="button"]:focus-visible {
-summary:focus-visible {
-input:focus-visible {
-textarea:focus-visible {
+[role="button"]:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
 select:focus-visible {
     outline: 2px solid var(--vscode-focusBorder, var(--ac-blue));
     outline-offset: 2px;
@@ -5450,7 +5545,7 @@ body.vscode-light .search-bar {
 .page-size-select,
 .enhance-select,
 .v2-input-field,
-.v2-queue-text {
+.v2-queue-text,
 input:not([type="checkbox"]):not([type="radio"]),
 textarea,
 select {
@@ -5465,9 +5560,9 @@ select {
 .page-size-select:hover,
 .enhance-select:hover,
 .v2-input-field:hover,
-.v2-queue-text:hover {
-input:not([type="checkbox"]):not([type="radio"]):hover {
-textarea:hover {
+.v2-queue-text:hover,
+input:not([type="checkbox"]):not([type="radio"]):hover,
+textarea:hover,
 select:hover {
     background-color: var(--ui-field-bg-hover) !important;
 }
@@ -5792,6 +5887,8 @@ body.vscode-light {
     width: 28px !important;
     height: 16px !important;
     align-self: center;
+    margin-left: auto;
+    flex-shrink: 0;
 }
 
 .preflight-switch {
@@ -5828,11 +5925,112 @@ body.vscode-light {
 }
 
 .v2-mini-toggle.is-on::after {
-    transform: translate(12px, -50%) !important;
+    transform: translate(10px, -50%) !important;
 }
 
 .preflight-toggle-btn.is-active .preflight-switch-thumb {
     transform: translate(10px, -50%) !important;
+}
+
+/* v8.0 account page compatibility: keep the toolbar dense and quiet. */
+#tab-account .toolbar-bar {
+    align-items: center !important;
+    gap: 6px !important;
+    row-gap: 4px !important;
+    min-height: 0 !important;
+    margin: 0 0 4px !important;
+    padding: 0 !important;
+    flex-wrap: wrap !important;
+}
+
+#tab-account .filter-trigger,
+#tab-account .sort-direction-btn,
+#tab-account .toolbar-icon-btn,
+#tab-account .balance-filter-btn,
+#tab-account .group-select-mode-btn,
+#tab-account .group-select,
+#tab-account .page-size-select,
+#tab-account .preflight-toggle-btn {
+    height: 26px !important;
+    min-height: 26px !important;
+    border-radius: var(--radius-sm) !important;
+    border: 1px solid var(--card-border) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+#tab-account .filter-trigger {
+    padding: 4px 8px !important;
+}
+
+#tab-account .sort-direction-btn,
+#tab-account .toolbar-icon-btn {
+    width: 26px !important;
+    padding: 0 !important;
+}
+
+#tab-account .group-select {
+    flex: 0 0 86px !important;
+    width: 86px !important;
+    min-width: 86px !important;
+    max-width: 86px !important;
+    box-sizing: border-box !important;
+    padding-left: 8px !important;
+    padding-right: 22px !important;
+}
+
+#tab-account .page-size-select {
+    flex: 0 0 58px !important;
+    width: 58px !important;
+    min-width: 58px !important;
+    max-width: 58px !important;
+    box-sizing: border-box !important;
+    padding-left: 7px !important;
+    padding-right: 18px !important;
+}
+
+#tab-account .balance-filter-btn,
+#tab-account .group-select-mode-btn,
+#tab-account .preflight-toggle-btn {
+    padding: 3px 8px !important;
+}
+
+/* Credential warnings should not look like large alert banners in the account cards. */
+#tab-account .grid-card-error {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 5px !important;
+    width: fit-content !important;
+    max-width: 100% !important;
+    margin-top: 0 !important;
+    padding: 1px 2px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: #b7791f !important;
+    font-size: 10px !important;
+    line-height: 1.25 !important;
+}
+
+#tab-account .grid-card-error.is-critical {
+    color: var(--ac-red) !important;
+    background: transparent !important;
+    border: 0 !important;
+}
+
+#tab-account .grid-card-error-dot {
+    width: 5px !important;
+    height: 5px !important;
+}
+
+#tab-account .grid-card-error-action {
+    padding: 0 2px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: inherit !important;
+    font-size: 10px !important;
+    text-decoration: underline;
 }
 
 .search-bar {
@@ -5898,7 +6096,7 @@ body.vscode-light {
 }
 
 #tab-account .toolbar-bar > * {
-    flex-shrink: 0;
+    flex-shrink: 1;
 }
 
 #tab-account .preflight-toggle-btn {
@@ -5910,7 +6108,28 @@ body.vscode-light {
 #tab-account .toolbar-icon-btn,
 #tab-account .balance-filter-btn,
 #tab-account .group-select-mode-btn,
+#tab-account .group-select,
 #tab-account .page-size-select,
 #tab-account .preflight-toggle-btn {
-    height: 26px;
+    height: 26px !important;
+}
+
+#tab-account .group-select {
+    flex: 0 0 86px !important;
+    width: 86px !important;
+    min-width: 86px !important;
+    max-width: 86px !important;
+    padding-left: 8px !important;
+    padding-right: 22px !important;
+    box-sizing: border-box !important;
+}
+
+#tab-account .page-size-select {
+    flex: 0 0 58px !important;
+    width: 58px !important;
+    min-width: 58px !important;
+    max-width: 58px !important;
+    padding-left: 7px !important;
+    padding-right: 18px !important;
+    box-sizing: border-box !important;
 }

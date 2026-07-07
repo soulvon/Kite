@@ -546,13 +546,65 @@ export async function injectSession(
  */
 function getWindsurfExtensionJsPath(): string | null {
   const appPath = vscode.env.appRoot;
-  // 新版 Windsurf: extensions/windsurf/dist/extension.js
-  const distPath = path.join(appPath, 'extensions', 'windsurf', 'dist', 'extension.js');
-  if (fs.existsSync(distPath)) { return distPath; }
-  // 旧版 Windsurf: extensions/windsurf/out/extension.js
-  const outPath = path.join(appPath, 'extensions', 'windsurf', 'out', 'extension.js');
-  if (fs.existsSync(outPath)) { return outPath; }
+  // Devin 和 Windsurf 的内置扩展可能在不同目录名下
+  const ideDirs = ['windsurf', 'devin'];
+  const subDirs = ['dist', 'out'];
+  for (const ide of ideDirs) {
+    for (const sub of subDirs) {
+      const p = path.join(appPath, 'extensions', ide, sub, 'extension.js');
+      if (fs.existsSync(p)) return p;
+    }
+  }
   return null;
+}
+
+/**
+ * 恢复 Windsurf 内置扩展 extension.js 到补丁前的原始状态
+ * 优先恢复 .origin 备份，否则找最新的 .backup_* 文件
+ * 仅在当前文件确实包含补丁标记时才恢复，避免已有干净文件时反复触发重启
+ */
+export function restoreWindsurfExtensionJs(): boolean {
+  const targetPath = getWindsurfExtensionJsPath();
+  if (!targetPath) return false;
+
+  try {
+    const content = fs.readFileSync(targetPath, 'utf8');
+    const isPatched = content.includes(PATCHED_METHOD) || content.includes(PATCHED_CMD) || content.includes(EXPORT_CMD);
+    if (!isPatched) return false;
+  } catch (e) {
+    console.error('[kite] Failed to read extension.js for patch detection:', e);
+    return false;
+  }
+
+  // 优先使用 .origin
+  const originPath = targetPath + '.origin';
+  if (fs.existsSync(originPath)) {
+    try {
+      copyFileWithElevation(originPath, targetPath);
+      return true;
+    } catch (e) {
+      console.error('[kite] Failed to restore extension.js from .origin:', e);
+    }
+  }
+
+  // 查找最新的 .backup_* 文件
+  try {
+    const dir = path.dirname(targetPath);
+    const baseName = path.basename(targetPath);
+    const backups = fs.readdirSync(dir)
+      .filter(f => f.startsWith(baseName + '.backup_'))
+      .sort()
+      .reverse();
+    if (backups.length > 0) {
+      const backupPath = path.join(dir, backups[0]);
+      copyFileWithElevation(backupPath, targetPath);
+      return true;
+    }
+  } catch (e) {
+    console.error('[kite] Failed to restore extension.js from backup:', e);
+  }
+
+  return false;
 }
 
 /**

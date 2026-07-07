@@ -67,6 +67,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     } catch {}
 
+    this.log(`[lifecycle] SidebarProvider constructed ext=${this._context.extension.packageJSON?.version || 'unknown'} storage=${this._context.globalStorageUri.fsPath}`);
+    this.log(`[lifecycle] env ide=${getIdeDisplayName()} flavor=${detectIdeFlavor()} appRoot=${vscode.env.appRoot}`);
+
     // 绑定后端自动切号引擎
     this._autoSwitcher = autoSwitcher;
     this._autoSwitcher.onUsageUpdate = (email, snapshot, error) => {
@@ -262,6 +265,31 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     try { fs.appendFileSync(this._logFilePath, line + '\n', 'utf8'); } catch {}
   }
 
+  private _formatError(err: unknown): string {
+    if (err instanceof Error) {
+      return `${err.name}: ${err.message}${err.stack ? `\n${err.stack}` : ''}`;
+    }
+    try { return JSON.stringify(err); } catch {}
+    return String(err);
+  }
+
+  private _formatWebviewDetail(detail: unknown): string {
+    try {
+      const text = JSON.stringify(detail);
+      return text.length > 2000 ? text.slice(0, 2000) + '...(truncated)' : text;
+    } catch {
+      return String(detail);
+    }
+  }
+
+  private _handleWebviewLog(message: any): void {
+    const level = String(message.level || 'info').toUpperCase();
+    const msg = String(message.message || '');
+    const detail = message.detail === undefined ? '' : ` detail=${this._formatWebviewDetail(message.detail)}`;
+    const state = message.readyState ? ` readyState=${message.readyState}` : '';
+    this.log(`[webview ${level}] ${msg}${state}${detail}`);
+  }
+
   /** 写诊断日志到文件（增量追加，文件过大时截断） */
   private _writeDiagnoseLogs(logs: any[]) {
     try {
@@ -295,6 +323,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._output.appendLine(`日志文件: ${this._logFilePath}`);
     this._output.appendLine(`诊断日志: ${this._diagnoseLogPath}`);
     this._output.show(true);
+  }
+
+  /** 供 extension.ts 启动流程写入同一份 Kite 日志 */
+  public diagnosticLog(msg: string): void {
+    this.log(msg);
   }
 
   /** 主动通知 webview 刷新 Windsurf 增强状态（供外部命令在修改文件/配置后调用） */
@@ -593,9 +626,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this._view = webviewView;
+    this.log('[webview] resolveWebviewView:start');
 
     const extPkg = this._context.extension.packageJSON;
     webviewView.title = extPkg.version || '0.0.0';
+    this.log(`[webview] title=${webviewView.title}`);
 
     webviewView.webview.options = {
       enableScripts: true,
@@ -603,8 +638,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._extensionUri
       ]
     };
+    this.log(`[webview] options enableScripts=true localRoot=${this._extensionUri.toString()}`);
 
-    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+    try {
+      const html = this._getHtmlForWebview(webviewView.webview);
+      this.log(`[webview] html generated length=${html.length}`);
+      webviewView.webview.html = html;
+      this.log('[webview] html assigned');
+    } catch (err) {
+      this.log(`[webview] html generation/assignment failed: ${this._formatError(err)}`);
+      throw err;
+    }
 
     // bridge 信息首次推送（webview 会转发给 workbench renderer）
     setTimeout(() => this.refreshBridgeInfo(), 500);
@@ -700,8 +744,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     // 监听 webview 消息
     webviewView.webview.onDidReceiveMessage(async (message: any) => {
-      await this.handleMessage(message);
+      if (message?.type === 'webviewLog') {
+        this._handleWebviewLog(message);
+        return;
+      }
+      try {
+        await this.handleMessage(message);
+      } catch (err) {
+        this.log(`[webview -> host] handleMessage failed type=${message?.type}: ${this._formatError(err)}`);
+        throw err;
+      }
     });
+    this.log('[webview] resolveWebviewView:done');
   }
 
   /** 推送后端缓存的所有 usage 数据给 webview */
@@ -735,7 +789,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       const status = getInjectionStatus();
       const enabled = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('enabled', false);
       const autoRecovery = vscode.workspace.getConfiguration('windsurfPool.enhancement').get<boolean>('autoRecovery', true);
-      const ext = vscode.extensions.getExtension('local.kite') || vscode.extensions.getExtension('local.windsurf-pool');
+      const ext = vscode.extensions.getExtension('local.windsurf-pool') || vscode.extensions.getExtension('local.kite');
       const extVersion = ext?.packageJSON?.version || '0.0.0';
       const patchVersion = status.patchVersion || '0.0.0';
       const bubbleRulesInjected = hasBubbleRules();
@@ -831,9 +885,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         } catch (err) {
           console.warn('[kite] re-inject after enhSave failed:', err);
         }
-        // ACP 解锁不是 workbench 注入脚本能力，而是 Devin 内置 extension.js 补丁。
-        // 如果用户开启了解锁但底层仍保留旧限制，保存设置时自动补一次。
-        if (detectIdeFlavor() === 'devin' && merged.acpUnlock !== false) {
+        // ACP 解锁会修改 Devin 内置 extension.js；只在用户明确开启该开关时执行。
+        // 保存其他增强设置不能顺带打补丁，否则 Devin 安全模式会被绕开。
+        if (detectIdeFlavor() === 'devin' && patch.acpUnlock === true) {
           try {
             if (ensureAcpLocalRegistryFallback()) {
               this.log('[enhSave] ACP local registry fallback ensured; reloading connections');
@@ -2085,7 +2139,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _getHtmlForWebview(webview: vscode.Webview): string {
     const ideName = getIdeDisplayName();
     const isDevin = detectIdeFlavor() === 'devin';
-    const extVersion = (vscode.extensions.getExtension('local.kite') || vscode.extensions.getExtension('local.windsurf-pool'))?.packageJSON?.version || '0.0.0';
+    const extVersion = (vscode.extensions.getExtension('local.windsurf-pool') || vscode.extensions.getExtension('local.kite'))?.packageJSON?.version || '0.0.0';
     const cssUri = `${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.css'))}?v=${extVersion}`;
     const jsUri = `${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview', 'main.js'))}?v=${extVersion}`;
 
@@ -2114,6 +2168,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       <button type="button" class="app-tab" data-tab="enhance" role="tab" aria-selected="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         增强
+      </button>
+      <button type="button" class="app-tab" data-tab="byok" role="tab" aria-selected="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a10 10 0 0 0-10 10c0 5.5 4.5 10 10 10s10-4.5 10-10A10 10 0 0 0 12 2Zm0 5a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm0 12.5c-2.5 0-4.7-1.3-6-3.2.3-2 4-3.1 6-3.1s5.7 1.1 6 3.1c-1.3 2-3.5 3.2-6 3.2Z"/></svg>
+        BYOK
       </button>
     </div>
 
@@ -2262,6 +2320,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
             <div class="v2-mini-toggle is-on" id="enhLocalizationEnabledToggle" data-target="enhLocalizationEnabled"></div>
             <input type="checkbox" id="enhLocalizationEnabled" checked hidden>
+          </div>
+          <div class="v2-opt-row" style="margin-top:6px" data-enhance-page="i18n" hidden>
+            <span class="v2-opt-label">汉化模式</span>
+            <div style="flex:1"></div>
+            <select id="enhLocalizationMode" class="v2-select" style="min-width:120px;font-size:11.5px">
+              <option value="realtime">实时翻译</option>
+              <option value="patch">补丁模式（流畅）</option>
+            </select>
           </div>
 
           ${isDevin ? `
@@ -2417,6 +2483,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     </div>
       </div>
     </div>
+    </div>
+
+    <div class="tab-page" id="tab-byok" data-tab-page="byok" role="tabpanel">
+      <div class="card byok-card" id="byokArea">
+        <div class="byok-header">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 2a10 10 0 0 0-10 10c0 5.5 4.5 10 10 10s10-4.5 10-10A10 10 0 0 0 12 2Zm0 5a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm0 12.5c-2.5 0-4.7-1.3-6-3.2.3-2 4-3.1 6-3.1s5.7 1.1 6 3.1c-1.3 2-3.5 3.2-6 3.2Z"/></svg>
+          <div>
+            <div class="byok-title">BYOK 已迁移至 AnyBridge</div>
+            <div class="byok-subtitle">自带 Key / 模型路由 / API 中转 能力独立为姊妹项目</div>
+          </div>
+        </div>
+        <div class="byok-body">
+          <p>Kite 不再内置 BYOK 功能。为了更专注于 IDE 增强与账号工作流，自带 Key、模型路由、API 中转等能力已独立为 <b>AnyBridge</b>。</p>
+          <ul>
+            <li>支持多供应商、多模型、故障转移</li>
+            <li>可作为 Windsurf / Devin 的 API 中转层</li>
+            <li>提供 VS Code 侧栏配置界面</li>
+          </ul>
+        </div>
+        <div class="byok-actions">
+          <button class="v2-btn b-blue" id="byokOpenAnyBridge" type="button">打开 AnyBridge 仓库</button>
+          <span class="byok-url">https://github.com/soulvon/AnyBridge</span>
+        </div>
+      </div>
     </div>
 
     <div class="tab-page" id="tab-automation" data-tab-page="automation" role="tabpanel">
@@ -3639,6 +3729,56 @@ devin-session-token$eyJhbGciOiJIUzI1NiIs...</pre>
 
   <script>
     const vscode = acquireVsCodeApi();
+    window.__kiteWebviewDiag = function(level, message, detail) {
+      try {
+        vscode.postMessage({
+          type: 'webviewLog',
+          level: level || 'info',
+          message: String(message || ''),
+          detail: detail,
+          readyState: document.readyState,
+          ts: Date.now()
+        });
+      } catch (e) {}
+    };
+    window.__kiteWebviewDiag('info', 'inline bootstrap loaded', {
+      href: location.href,
+      userAgent: navigator.userAgent,
+      vscodeApi: !!vscode
+    });
+    window.addEventListener('error', function(event) {
+      var target = event.target;
+      if (target && target !== window && (target.tagName || target.src || target.href)) {
+        window.__kiteWebviewDiag('error', 'resource load error', {
+          tag: target.tagName,
+          src: target.src || target.href || '',
+          outerHTML: target.outerHTML ? target.outerHTML.slice(0, 500) : ''
+        });
+        return;
+      }
+      window.__kiteWebviewDiag('error', 'window error', {
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+        error: event.error ? { name: event.error.name, message: event.error.message, stack: event.error.stack } : null
+      });
+    }, true);
+    window.addEventListener('unhandledrejection', function(event) {
+      var reason = event.reason;
+      window.__kiteWebviewDiag('error', 'unhandled rejection', reason && reason.stack ? {
+        name: reason.name,
+        message: reason.message,
+        stack: reason.stack
+      } : reason);
+    });
+    document.addEventListener('DOMContentLoaded', function() {
+      window.__kiteWebviewDiag('info', 'dom content loaded', {
+        tabPages: document.querySelectorAll('.tab-page').length,
+        scripts: document.scripts.length,
+        stylesheets: document.styleSheets.length
+      });
+    });
   </script>
   <script>${getSignalBridgeScript()}</script>
   <script>${getBridgeRelayScript()}</script>

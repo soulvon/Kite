@@ -1,6 +1,34 @@
 (function() {
   'use strict';
 
+  const kiteDiag = typeof window.__kiteWebviewDiag === 'function'
+    ? window.__kiteWebviewDiag
+    : function() {};
+
+  function kiteSerialize(value) {
+    if (value instanceof Error) {
+      return { name: value.name, message: value.message, stack: value.stack };
+    }
+    if (value && typeof value === 'object') {
+      try { return JSON.parse(JSON.stringify(value)); } catch (e) {}
+    }
+    return String(value);
+  }
+
+  kiteDiag('info', 'main.js loaded', {
+    readyState: document.readyState,
+    href: location.href,
+    bodyChildren: document.body ? document.body.children.length : 0
+  });
+
+  ['warn', 'error'].forEach((level) => {
+    const original = console[level];
+    console[level] = function(...args) {
+      kiteDiag(level, 'console.' + level, args.map(kiteSerialize));
+      return original.apply(console, args);
+    };
+  });
+
   // ==================== 状态管理 ====================
   let accounts = [];
   let lastEmail = '';
@@ -392,6 +420,7 @@
   const enhBubblesTheme = $('#enhBubblesTheme');
   const enhBubblesShape = $('#enhBubblesShape');
   const enhLocalizationEnabled = $('#enhLocalizationEnabled');
+  const enhLocalizationMode = $('#enhLocalizationMode');
   // ACP 智能体解锁（仅 Devin）
   const enhAcpUnlock = $('#enhAcpUnlock');
   // 侧栏面板：是否显示测活面板入口（默认关闭）
@@ -759,6 +788,51 @@
   }
 
   // ==================== 卡片视图 ====================
+  function getUsageErrorMeta(error) {
+    const raw = String(error || '').trim();
+    if (!raw) return null;
+    if (/缺少\s*apiKey|Missing\s+apiKey/i.test(raw)) {
+      return {
+        level: 'warn',
+        text: '凭据缺失，配额和切号暂不可用',
+        detail: raw,
+        action: 'repairCredentials',
+        actionText: '修复凭据',
+      };
+    }
+    return {
+      level: 'critical',
+      text: raw.length > 44 ? raw.slice(0, 44) + '...' : raw,
+      detail: raw,
+    };
+  }
+
+  function buildUsageErrorHtml(error) {
+    const meta = getUsageErrorMeta(error);
+    if (!meta) return '';
+    return `
+      <span class="grid-card-error-dot"></span>
+      <span class="grid-card-error-text">${escHtml(meta.text)}</span>
+      ${meta.action ? `<button class="grid-card-error-action" data-action="${meta.action}" title="${escHtml(meta.detail)}">${escHtml(meta.actionText)}</button>` : ''}
+    `;
+  }
+
+  function applyUsageErrorEl(errEl, error) {
+    if (!errEl) return;
+    const meta = getUsageErrorMeta(error);
+    if (!meta) {
+      errEl.hidden = true;
+      errEl.innerHTML = '';
+      errEl.removeAttribute('title');
+      errEl.className = 'grid-card-error';
+      return;
+    }
+    errEl.hidden = false;
+    errEl.className = 'grid-card-error' + (meta.level === 'critical' ? ' is-critical' : '');
+    errEl.title = meta.detail;
+    errEl.innerHTML = buildUsageErrorHtml(error);
+  }
+
   function buildCard(account, isActive) {
     const card = document.createElement('div');
     card.className = 'grid-card' + (isActive ? ' is-active' : '');
@@ -837,7 +911,7 @@
           </button>
         </div>
       </div>
-      <div class="grid-card-error" ${err ? '' : 'hidden'}>${err ? escHtml(err) : ''}</div>
+      <div class="grid-card-error${getUsageErrorMeta(err)?.level === 'critical' ? ' is-critical' : ''}" ${err ? `title="${escHtml(getUsageErrorMeta(err)?.detail || '')}"` : 'hidden'}>${err ? buildUsageErrorHtml(err) : ''}</div>
       </div>
     `;
 
@@ -906,7 +980,7 @@
     }
 
     const errEl = card.querySelector('.grid-card-error');
-    if (errEl) errEl.hidden = true;
+    applyUsageErrorEl(errEl, null);
 
     maybeDowngradeTemporaryHealth(email, snapshot);
     usageCache.set(email, { snapshot, ts: Date.now() });
@@ -927,7 +1001,7 @@
         if (cached?.snapshot) updateCard(card, cached.snapshot);
         if (cached?.error) {
           const errEl = card.querySelector('.grid-card-error');
-          if (errEl) { errEl.textContent = cached.error; errEl.hidden = false; }
+          applyUsageErrorEl(errEl, cached.error);
         }
       });
       updateSummary();
@@ -2896,6 +2970,41 @@
     if (el) el.textContent = SCORE_MODE_HINTS[autoSwitchScoreMode] || SCORE_MODE_HINTS.min;
   }
 
+  const STRATEGY_HINTS = {
+    highestFirst: '优先选额度最充足的号切入，保证可用时间最长',
+    lowestNonZero: '优先消耗快用完的号，节省满额度号留作备用',
+  };
+  function updatePreferUsedVisibility() {
+    const cell = document.getElementById('asPreferUsedCell');
+    const hint = document.getElementById('asThresholdHint');
+    const isLowest = autoSwitchStrategy === 'lowestNonZero';
+    if (cell) {
+      cell.style.opacity = isLowest ? '1' : '0.35';
+      cell.style.pointerEvents = isLowest ? '' : 'none';
+    }
+    if (hint) {
+      hint.textContent = isLowest
+        ? '额度下限：低于此值的号视为废号，不会被选中。已用阈值：低于此值的号视为"正在用"，优先消耗完再换新号。'
+        : '额度下限：日/周任一配额低于此值的号视为废号，不会被选中。';
+    }
+  }
+  function updateStrategyHint() {
+    const el = document.getElementById('asStrategyHint');
+    if (el) el.textContent = STRATEGY_HINTS[autoSwitchStrategy] || '';
+    updatePreferUsedVisibility();
+  }
+  function syncStrategyUI() {
+    const sel = document.getElementById('asSwitchStrategy');
+    if (sel) sel.value = autoSwitchStrategy;
+    const minQuotaEl = document.getElementById('asMinQuota');
+    const prefUsedEl = document.getElementById('asPreferUsedThreshold');
+    const minBalanceEl = document.getElementById('asMinBalanceToSkip');
+    if (minQuotaEl) minQuotaEl.value = autoSwitchMinQuota;
+    if (prefUsedEl) prefUsedEl.value = autoSwitchPreferUsedThreshold;
+    if (minBalanceEl) minBalanceEl.value = (autoSwitchMinBalanceToSkip / 1_000_000).toFixed(2);
+    updateStrategyHint();
+  }
+
   // ==================== 定时刷新 ====================
   // 后端 AutoSwitcher 负责额度刷新和自动切号，webview 不再有独立定时器
   function startAutoRefresh() {
@@ -2972,6 +3081,10 @@
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
     const action = btn.dataset.action;
+    if (action === 'repairCredentials') {
+      postMsg('runCommand', { command: 'windsurfPool.repairMissingCredentials' });
+      return;
+    }
     const card = btn.closest('.grid-card');
     const email = card?.dataset.email;
     if (!email) return;
@@ -3020,7 +3133,7 @@
         break;
       }
       case 'filterTag': {
-        const chipEl = target.closest('[data-tag]');
+        const chipEl = e.target.closest('[data-tag]');
         const tag = chipEl?.dataset.tag;
         if (!tag) break;
         if (filterTags.has(tag)) filterTags.delete(tag);
@@ -3057,6 +3170,12 @@
     accounts = newAccounts;
     lastEmail = newLastEmail;
     externalAccount = newExternalAccount || '';
+    accounts.forEach((account) => {
+      const cached = usageCache.get(account.email);
+      if (account.apiKey && cached?.error && /缺少\s*apiKey|Missing\s+apiKey/i.test(cached.error)) {
+        usageCache.delete(account.email);
+      }
+    });
     // 自动清除无效过滤器：如果过滤器激活但 0 条匹配，清掉过时状态
     const totalFilters = filterPlans.size + filterTags.size + filterStatuses.size + filterHealth.size + (filterBalance ? 1 : 0);
     if (totalFilters > 0 && accounts.length > 0 && accounts.filter(a => passesFilter(a)).length === 0) {
@@ -3113,7 +3232,7 @@
           updateCard(card, snapshot);
         } else if (card && error) {
           const errEl = card.querySelector('.grid-card-error');
-          if (errEl) { errEl.textContent = error; errEl.hidden = false; }
+          applyUsageErrorEl(errEl, error);
         }
         // 刷新完成：停止单卡转圈
         if (card) { const rb = card.querySelector('[data-action="refresh"]'); if (rb) rb.classList.remove('is-spinning'); }
@@ -3870,6 +3989,7 @@
       if (enhBubblesTheme) enhBubblesTheme.value = s.bubblesTheme || 'emerald';
       if (enhBubblesShape) enhBubblesShape.value = s.bubblesShape || 'rounded';
       if (enhLocalizationEnabled) enhLocalizationEnabled.checked = s.localizationEnabled !== false;
+      if (enhLocalizationMode) enhLocalizationMode.value = s.localizationMode || 'realtime';
       // ACP 智能体解锁（仅 Devin，Windsurf 无此 DOM 元素）
       if (enhAcpUnlock) enhAcpUnlock.checked = s.acpUnlock !== false;
 
@@ -4038,6 +4158,7 @@
       bubblesTheme: enhBubblesTheme ? enhBubblesTheme.value : 'emerald',
       bubblesShape: enhBubblesShape ? enhBubblesShape.value : 'rounded',
       localizationEnabled: enhLocalizationEnabled ? enhLocalizationEnabled.checked : true,
+      localizationMode: enhLocalizationMode ? enhLocalizationMode.value : 'realtime',
       acpUnlock: enhAcpUnlock ? enhAcpUnlock.checked : true,
       showHealthPanel: enhShowHealthPanel ? enhShowHealthPanel.checked : false,
       statusBar: {
@@ -5674,40 +5795,6 @@
     }
 
     // 切号策略配置
-    const STRATEGY_HINTS = {
-      highestFirst: '优先选额度最充足的号切入，保证可用时间最长',
-      lowestNonZero: '优先消耗快用完的号，节省满额度号留作备用',
-    };
-    function updateStrategyHint() {
-      const el = document.getElementById('asStrategyHint');
-      if (el) el.textContent = STRATEGY_HINTS[autoSwitchStrategy] || '';
-      updatePreferUsedVisibility();
-    }
-    function updatePreferUsedVisibility() {
-      const cell = document.getElementById('asPreferUsedCell');
-      const hint = document.getElementById('asThresholdHint');
-      const isLowest = autoSwitchStrategy === 'lowestNonZero';
-      if (cell) {
-        cell.style.opacity = isLowest ? '1' : '0.35';
-        cell.style.pointerEvents = isLowest ? '' : 'none';
-      }
-      if (hint) {
-        hint.textContent = isLowest
-          ? '额度下限：低于此值的号视为废号，不会被选中。已用阈值：低于此值的号视为"正在用"，优先消耗完再换新号。'
-          : '额度下限：日/周任一配额低于此值的号视为废号，不会被选中。';
-      }
-    }
-    function syncStrategyUI() {
-      const sel = document.getElementById('asSwitchStrategy');
-      if (sel) sel.value = autoSwitchStrategy;
-      const minQuotaEl = document.getElementById('asMinQuota');
-      const prefUsedEl = document.getElementById('asPreferUsedThreshold');
-      const minBalanceEl = document.getElementById('asMinBalanceToSkip');
-      if (minQuotaEl) minQuotaEl.value = autoSwitchMinQuota;
-      if (prefUsedEl) prefUsedEl.value = autoSwitchPreferUsedThreshold;
-      if (minBalanceEl) minBalanceEl.value = (autoSwitchMinBalanceToSkip / 1_000_000).toFixed(2);
-      updateStrategyHint();
-    }
     const strategySelect = document.getElementById('asSwitchStrategy');
     if (strategySelect) {
       strategySelect.addEventListener('change', () => {
@@ -5965,7 +6052,7 @@
 
     // ── 守护面板 + 长任务面板的所有勾选/输入 ──
     const enhSettingsEls = [
-      enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled, enhAcpUnlock,
+      enhBubblesEnabled, enhBubblesAutoSend, enhBubblesTheme, enhBubblesShape, enhLocalizationEnabled, enhLocalizationMode, enhAcpUnlock,
       enhShowHealthPanel,
       enhStatusBarEnabled, enhStatusBarPosition, enhStatusBarStyle, enhSbShowPool, enhSbShowAutoSwitch, enhSbShowInstance,
       // 守护模式
@@ -6163,6 +6250,14 @@
       });
     }
 
+    // BYOK 页面：打开 AnyBridge 仓库
+    const byokOpenAnyBridge = document.getElementById('byokOpenAnyBridge');
+    if (byokOpenAnyBridge) {
+      byokOpenAnyBridge.addEventListener('click', () => {
+        postMsg('openExternal', { url: 'https://github.com/soulvon/AnyBridge' });
+      });
+    }
+
     // ==================== AutoRecovery 日志面板 ====================
     const recoveryLogList = document.getElementById('recoveryLogList');
     const recoveryLogCount = document.getElementById('recoveryLogCount');
@@ -6355,9 +6450,23 @@
     }, 1500);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
+  function runInitWithDiagnostics() {
+    kiteDiag('info', 'init:start', {
+      readyState: document.readyState,
+      tabPages: document.querySelectorAll('.tab-page').length,
+      activePages: document.querySelectorAll('.tab-page.active').length
+    });
     init();
+    kiteDiag('info', 'init:done', {
+      activePage: document.querySelector('.tab-page.active')?.id || '',
+      appTabs: document.querySelectorAll('.app-tab').length,
+      accountGrid: !!document.getElementById('accountGrid')
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', runInitWithDiagnostics);
+  } else {
+    runInitWithDiagnostics();
   }
 })();

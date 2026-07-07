@@ -18,6 +18,7 @@ import { readEnhSettings } from './enhSettingsStore';
 import { getCurrentInstanceName } from './instanceManager';
 import { readAccountsSync } from './accountStore';
 import { getIdeDisplayName } from './ideDetector';
+import { safeRegisterCommand } from './utils';
 
 /**
  * 状态栏左段样式（参考 vscode-antigravity-cockpit 的 statusBarFormat）
@@ -89,7 +90,7 @@ export class StatusBarManager implements vscode.Disposable {
   private _registerCommands(): void {
     // QuickPick 菜单
     this._disposables.push(
-      vscode.commands.registerCommand(MENU_CMD, async () => {
+      safeRegisterCommand(MENU_CMD, async () => {
         const s = this._auto.settings;
         const cd = Math.ceil(this._auto.cooldownRemainingMs / 1000);
         const autoLabel = s.enabled
@@ -125,7 +126,7 @@ export class StatusBarManager implements vscode.Disposable {
 
     // 外部触发状态栏刷新（设置面板保存后调用）
     this._disposables.push(
-      vscode.commands.registerCommand(REFRESH_CMD, () => this.update())
+      safeRegisterCommand(REFRESH_CMD, () => this.update())
     );
   }
 

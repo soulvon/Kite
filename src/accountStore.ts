@@ -5,6 +5,7 @@ import { StoredAccount } from './types';
 import { getPoolRoot, ensureDir } from './utils';
 import { CACHE_TTL } from './config';
 import { tryRecoverLegacyAccounts, tryReadLegacyAccountsFile } from './legacySecretMigration';
+import { detectIdeFlavor } from './ideDetector';
 
 const ACCOUNTS_KEY = 'windsurfPool.accounts.v1';
 const ACCOUNTS_FILE = 'accounts.json';
@@ -18,6 +19,19 @@ function getAccountsFilePath(): string {
 
 let _accountsCache: StoredAccount[] | null = null;
 let _accountsCacheTs = 0;
+let _legacyAutoRecoverySkippedLogged = false;
+
+function shouldAutoRecoverLegacyCredentials(): boolean {
+  if (detectIdeFlavor() !== 'devin') return true;
+  const enabled = vscode.workspace
+    .getConfiguration('windsurfPool.devin')
+    .get<boolean>('autoRecoverLegacyCredentials', false);
+  if (!enabled && !_legacyAutoRecoverySkippedLogged) {
+    _legacyAutoRecoverySkippedLogged = true;
+    console.warn('[kite][devin] 自动旧凭据恢复已跳过：Devin 扩展宿主在启动/侧栏阶段执行 PowerShell 可能崩溃。可通过 windsurfPool.devin.autoRecoverLegacyCredentials 显式开启，或使用命令“Kite: 修复缺失凭据”手动执行。');
+  }
+  return enabled;
+}
 
 function accountSecretKey(email: string, field: SecretField): string {
   return `${ACCOUNT_SECRET_PREFIX}${encodeURIComponent(email)}.${field}`;
@@ -254,7 +268,9 @@ export async function readAccounts(context: vscode.ExtensionContext): Promise<St
   if (fileAccounts.length > 0) {
     const hydrated = await hydrateAccounts(context, fileAccounts);
     // 兼容：从旧扩展 windsurf-pool 恢复凭据
-    const recovered = await tryRecoverLegacyAccounts(context, hydrated.accounts);
+    const recovered = shouldAutoRecoverLegacyCredentials()
+      ? await tryRecoverLegacyAccounts(context, hydrated.accounts)
+      : { accounts: hydrated.accounts, recovered: false };
     const finalAccounts = recovered.accounts;
     if (hydrated.hadInlineSecrets || recovered.recovered) {
       await saveAccounts(context, finalAccounts);
@@ -283,7 +299,9 @@ export async function readAccounts(context: vscode.ExtensionContext): Promise<St
       await saveAccounts(context, accounts);
     }
     const hydrated = await hydrateAccounts(context, accounts);
-    const recovered = await tryRecoverLegacyAccounts(context, hydrated.accounts);
+    const recovered = shouldAutoRecoverLegacyCredentials()
+      ? await tryRecoverLegacyAccounts(context, hydrated.accounts)
+      : { accounts: hydrated.accounts, recovered: false };
     warnMissingCredentials(recovered.accounts);
     return recovered.accounts;
   } catch {

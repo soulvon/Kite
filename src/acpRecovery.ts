@@ -1,5 +1,6 @@
 import { exec, execFile } from 'child_process';
 import * as vscode from 'vscode';
+import { detectIdeFlavor } from './ideDetector';
 
 type DevinAgentProcess = {
   ProcessId: number;
@@ -8,6 +9,14 @@ type DevinAgentProcess = {
 
 let _repairTimer: NodeJS.Timeout | undefined;
 let _reloadTimer: NodeJS.Timeout | undefined;
+let _devinAcpRepairSkippedLogged = false;
+
+function allowDevinProcessProbing(): boolean {
+  if (detectIdeFlavor() !== 'devin') return true;
+  return vscode.workspace
+    .getConfiguration('windsurfPool.devin')
+    .get<boolean>('allowProcessProbing', false);
+}
 
 /** 异步执行原生 Shell 命令（不触发安全软件拦截） */
 function runCmd(cmd: string, timeoutMs = 15_000): Promise<string> {
@@ -45,6 +54,13 @@ ${script}
  */
 export async function repairDuplicateAcpAgents(reason = 'manual'): Promise<number> {
   if (process.platform !== 'win32') return 0;
+  if (!allowDevinProcessProbing()) {
+    if (!_devinAcpRepairSkippedLogged) {
+      _devinAcpRepairSkippedLogged = true;
+      console.warn('[kite][devin] ACP 重复进程清理已跳过：该逻辑需要 wmic/PowerShell 进程探测，Devin 扩展宿主可能因此崩溃。可通过 windsurfPool.devin.allowProcessProbing 显式开启。');
+    }
+    return 0;
+  }
 
   let processes: DevinAgentProcess[] = [];
 

@@ -6,7 +6,7 @@ import * as os from 'os';
 import { getPoolRoot, getAppDataDir, ensureDir, isWindows, isMac } from './utils';
 import { CACHE_TTL } from './config';
 import { getInstanceEmailMap } from './accountLock';
-import { getIdeExeName, getIdeProcessNames, getUserDataDirCandidates, getIdeDisplayName } from './ideDetector';
+import { detectIdeFlavor, getIdeExeName, getIdeProcessNames, getUserDataDirCandidates, getIdeDisplayName } from './ideDetector';
 
 // ─── 类型 ───────────────────────────────────────────────
 
@@ -34,6 +34,20 @@ interface InstanceStore {
   instances: InstanceConfig[];
   // 一次性迁移标记：v6.0.3 起所有实例统一改为智能选号（旧策略余额追踪不准）
   migratedToAutoV6_0_3?: boolean;
+}
+
+let _devinProcessProbeSkippedLogged = false;
+
+function allowDevinProcessProbing(): boolean {
+  if (detectIdeFlavor() !== 'devin') return true;
+  try {
+    const vscode = require('vscode') as typeof import('vscode');
+    return vscode.workspace
+      .getConfiguration('windsurfPool.devin')
+      .get<boolean>('allowProcessProbing', false);
+  } catch {
+    return false;
+  }
 }
 
 // ─── 常量 ───────────────────────────────────────────────
@@ -159,8 +173,13 @@ export async function listInstances(): Promise<InstanceView[]> {
     console.warn('[instanceManager] ensureDefaultInstance failed:', e);
   }
 
-  const runningDirs = await getRunningInstanceDirs();
   const currentDir = normalizePath(getCurrentUserDataDir());
+  const canProbeProcesses = allowDevinProcessProbing();
+  if (!canProbeProcesses && !_devinProcessProbeSkippedLogged) {
+    _devinProcessProbeSkippedLogged = true;
+    console.warn('[kite][devin] 实例运行状态进程探测已跳过：Devin 扩展宿主在侧栏阶段执行 wmic/PowerShell 可能崩溃。可通过 windsurfPool.devin.allowProcessProbing 显式开启。');
+  }
+  const runningDirs = canProbeProcesses ? await getRunningInstanceDirs() : new Set<string>([currentDir]);
   // 通过跨窗口锁实时查询：每个实例当前实际登录的账号（自动选号模式下用于展示）
   const lockMap = getInstanceEmailMap();
   return store.instances.map(inst => {

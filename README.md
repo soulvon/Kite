@@ -6,7 +6,7 @@
 
 界面增强 · [AnyBridge](https://github.com/soulvon/AnyBridge) 模型路由 · 多实例分身 · 多账号号池 · 自动恢复 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-8.7.8-blue?style=flat-square)](https://github.com/soulvon/Kite/releases/latest) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-8.7.14-blue?style=flat-square)](https://github.com/soulvon/Kite/releases/latest) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 > 本项目由旧版 [windsurf-pool-releases](https://github.com/soulvon/windsurf-pool-releases) 迁移并重构而来。
 
@@ -88,7 +88,7 @@ Kite 在 **不退出、不重启、不丢失会话** 的前提下，把界面增
 | **跨 origin 通信失效** | Webview（`vscode-webview://`）与 workbench（`vscode-file://`）origin 不同，`localStorage` 事件不跨 origin 触发。自建 localhost HTTP 桥（token 鉴权 + CORS preflight 缓存 + 端口持久化复用），彻底替代旧方案 |
 | **Electron 文件校验** | 修改 `workbench.html` 后 Electron 校验 SHA256 失败弹 corrupt 提示。启动时自动重算所有 checksums 并写回 `product.json`，算法与 VS Code 内置一致 |
 | **汉化与错误识别冲突** | 汉化替换 DOM 文本后，30+ 条英文正则全部失效。翻译时将原文存入 `data-ws-orig` 属性，错误检测时拼接原文 + 可见文本，双语共存 |
-| **注入版本判断** | 以前靠手动维护 VERSION 常量决定是否重注入，多次遗漏导致用户装了新版不生效。改用脚本内容 SHA1 前 10 位作为版本标识，内容变 → hash 变 → 自动重注入 |
+| **注入版本判断** | 以前靠手动维护 VERSION 常量决定是否重注入，多次遗漏导致用户装了新版不生效。改用脚本内容 SHA256 前 12 位作为版本标识，内容变 → hash 变 → 自动重注入 |
 | **设置实时生效** | 侧栏改设置 → 扩展宿主写盘 → HTTP 桥推送 `apply-settings` 命令 → 注入脚本热更新 observer 开关，全链路无需 reload |
 | **Windows UAC 合并** | 补丁注入 + 增强注入 + 校验值修复三步写操作合并为一次 UAC 提权弹窗，用户体验从弹 3 次变弹 1 次 |
 
@@ -132,6 +132,27 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
+
+### v8.7.25
+- **修复 Devin 安装后扩展宿主循环崩溃**：扩展 ID 从 `local.windsurf-pool` 改成 `local.kite` 后，Devin 会把它当成全新扩展，导致 globalState/globalStorage/secrets 分裂，并触发启动迁移、旧凭据恢复和进程探测等兼容逻辑。v8.7.25 将扩展 ID 恢复为稳定的 `local.windsurf-pool`，显示名仍为 Kite；同时 Devin 下默认关闭 PowerShell 旧凭据自动恢复和 `wmic` 进程探测，保留手动修复命令和显式开关。
+
+### v8.7.24
+- **Devin 稳定性修复**：恢复 `onStartupFinished` 激活时机，避免启动过早；Devin 下默认进入安全模式，不再自动注入 Workbench / 自动切号 / 自动 ACP 补丁；修复侧栏 `syncStrategyUI is not defined` 导致的 Webview 初始化错误。
+
+### v8.7.13
+- **修复扩展不激活问题**：将 `activationEvents` 从 `onStartupFinished` 改为 `*`，确保扩展安装后立即激活，避免在某些环境下因激活事件不触发导致侧栏白屏。
+
+### v8.7.12
+- **检测旧扩展冲突**：启动时检测是否仍安装旧扩展 `local.windsurf-pool`，若同时存在则弹窗提醒卸载，避免新旧扩展命令冲突导致扩展主机卡死/白屏。
+
+### v8.7.11
+- **保留 BYOK 入口并指向 AnyBridge**：Kite 不再内置 BYOK 功能，侧栏保留「BYOK」主 Tab，页面说明能力已迁移至姊妹项目 [AnyBridge](https://github.com/soulvon/AnyBridge)，并提供一键打开仓库按钮。
+
+### v8.7.10
+- **修复 mini toggle 开关视觉偏移**：将 `v2-mini-toggle` 开启状态 thumb 的 translate 从 `12px` 调整为 `10px`，使 thumb 在轨道右半区居中，避免贴边导致视觉上"歪"；同时补充 `margin-left: auto` 与 `flex-shrink: 0`，确保在 flex 条目中严格右对齐且不收缩。
+
+### v8.7.9
+- **汉化双模式**：新增「汉化模式」选择器，支持「实时翻译」和「补丁模式（流畅）」两种模式。实时模式使用 MutationObserver 实时翻译所有 DOM 变更（全面但可能卡顿）；补丁模式不启动 MutationObserver，仅启动时一次性翻译 + 每 10 秒轻量补扫（流畅但新内容有延迟）。可在侧栏增强面板中切换，实时生效无需重启。
 
 ### v8.7.8
 - **深度修复 globalState 迁移**：`tryMigrateLegacyGlobalState` 改为同步函数（不 await），确保 `activate()` 中 `UsageTracker`/`AutoSwitcher` 等组件读取前数据已写入内存。添加 4 级 key 搜索策略覆盖不同 VS Code 版本的 globalState 存储格式。

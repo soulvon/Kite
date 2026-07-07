@@ -114,6 +114,7 @@ export type WebviewMessageType =
   | 'openLogPanel'
   | 'syncRecoveryLogs'
   | 'syncDiagnoseLogs'
+  | 'webviewLog'
   | 'testModel'
   | 'testModelAll'
   | 'stopHealthCheck'

@@ -15,6 +15,7 @@ CLAUDE.md
 .codebuddy/
 .devin/
 .playwright-mcp/
+.qoder/
 .vscode/
 
 # 系统文件
