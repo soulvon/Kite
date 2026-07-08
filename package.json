@@ -2,7 +2,7 @@
   "name": "windsurf-pool",
   "displayName": "Kite",
   "description": "Kite 是面向 Windsurf / Devin 的 AI IDE 增强套件：界面增强、多实例分身、AnyBridge 模型路由、多账号号池、自动恢复与长任务自动化。",
-  "version": "8.7.30",
+  "version": "8.7.31",
   "publisher": "local",
   "repository": {
     "type": "git",

@@ -123,6 +123,30 @@ export function restoreWorkbench(): boolean {
 }
 
 /**
+ * 启动安全恢复：只移除已存在的 ws-better 注入块，不写入新增强。
+ * 用于覆盖安装救援旧版本残留，避免再次触发自动注入/重载循环。
+ */
+export function restoreInjectedWorkbenchIfPresent(): boolean {
+  const workbenchPath = getWorkbenchHtmlPath();
+  if (!workbenchPath) return false;
+
+  const html = fs.readFileSync(workbenchPath, 'utf8');
+  const blockStartIdx = html.indexOf(BLOCK_START);
+  const blockEndIdx = html.indexOf(BLOCK_END);
+  if (blockStartIdx < 0 || blockEndIdx < 0) return false;
+
+  const originPath = workbenchPath + '.origin';
+  if (fs.existsSync(originPath)) {
+    copyFileWithElevation(originPath, workbenchPath);
+  } else {
+    const cleaned = html.substring(0, blockStartIdx) +
+      html.substring(blockEndIdx + BLOCK_END.length);
+    writeFileWithElevation(workbenchPath, cleaned, 'utf8');
+  }
+  return true;
+}
+
+/**
  * 检查当前注入状态
  */
 export function getInjectionStatus(): { injected: boolean; patchVersion: string | null } {

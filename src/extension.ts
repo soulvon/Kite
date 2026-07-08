@@ -9,7 +9,7 @@ import { AutoSwitcher } from './autoSwitcher';
 import { initDiskCache } from './usageDiskCache';
 import { StatusBarManager } from './statusBar';
 import { checkForUpdates, autoCheckOnStartup } from './updater';
-import { ensureEnhancement, restoreWorkbench, getInjectionStatus } from './enhancementInjector';
+import { ensureEnhancement, restoreWorkbench, getInjectionStatus, restoreInjectedWorkbenchIfPresent } from './enhancementInjector';
 import { ensureBubbleRules, injectBubbleRules, removeBubbleRules, hasBubbleRules, injectScriptDisciplineRules, removeScriptDisciplineRules, removeAllEnhancementRules } from './rulesInjector';
 import { fixChecksums, restoreProductJson, getChecksumStatus } from './checksumFixer';
 import { startBridgeServer, stopBridgeServer } from './bridgeServer';
@@ -31,6 +31,8 @@ let autoSwitcher: AutoSwitcher;
 let statusBar: StatusBarManager;
 let usageTracker: UsageTracker;
 let _context: vscode.ExtensionContext;
+
+const WINDSURF_SAFE_STARTUP_CLEANUP_KEY = 'kite.windsurfSafeStartupCleanup.v8.7.31';
 
 function warnIfRenamedKiteExtensionPresent(context: vscode.ExtensionContext): void {
   // The stable extension id stays local.windsurf-pool; local.kite was a short-lived
@@ -485,6 +487,8 @@ function runDeferredStartupTasks(context: vscode.ExtensionContext): void {
     return;
   }
 
+  runWindsurfSafeStartupCleanup(context, startupLog, autoApplyEnhancementOnStartup);
+
   if (autoApplyEnhancementOnStartup) {
     let cleanupNeeded = false;
     try {
@@ -688,6 +692,61 @@ function runDeferredStartupTasks(context: vscode.ExtensionContext): void {
     startupLog('ensureBubbleRules skipped: windsurfPool.enhancement.autoApplyOnStartup=false');
   }
   startupLog('deferred tasks:done');
+}
+
+function runWindsurfSafeStartupCleanup(
+  context: vscode.ExtensionContext,
+  startupLog: (msg: string) => void,
+  autoApplyEnhancementOnStartup: boolean
+): void {
+  if (autoApplyEnhancementOnStartup) {
+    startupLog('windsurf safe cleanup skipped: autoApplyOnStartup=true');
+    return;
+  }
+  if (context.globalState.get<boolean>(WINDSURF_SAFE_STARTUP_CLEANUP_KEY)) {
+    startupLog('windsurf safe cleanup skipped: already done');
+    return;
+  }
+
+  let restoredWorkbench = false;
+  let restoredExtensionJs = false;
+  try {
+    startupLog('windsurf safe cleanup:restoreInjectedWorkbenchIfPresent start');
+    restoredWorkbench = restoreInjectedWorkbenchIfPresent();
+    startupLog(`windsurf safe cleanup:restoreInjectedWorkbenchIfPresent restored=${restoredWorkbench}`);
+  } catch (err) {
+    startupLog(`windsurf safe cleanup:restoreInjectedWorkbenchIfPresent failed ${err}`);
+    console.warn('[kite] Windsurf safe cleanup workbench failed:', err);
+  }
+
+  try {
+    startupLog('windsurf safe cleanup:restoreWindsurfExtensionJs start');
+    restoredExtensionJs = restoreWindsurfExtensionJs();
+    startupLog(`windsurf safe cleanup:restoreWindsurfExtensionJs restored=${restoredExtensionJs}`);
+  } catch (err) {
+    startupLog(`windsurf safe cleanup:restoreWindsurfExtensionJs failed ${err}`);
+    console.warn('[kite] Windsurf safe cleanup extension.js failed:', err);
+  }
+
+  if (restoredWorkbench || restoredExtensionJs) {
+    try {
+      startupLog('windsurf safe cleanup:elevated batch flush start');
+      flushElevatedBatch();
+      startupLog('windsurf safe cleanup:elevated batch flush done');
+      context.globalState.update(WINDSURF_SAFE_STARTUP_CLEANUP_KEY, true);
+      vscode.window.showWarningMessage(
+        'Kite 已清理旧版 Windsurf 增强/补丁残留。请手动重启 Windsurf 一次，让恢复生效。'
+      );
+    } catch (err) {
+      cancelElevatedBatch();
+      startupLog(`windsurf safe cleanup:elevated batch flush failed ${err}`);
+      console.warn('[kite] Windsurf safe cleanup flush failed:', err);
+    }
+    return;
+  }
+
+  context.globalState.update(WINDSURF_SAFE_STARTUP_CLEANUP_KEY, true);
+  startupLog('windsurf safe cleanup:done no residue');
 }
 
 function runDevinSafeStartup(
