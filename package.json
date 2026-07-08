@@ -2,7 +2,7 @@
   "name": "windsurf-pool",
   "displayName": "Kite",
   "description": "Kite 是面向 Windsurf / Devin 的 AI IDE 增强套件：界面增强、多实例分身、AnyBridge 模型路由、多账号号池、自动恢复与长任务自动化。",
-  "version": "8.7.29",
+  "version": "8.7.30",
   "publisher": "local",
   "repository": {
     "type": "git",
@@ -194,13 +194,33 @@
         },
         "windsurfPool.update.autoInstall": {
           "type": "boolean",
-          "default": true,
-          "description": "发现新版本时自动静默安装（无需用户确认）"
+          "default": false,
+          "description": "发现新版本时允许在启动检查中安装更新。默认关闭：启动只弹出更新提示，避免旧版本异常用户进入安装/重载循环。"
+        },
+        "windsurfPool.autoRecoverLegacyCredentials": {
+          "type": "boolean",
+          "default": false,
+          "description": "启动读取账号时自动从旧扩展 local.kite/local.windsurf-pool 恢复历史凭据。默认关闭，因为该恢复依赖 Windows DPAPI/PowerShell，可能在 IDE 启动阶段触发崩溃；如需恢复请使用命令面板中的“修复缺失凭据”。"
+        },
+        "windsurfPool.allowProcessProbing": {
+          "type": "boolean",
+          "default": false,
+          "description": "允许 Kite 执行 wmic/PowerShell 进程探测。默认关闭，避免 Windsurf/Devin 启动阶段因外部进程探测导致扩展宿主崩溃；多实例或 ACP 诊断需要时可手动开启。"
+        },
+        "windsurfPool.startup.autoAcpRecovery": {
+          "type": "boolean",
+          "default": false,
+          "description": "启动时自动重载 ACP 连接并清理重复 agent 进程。默认关闭，避免 Windsurf/Devin 启动阶段触发重启或扩展宿主崩溃；切号和测活后的手动恢复不受影响。"
         },
         "windsurfPool.enhancement.enabled": {
           "type": "boolean",
           "default": false,
           "description": "启用 IDE 增强（汉化+回复建议提示+自动恢复），需手动激活"
+        },
+        "windsurfPool.enhancement.autoApplyOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "启动时自动写入/更新 workbench.html 增强脚本、汉化和规则。默认关闭，即使旧设置已启用增强也不会在启动阶段改 IDE 文件或提示重载；需要更新增强时请执行“Kite: 重新注入 IDE 增强”。"
         },
         "windsurfPool.enhancement.acpUnlock": {
           "type": "boolean",

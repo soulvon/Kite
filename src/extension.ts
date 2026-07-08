@@ -473,55 +473,65 @@ function runDeferredStartupTasks(context: vscode.ExtensionContext): void {
   beginElevatedBatch();
   startupLog('elevated batch:begin');
 
+  const autoApplyEnhancementOnStartup = vscode.workspace
+    .getConfiguration('windsurfPool.enhancement')
+    .get<boolean>('autoApplyOnStartup', false);
+  const autoAcpRecoveryOnStartup = vscode.workspace
+    .getConfiguration('windsurfPool.startup')
+    .get<boolean>('autoAcpRecovery', false);
+
   if (detectIdeFlavor() === 'devin') {
     runDevinSafeStartup(context, startupLog);
     return;
   }
 
-  let cleanupNeeded = false;
-  try {
-    startupLog('legacy cleanup:ensureEnhancement start');
-    const enhResult = ensureEnhancement();
-    startupLog(`legacy cleanup:ensureEnhancement result injected=${enhResult.injected} needRestart=${enhResult.needRestart} error=${enhResult.error || ''}`);
-    if (enhResult.needRestart && !enhResult.injected) {
-      cleanupNeeded = true;
-    }
-    startupLog('legacy cleanup:restoreWindsurfExtensionJs start');
-    const extJsRestored = restoreWindsurfExtensionJs();
-    startupLog(`legacy cleanup:restoreWindsurfExtensionJs restored=${extJsRestored}`);
-    if (extJsRestored) {
-      cleanupNeeded = true;
-    }
-    if (cleanupNeeded) {
-      startupLog('legacy cleanup:cleanupNeeded=true flushing and stopping startup tasks');
-      try { flushElevatedBatch(); } catch (e) {
-        cancelElevatedBatch();
-        startupLog(`legacy cleanup:flush failed ${e}`);
-        console.warn('[kite] cleanup flush failed:', e);
+  if (autoApplyEnhancementOnStartup) {
+    let cleanupNeeded = false;
+    try {
+      startupLog('legacy cleanup:ensureEnhancement start');
+      const enhResult = ensureEnhancement();
+      startupLog(`legacy cleanup:ensureEnhancement result injected=${enhResult.injected} needRestart=${enhResult.needRestart} error=${enhResult.error || ''}`);
+      if (enhResult.needRestart && !enhResult.injected) {
+        cleanupNeeded = true;
       }
-      vscode.window.showInformationMessage(
-        `检测到旧版 ${getIdeDisplayName()} 补丁残留，已自动恢复原始文件，请立即重启。`,
-        '立即重启'
-      ).then(action => {
-        if (action === '立即重启') {
-          vscode.commands.executeCommand('workbench.action.reloadWindow');
+      startupLog('legacy cleanup:restoreWindsurfExtensionJs start');
+      const extJsRestored = restoreWindsurfExtensionJs();
+      startupLog(`legacy cleanup:restoreWindsurfExtensionJs restored=${extJsRestored}`);
+      if (extJsRestored) {
+        cleanupNeeded = true;
+      }
+      if (cleanupNeeded) {
+        startupLog('legacy cleanup:cleanupNeeded=true flushing and stopping startup tasks');
+        try { flushElevatedBatch(); } catch (e) {
+          cancelElevatedBatch();
+          startupLog(`legacy cleanup:flush failed ${e}`);
+          console.warn('[kite] cleanup flush failed:', e);
         }
-      });
-      return;
+        vscode.window.showInformationMessage(
+          `检测到旧版 ${getIdeDisplayName()} 补丁残留，已自动恢复原始文件，请立即重启。`,
+          '立即重启'
+        ).then(action => {
+          if (action === '立即重启') {
+            vscode.commands.executeCommand('workbench.action.reloadWindow');
+          }
+        });
+        return;
+      }
+    } catch (err) {
+      startupLog(`legacy cleanup failed: ${err}`);
+      console.warn('[kite] legacy cleanup failed:', err);
     }
-  } catch (err) {
-    startupLog(`legacy cleanup failed: ${err}`);
-    console.warn('[kite] legacy cleanup failed:', err);
+  } else {
+    startupLog('legacy cleanup skipped: windsurfPool.enhancement.autoApplyOnStartup=false');
   }
 
-  if (readEnhSettings().acpUnlock !== false) {
-    startupLog('acp local registry fallback:start');
-    ensureAcpLocalRegistryFallback();
-    startupLog('acp local registry fallback:done');
+  if (autoAcpRecoveryOnStartup) {
+    startupLog('schedule ACP repair/recovery');
+    scheduleAcpAgentRepair('extension-activate', 10_000);
+    scheduleAcpConnectionRecovery('extension-activate', 12_000);
+  } else {
+    startupLog('ACP repair/recovery skipped: windsurfPool.startup.autoAcpRecovery=false');
   }
-  startupLog('schedule ACP repair/recovery');
-  scheduleAcpAgentRepair('extension-activate', 10_000);
-  scheduleAcpConnectionRecovery('extension-activate', 12_000);
 
   // v6.0.3 一次性迁移：将所有实例统一改为智能选号（旧策略余额追踪不准）
   try {
@@ -542,10 +552,14 @@ function runDeferredStartupTasks(context: vscode.ExtensionContext): void {
   warmupSoundPlayer();
   startupLog('warmupSoundPlayer:done');
 
-  // 静默应用汉化（不影响扩展启动）
-  startupLog('applyI18nOnly:start');
-  applyI18nOnly();
-  startupLog('applyI18nOnly:done');
+  if (autoApplyEnhancementOnStartup) {
+    // 静默应用汉化（不影响扩展启动）
+    startupLog('applyI18nOnly:start');
+    applyI18nOnly();
+    startupLog('applyI18nOnly:done');
+  } else {
+    startupLog('applyI18nOnly skipped: windsurfPool.enhancement.autoApplyOnStartup=false');
+  }
 
   startupLog('autoSwitcher.start:start');
   autoSwitcher?.start();
@@ -590,28 +604,32 @@ function runDeferredStartupTasks(context: vscode.ExtensionContext): void {
     console.warn('[kite] resetContinueModeOnUpgrade failed:', err);
   }
 
-  // [Windsurf 增强] 自动注入 DOM 增强脚本到 workbench.html
-  try {
-    startupLog('enhancement injection:start');
-    const result = ensureEnhancement();
-    startupLog(`enhancement injection:result injected=${result.injected} needRestart=${result.needRestart} error=${result.error || ''}`);
-    if (result.needRestart) {
-      if (!result.injected) {
-        try { restoreWindsurfExtensionJs(); } catch {}
-      }
-      const ideNameEnh = getIdeDisplayName();
-      vscode.window.showInformationMessage(
-        `${ideNameEnh} 增强已更新，重启后生效。`,
-        '立即重启'
-      ).then(action => {
-        if (action === '立即重启') {
-          vscode.commands.executeCommand('workbench.action.reloadWindow');
+  if (autoApplyEnhancementOnStartup) {
+    // [Windsurf 增强] 自动注入 DOM 增强脚本到 workbench.html
+    try {
+      startupLog('enhancement injection:start');
+      const result = ensureEnhancement();
+      startupLog(`enhancement injection:result injected=${result.injected} needRestart=${result.needRestart} error=${result.error || ''}`);
+      if (result.needRestart) {
+        if (!result.injected) {
+          try { restoreWindsurfExtensionJs(); } catch {}
         }
-      });
+        const ideNameEnh = getIdeDisplayName();
+        vscode.window.showInformationMessage(
+          `${ideNameEnh} 增强已更新，重启后生效。`,
+          '立即重启'
+        ).then(action => {
+          if (action === '立即重启') {
+            vscode.commands.executeCommand('workbench.action.reloadWindow');
+          }
+        });
+      }
+    } catch (err) {
+      startupLog(`enhancement injection failed: ${err}`);
+      console.error('[kite] Enhancement injection failed:', err);
     }
-  } catch (err) {
-    startupLog(`enhancement injection failed: ${err}`);
-    console.error('[kite] Enhancement injection failed:', err);
+  } else {
+    startupLog('enhancement injection skipped: windsurfPool.enhancement.autoApplyOnStartup=false');
   }
 
   // 提交所有启动阶段的文件写操作（无需提权时零开销；需要时仅一次 UAC）
@@ -643,23 +661,31 @@ function runDeferredStartupTasks(context: vscode.ExtensionContext): void {
   // 统一在 flushElevatedBatch 之后执行 checksum 修复：
   // 必须在 flush 之后，因为 flush 才真正把新 workbench.html 写入磁盘，
   // 此时 computeChecksum 读到的才是最新文件内容
-  try {
-    startupLog('autoFixChecksums:start');
-    autoFixChecksums();
-    startupLog('autoFixChecksums:done');
-  } catch (err) {
-    startupLog(`autoFixChecksums failed: ${err}`);
-    console.error('[kite] Checksum fix failed:', err);
+  if (autoApplyEnhancementOnStartup) {
+    try {
+      startupLog('autoFixChecksums:start');
+      autoFixChecksums();
+      startupLog('autoFixChecksums:done');
+    } catch (err) {
+      startupLog(`autoFixChecksums failed: ${err}`);
+      console.error('[kite] Checksum fix failed:', err);
+    }
+  } else {
+    startupLog('autoFixChecksums skipped: windsurfPool.enhancement.autoApplyOnStartup=false');
   }
 
-  // [Windsurf 增强] 自动注入回复建议提示规则
-  try {
-    startupLog('ensureBubbleRules:start');
-    ensureBubbleRules();
-    startupLog('ensureBubbleRules:done');
-  } catch (err) {
-    startupLog(`ensureBubbleRules failed: ${err}`);
-    console.error('[kite] Bubble rules injection failed:', err);
+  if (autoApplyEnhancementOnStartup) {
+    // [Windsurf 增强] 自动注入回复建议提示规则
+    try {
+      startupLog('ensureBubbleRules:start');
+      ensureBubbleRules();
+      startupLog('ensureBubbleRules:done');
+    } catch (err) {
+      startupLog(`ensureBubbleRules failed: ${err}`);
+      console.error('[kite] Bubble rules injection failed:', err);
+    }
+  } else {
+    startupLog('ensureBubbleRules skipped: windsurfPool.enhancement.autoApplyOnStartup=false');
   }
   startupLog('deferred tasks:done');
 }

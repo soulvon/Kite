@@ -36,15 +36,18 @@ interface InstanceStore {
   migratedToAutoV6_0_3?: boolean;
 }
 
-let _devinProcessProbeSkippedLogged = false;
+let _processProbeSkippedLogged = false;
 
-function allowDevinProcessProbing(): boolean {
-  if (detectIdeFlavor() !== 'devin') return true;
+function allowProcessProbing(): boolean {
+  const ide = detectIdeFlavor();
   try {
     const vscode = require('vscode') as typeof import('vscode');
     return vscode.workspace
-      .getConfiguration('windsurfPool.devin')
-      .get<boolean>('allowProcessProbing', false);
+      .getConfiguration('windsurfPool')
+      .get<boolean>('allowProcessProbing', false) ||
+      (ide === 'devin' && vscode.workspace
+        .getConfiguration('windsurfPool.devin')
+        .get<boolean>('allowProcessProbing', false));
   } catch {
     return false;
   }
@@ -174,10 +177,10 @@ export async function listInstances(): Promise<InstanceView[]> {
   }
 
   const currentDir = normalizePath(getCurrentUserDataDir());
-  const canProbeProcesses = allowDevinProcessProbing();
-  if (!canProbeProcesses && !_devinProcessProbeSkippedLogged) {
-    _devinProcessProbeSkippedLogged = true;
-    console.warn('[kite][devin] 实例运行状态进程探测已跳过：Devin 扩展宿主在侧栏阶段执行 wmic/PowerShell 可能崩溃。可通过 windsurfPool.devin.allowProcessProbing 显式开启。');
+  const canProbeProcesses = allowProcessProbing();
+  if (!canProbeProcesses && !_processProbeSkippedLogged) {
+    _processProbeSkippedLogged = true;
+    console.warn(`[kite][${detectIdeFlavor()}] 实例运行状态进程探测已跳过：该逻辑需要 wmic/PowerShell，可能在 IDE 启动/侧栏阶段触发扩展宿主崩溃。可通过 windsurfPool.allowProcessProbing 显式开启。`);
   }
   const runningDirs = canProbeProcesses ? await getRunningInstanceDirs() : new Set<string>([currentDir]);
   // 通过跨窗口锁实时查询：每个实例当前实际登录的账号（自动选号模式下用于展示）

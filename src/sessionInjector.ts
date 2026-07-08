@@ -453,9 +453,14 @@ export async function injectSession(
 
     if (alreadyPatched && !cmdRegistered) {
       // 方法已注入但命令注册缺失 — 重新应用补丁修复
+      if (silent) {
+        console.warn('[kite] Patch method found but command registration missing during silent startup, skipping auto patch.');
+        setInjectFailure(account.email, '补丁命令缺失，启动静默切号已跳过自动修复', 'error');
+        return false;
+      }
       console.warn('[kite] Patch method found but command registration missing, re-patching...');
       const ok = await applyPatch(context);
-      if (!silent && ok) {
+      if (ok) {
         vscode.commands.executeCommand('workbench.action.reloadWindow');
       }
       setInjectFailure(account.email, '补丁命令缺失，已尝试重新应用补丁', 'error');
@@ -484,6 +489,11 @@ export async function injectSession(
     }
 
     // 自动应用补丁
+    if (silent) {
+      console.warn('[kite] Patch command is not ready during silent startup, skipping auto patch.');
+      setInjectFailure(account.email, '启动静默切号未找到补丁命令，已跳过自动应用补丁', 'error');
+      return false;
+    }
     if (!silent) {
       vscode.window.showInformationMessage('首次切号：正在自动应用补丁…');
     }
@@ -492,16 +502,14 @@ export async function injectSession(
       setInjectFailure(account.email, '自动应用补丁失败', 'error');
       return false;
     }
-    if (!silent) {
-      vscode.window.showWarningMessage(
-        '补丁已应用，需要重启 ' + getIdeDisplayName() + ' 后才能切换账号。',
-        '立即重启'
-      ).then(action => {
-        if (action === '立即重启') {
-          vscode.commands.executeCommand('workbench.action.reloadWindow');
-        }
-      });
-    }
+    vscode.window.showWarningMessage(
+      '补丁已应用，需要重启 ' + getIdeDisplayName() + ' 后才能切换账号。',
+      '立即重启'
+    ).then(action => {
+      if (action === '立即重启') {
+        vscode.commands.executeCommand('workbench.action.reloadWindow');
+      }
+    });
     setInjectFailure(account.email, `补丁已应用，需重启 ${getIdeDisplayName()} 后再切换`, 'error');
     return false;
   }

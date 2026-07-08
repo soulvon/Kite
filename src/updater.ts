@@ -33,7 +33,7 @@ function getUpdateConfig(): UpdateConfig {
   const config = vscode.workspace.getConfiguration('windsurfPool.update');
   return {
     autoCheck: config.get('autoCheck', true),
-    autoInstall: config.get('autoInstall', true),
+    autoInstall: config.get('autoInstall', false),
   };
 }
 

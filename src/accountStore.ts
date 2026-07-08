@@ -22,13 +22,16 @@ let _accountsCacheTs = 0;
 let _legacyAutoRecoverySkippedLogged = false;
 
 function shouldAutoRecoverLegacyCredentials(): boolean {
-  if (detectIdeFlavor() !== 'devin') return true;
+  const ide = detectIdeFlavor();
   const enabled = vscode.workspace
-    .getConfiguration('windsurfPool.devin')
-    .get<boolean>('autoRecoverLegacyCredentials', false);
+    .getConfiguration('windsurfPool')
+    .get<boolean>('autoRecoverLegacyCredentials', false) ||
+    (ide === 'devin' && vscode.workspace
+      .getConfiguration('windsurfPool.devin')
+      .get<boolean>('autoRecoverLegacyCredentials', false));
   if (!enabled && !_legacyAutoRecoverySkippedLogged) {
     _legacyAutoRecoverySkippedLogged = true;
-    console.warn('[kite][devin] 自动旧凭据恢复已跳过：Devin 扩展宿主在启动/侧栏阶段执行 PowerShell 可能崩溃。可通过 windsurfPool.devin.autoRecoverLegacyCredentials 显式开启，或使用命令“Kite: 修复缺失凭据”手动执行。');
+    console.warn(`[kite][${ide}] 自动旧凭据恢复已跳过：该恢复依赖 Windows DPAPI/PowerShell，可能在 IDE 启动/侧栏阶段触发扩展宿主崩溃。可通过 windsurfPool.autoRecoverLegacyCredentials 显式开启，或使用命令“Kite: 修复缺失凭据”手动执行。`);
   }
   return enabled;
 }
