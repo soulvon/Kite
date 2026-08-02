@@ -1,4 +1,5 @@
 import * as https from 'https';
+import { spawn } from 'child_process';
 
 /**
  * HTTPS POST 辅助函数
@@ -16,12 +17,58 @@ const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1500;
 const RETRYABLE_CODES = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'EAI_AGAIN'];
 
+function isTlsCertificateError(err: any): boolean {
+  const code = String(err?.code || '');
+  const message = String(err?.message || err || '');
+  return /CERT|TLS|SSL|certificate|signature failure/i.test(`${code} ${message}`);
+}
+
 function isRetryable(err: any): boolean {
   const code = err?.code || '';
   const msg = err?.message || '';
   if (RETRYABLE_CODES.includes(code)) return true;
   if (msg.includes('socket disconnected') || msg.includes('TLS') || msg.includes('ECONNRESET')) return true;
   return false;
+}
+
+function postWithWindowsCurl(url: string, body: any, headers: Record<string, string>): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const marker = `__KITE_HTTP_STATUS_${Date.now()}__`;
+    const args = [
+      '--silent', '--show-error', '--location', '--max-time', String(Math.ceil(REQUEST_TIMEOUT_MS / 1000)),
+      '--request', 'POST',
+      '--header', 'Content-Type: application/json',
+      '--header', `Content-Length: ${Buffer.byteLength(data)}`,
+      ...Object.entries(headers).flatMap(([key, value]) => ['--header', `${key}: ${value}`]),
+      '--data-binary', '@-',
+      '--write-out', `${marker}%{http_code}`,
+      url,
+    ];
+    const child = spawn('curl.exe', args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', code => {
+      const markerIndex = stdout.lastIndexOf(marker);
+      if (code !== 0 || markerIndex < 0) {
+        const error = new Error(stderr.trim() || (code === 0
+          ? 'curl 未返回 HTTP 状态码'
+          : `curl exited with code ${code ?? 'unknown'}`));
+        (error as any).code = code === 28 ? 'ETIMEDOUT' : 'CURL_FAILED';
+        reject(error);
+        return;
+      }
+      const status = Number(stdout.slice(markerIndex + marker.length).trim()) || 0;
+      resolve({ status, body: stdout.slice(0, markerIndex) });
+    });
+    child.stdin.on('error', reject);
+    child.stdin.end(data);
+  });
 }
 
 function delay(ms: number): Promise<void> {
@@ -143,11 +190,18 @@ export async function post(url: string, body: any, headers: Record<string, strin
       return await postOnce(url, body, headers);
     } catch (err) {
       lastErr = err;
+      if (process.platform === 'win32' && isTlsCertificateError(err)) {
+        try {
+          return await postWithWindowsCurl(url, body, headers);
+        } catch (fallbackErr) {
+          lastErr = fallbackErr;
+        }
+      }
       if (attempt < MAX_RETRIES && isRetryable(err)) {
         await delay(RETRY_DELAY_MS * (attempt + 1));
         continue;
       }
-      throw err;
+      throw lastErr;
     }
   }
   throw lastErr;
