@@ -6,7 +6,7 @@
 
 界面增强 · [AnyBridge](https://github.com/soulvon/AnyBridge) 模型路由 · 多实例分身 · 多账号号池 · 自动恢复 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-8.7.14-blue?style=flat-square)](https://github.com/soulvon/Kite/releases/latest) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-8.7.38-blue?style=flat-square)](https://github.com/soulvon/Kite/releases/latest) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Issues](https://img.shields.io/github/issues/soulvon/Kite?style=flat-square)](https://github.com/soulvon/Kite/issues) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/soulvon/Kite/pulls) [![Discussions](https://img.shields.io/github/discussions/soulvon/Kite?style=flat-square)](https://github.com/soulvon/Kite/discussions) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 > 本项目由旧版 [windsurf-pool-releases](https://github.com/soulvon/windsurf-pool-releases) 迁移并重构而来。
 
@@ -133,6 +133,37 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 <details>
 <summary><h2>更新日志（点击展开）</h2></summary>
 
+### v8.7.38
+- **修复「Error rendering Markdown」**：气泡渲染此前用 `range.deleteContents()` + `el.remove()` 直接删除 React 渲染出来的 markdown 节点，React 后续 diff/卸载时再调 `removeChild` 就会抛 `The node to be removed is not a child of this node`，被消息组件的 error boundary 捕获后整条回复变成红色报错框。
+- **改为非破坏性渲染**：不再删除或移动任何 React 拥有的节点 —— 完全落在 `:::bubbles` 范围内的元素只打 `data-ws-bubbles-src` 属性由 CSS 隐藏，边界文本节点仅裁剪 `nodeValue`，气泡卡片用 `insertBefore` 追加（纯新增操作，React 不受影响）。
+- **卡片丢失可重建**：`wsBubblesProcessed` 标记改为附带校验 —— React 重建子树把卡片丢弃后会自动清除标记并重新渲染气泡，不会出现「原文没了、卡片也没了」。
+
+### v8.7.37
+- **修复回复建议气泡不发送**：点击气泡后文本已填入但消息发不出去，且会误点输入框旁的「+」（添加附件）按钮。原 SVG 兜底按「文档顺序」取第一个 `path ≤ 3` 的按钮，「+」排在工具栏最左因而被稳定误选。改为取**最右侧**按钮，并新增 `isLikelySendBtn` 语义过滤（`aria-label` / `title` / `data-tooltip-id` / `data-testid`）排除附件、模型选择、语音等非发送按钮。
+- **发送兜底校验**：点击发送按钮后 350ms 校验输入框文本是否仍在，未发出则自动回退到 Enter 键发送，保证消息必达。
+- **补充发送按钮选择器**：新增 `button[data-testid*="send"]` 与 `button[type="submit"]`。
+- **Windsurf 同步加固**：`windsurf-better.js` 应用同一套发送按钮识别与兜底校验逻辑。
+
+### v8.7.35
+- **修复 Windows 证书链兼容**：Node TLS 证书签名失败时改用系统 `curl.exe`（Schannel）重试，仍保持证书校验，不关闭 HTTPS 安全验证。
+
+### v8.7.34
+- **修复配额刷新失败清空数据**：网络或 TLS 证书异常时保留最近一次成功额度快照，并显示具体错误原因。
+- **增加官方 API TLS 回退**：账号 API 域名证书握手失败时自动尝试 `server.codeium.com`，避免单一域名证书链异常导致全部数据不可用。
+
+### v8.7.33
+- **修复增强注入失效**：移除启动时 `restoreWindsurfExtensionJs` 误卸合法会话补丁的 legacy cleanup 逻辑（该逻辑在 `autoApplyOnStartup=true` 时会卸掉已应用的切号补丁并 early-return 跳过 bridge/autoSwitcher 等关键启动步骤）。
+- **修复 Devin 永久安全模式**：将 Devin 安全启动从每次启动强制关闭增强改为一次性清理（`DEVIN_SAFE_STARTUP_CLEANUP_KEY`），不再每次启动重置 `enhancement.enabled=false`。
+- **修复 Windsurf 安全清理误伤**：`runWindsurfSafeStartupCleanup` 新增 `enhancementEnabled` 参数，当增强已启用时跳过 workbench 恢复，避免"开关开着但功能全失效"。
+- **修复设置保存不报错**：`mergeEnhSettings` 写盘失败时 throw Error；`enhSave` / `toggleEnhancement` / reinject 路径全部 catch 并 `showErrorMessage`；webview 新增 `enhSaveError` toast。
+- **启用增强时启动 bridge**：`toggleEnhancement` 和 `reinjectEnhancement` 命令注入成功后均启动 bridge server，避免 windsurf-better.js 无法与扩展通信。
+- **注入失败回滚开关**：`toggleEnhancement` 启用注入失败时回滚 `enabled=false`，避免配置显示开但 workbench 无脚本。
+- **兼容 electron-sandbox 路径**：`getWorkbenchHtmlPath` 和 `checkInstallPermission` 新增 `electron-sandbox/workbench/workbench.html` 候选路径。
+- **汉化/applyI18nOnly 在增强启用时也执行**：不再仅绑定 `autoApplyOnStartup`。
+- **错误文案动态脚本名**：`ensureEnhancement` 找不到脚本时显示 `windsurf-better.js` 或 `devin-better.js`（根据 IDE 自动切换）。
+- **修复 ensureEnhancement 误清 session 补丁**：`ensureEnhancement` 清 workbench 后不再调用 `restoreWindsurfExtensionJs()`，避免越界清掉 extension.js 中的账号切换补丁（增强注入和会话补丁是独立关注点）。
+- **修复 safe cleanup 提前 flush 导致多次 UAC**：`runWindsurfSafeStartupCleanup` / `runDevinSafeStartupOnce` 在 `flushElevatedBatch()` 后立即 `beginElevatedBatch()` 恢复批量模式，后续 `ensureEnhancement` / `checksumFix` 写操作仍可合并为单次 UAC 提示。
+
 ### v8.7.25
 - **修复 Devin 安装后扩展宿主循环崩溃**：扩展 ID 从 `local.windsurf-pool` 改成 `local.kite` 后，Devin 会把它当成全新扩展，导致 globalState/globalStorage/secrets 分裂，并触发启动迁移、旧凭据恢复和进程探测等兼容逻辑。v8.7.25 将扩展 ID 恢复为稳定的 `local.windsurf-pool`，显示名仍为 Kite；同时 Devin 下默认关闭 PowerShell 旧凭据自动恢复和 `wmic` 进程探测，保留手动修复命令和显式开关。
 
@@ -207,6 +238,12 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 > **Kite →** 轻量的 IDE 增强与账号工作流工具
 > **AnyBridge →** 模型路由与 API 层能力
+
+## 参与贡献与问题反馈
+
+- 🐛 **发现 Bug** → [提交 Issue](https://github.com/soulvon/Kite/issues)
+- 💡 **提出建议** → [提交 Feature Request](https://github.com/soulvon/Kite/issues/new/choose) 或参与 [Discussions 讨论](https://github.com/soulvon/Kite/discussions)
+- 🚀 **代码贡献** → 欢迎提交 Pull Request，详情请参考 [贡献指南](.github/CONTRIBUTING.md)
 
 ---
 
