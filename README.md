@@ -6,7 +6,7 @@
 
 界面增强 · [AnyBridge](https://github.com/soulvon/AnyBridge) 模型路由 · 多实例分身 · 多账号号池 · 自动恢复 · 长任务自动化
 
-[![Version](https://img.shields.io/badge/version-8.7.38-blue?style=flat-square)](https://github.com/soulvon/Kite/releases/latest) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Issues](https://img.shields.io/github/issues/soulvon/Kite?style=flat-square)](https://github.com/soulvon/Kite/issues) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/soulvon/Kite/pulls) [![Discussions](https://img.shields.io/github/discussions/soulvon/Kite?style=flat-square)](https://github.com/soulvon/Kite/discussions) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-8.7.38-blue?style=flat-square)](https://github.com/soulvon/Kite/releases/latest) [![Downloads](https://img.shields.io/github/downloads/soulvon/Kite/total?style=flat-square&color=orange)](https://github.com/soulvon/Kite/releases/latest) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Issues](https://img.shields.io/github/issues/soulvon/Kite?style=flat-square)](https://github.com/soulvon/Kite/issues) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/soulvon/Kite/pulls) [![Discussions](https://img.shields.io/github/discussions/soulvon/Kite?style=flat-square)](https://github.com/soulvon/Kite/discussions) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
 > 本项目由旧版 [windsurf-pool-releases](https://github.com/soulvon/windsurf-pool-releases) 迁移并重构而来。
 
@@ -234,10 +234,17 @@ sudo chmod -R a+w "/opt/windsurf"                     # Linux 手动安装
 
 ## 相关项目
 
-模型路由、API 中转、自带 Key、BYOK 等能力由独立项目 [AnyBridge](https://github.com/soulvon/AnyBridge) 承担。
+模型路由、API 中转、自带 Key、BYOK 等能力由独立项目 [AnyBridge](https://github.com/soulvon/AnyBridge) 承担。同一作者的完整 AI 工具箱：
+
+| 项目 | 简介 | 适合谁 |
+| :--- | :--- | :--- |
+| [🚀 **AnyBridge**](https://github.com/soulvon/AnyBridge) ![Downloads](https://img.shields.io/github/downloads/soulvon/AnyBridge/total?color=orange) | BYOK 模型接入工作台：统一管理 16+ AI 编程智能体（Cursor / Windsurf / Devin / Claude Code / Codex / CodeBuddy 等）的模型渠道，本地代理接管 + 配置直写，支持第三方中转站与本地聚合网关 | 想给封闭 IDE 接自定义模型的人 |
+| [🎫 **BuddyRelay**](https://github.com/soulvon/BuddyRelay) ![Open VSX Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fopen-vsx.org%2Fapi%2Fsoulvon%2Fbuddy-relay&query=%24.downloadCount&label=openvsx%20downloads&color=orange) | CodeBuddy / WorkBuddy 多账号切换 VS Code 插件：多窗口号池同步、额度流水对账、探针预检与自动切号，已上架 Open VSX 商店 | CodeBuddy / WorkBuddy 用户 |
+| [🔍 **devin-search-mcp**](https://github.com/soulvon/devin-search-mcp) ![npm Downloads](https://img.shields.io/npm/dt/devin-search-mcp?color=orange) | 把 Devin 原生全网实时搜索与网页正文提取抽成标准 MCP：1 秒级响应、零模型额度消耗，`npx -y devin-search-mcp` 直装 | Cursor / Claude Code / Claude Desktop / CodeBuddy 用户 |
 
 > **Kite →** 轻量的 IDE 增强与账号工作流工具
 > **AnyBridge →** 模型路由与 API 层能力
+> 全部开源 · 本地优先 · 持续维护 —— 前往 [作者主页](https://github.com/soulvon) 查看全部项目。
 
 ## 参与贡献与问题反馈
 
