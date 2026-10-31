@@ -10,6 +10,8 @@
 
 > 本项目由旧版 [windsurf-pool-releases](https://github.com/soulvon/windsurf-pool-releases) 迁移并重构而来。
 
+[English](README_en.md) • [简体中文](README.md)
+
 </div>
 
 ---
